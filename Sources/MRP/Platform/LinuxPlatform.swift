@@ -753,41 +753,25 @@ fileprivate final class FilterRegistration: Equatable, Hashable, Sendable, Custo
 }
 
 extension LinuxBridge: MMRPAwareBridge {
-  func register(macAddress: EUI48) async throws {
+  func register(macAddress: EUI48, vlan: VLAN?, on ports: Set<P>) async throws {
     guard let rtnl = bridgePort._rtnl as? RTNLLinkBridge else { throw Errno.noSuchAddressOrDevice }
-    try await rtnl.add(fdbEntry: macAddress, socket: _nlLinkSocket)
-  }
-
-  func deregister(macAddress: EUI48) async throws {
-    guard let rtnl = bridgePort._rtnl as? RTNLLinkBridge else { throw Errno.noSuchAddressOrDevice }
-    try await rtnl.remove(fdbEntry: macAddress, socket: _nlLinkSocket)
-  }
-
-  func register(groupAddress: EUI48, vlan: VLAN?, on ports: Set<P>) async throws {
-    guard let rtnl = bridgePort._rtnl as? RTNLLinkBridge else { throw Errno.noSuchAddressOrDevice }
-    guard _isMulticast(macAddress: groupAddress) else { throw Errno.invalidArgument }
-
     for port in ports {
-      try await rtnl.add(
-        link: port._rtnl,
-        groupAddresses: [groupAddress],
-        vlanID: vlan?.vid,
-        socket: _nlLinkSocket
-      )
+      if _isMulticast(macAddress: macAddress) {
+        try await rtnl.add(link: port._rtnl, groupAddresses: [macAddress], vlanID: vlan?.vid, socket: _nlLinkSocket)
+      } else {
+        try await rtnl.add(link: port._rtnl, fdbEntry: macAddress, socket: _nlLinkSocket)
+      }
     }
   }
 
-  func deregister(groupAddress: EUI48, vlan: VLAN?, from ports: Set<P>) async throws {
+  func deregister(macAddress: EUI48, vlan: VLAN?, from ports: Set<P>) async throws {
     guard let rtnl = bridgePort._rtnl as? RTNLLinkBridge else { throw Errno.noSuchAddressOrDevice }
-    guard _isMulticast(macAddress: groupAddress) else { throw Errno.invalidArgument }
-
     for port in ports {
-      try? await rtnl.remove(
-        link: port._rtnl,
-        groupAddresses: [groupAddress],
-        vlanID: vlan?.vid,
-        socket: _nlLinkSocket
-      )
+      if _isMulticast(macAddress: macAddress) {
+        try await rtnl.remove(link: port._rtnl, groupAddresses: [macAddress], vlanID: vlan?.vid, socket: _nlLinkSocket)
+      } else {
+        try await rtnl.remove(link: port._rtnl, fdbEntry: macAddress, socket: _nlLinkSocket)
+      }
     }
   }
 

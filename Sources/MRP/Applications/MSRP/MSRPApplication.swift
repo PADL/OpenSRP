@@ -960,12 +960,16 @@ extension MSRPApplication {
     {
       _logger.debug("MSRP: registering FDB entries for \(talkerRegistration.dataFrameParameters)")
       try await bridge.register(
-        macAddress: talkerRegistration.dataFrameParameters.destinationAddress
+        macAddress: talkerRegistration.dataFrameParameters.destinationAddress,
+        vlan: talkerRegistration.dataFrameParameters.vlanIdentifier,
+        on: [participant.port]
       )
     } else {
       _logger.debug("MSRP: deregistering FDB entries for \(talkerRegistration.dataFrameParameters)")
       try? await bridge.deregister(
-        macAddress: talkerRegistration.dataFrameParameters.destinationAddress
+        macAddress: talkerRegistration.dataFrameParameters.destinationAddress,
+        vlan: talkerRegistration.dataFrameParameters.vlanIdentifier,
+        from: [participant.port]
       )
     }
   }
