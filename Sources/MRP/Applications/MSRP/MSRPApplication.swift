@@ -585,6 +585,7 @@ extension MSRPApplication {
   private func _checkAvailableBandwidth(
     participant: Participant<MSRPApplication>,
     portState: MSRPPortState<P>,
+    streamID: MSRPStreamID,
     dataFrameParameters: MSRPDataFrameParameters,
     tSpec: MSRPTSpec,
     priorityAndRank: MSRPPriorityAndRank
@@ -593,7 +594,7 @@ extension MSRPApplication {
 
     let port = participant.port
     let provisionalTalker = MSRPTalkerAdvertiseValue(
-      streamID: 0, // don't care about this
+      streamID: streamID,
       dataFrameParameters: dataFrameParameters,
       tSpec: tSpec,
       priorityAndRank: priorityAndRank,
@@ -603,7 +604,9 @@ extension MSRPApplication {
     let talkers = await participant.findAttributes(
       attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
       matching: .matchAny
-    )
+    ).filter {
+      ($0.1 as! MSRPTalkerAdvertiseValue).streamID != streamID
+    }
     for talker in [provisionalTalker] + talkers.map({ $0.1 as! MSRPTalkerAdvertiseValue }) {
       guard let srClassID = portState
         .reverseMapSrClassPriority(priority: talker.priorityAndRank.dataFramePriority)
@@ -690,6 +693,7 @@ extension MSRPApplication {
       guard try await _checkAvailableBandwidth(
         participant: participant,
         portState: portState,
+        streamID: streamID,
         dataFrameParameters: dataFrameParameters,
         tSpec: tSpec,
         priorityAndRank: priorityAndRank
