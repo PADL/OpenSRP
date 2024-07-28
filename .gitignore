@@ -1,0 +1,7 @@
+
+\.DS_Store
+SwiftOCA.xcodeproj/project.xcworkspace
+SwiftOCA.xcodeproj/xcuserdata/
+Package.resolved
+.build/
+*.sw?
