@@ -48,8 +48,6 @@ enum PortObservation<P: Port>: Sendable {
   case changed(P)
 }
 
-typealias PortObserver<P: Port> = AnyAsyncSequence<PortObservation<P>>
-
 extension Port {
   func tx(pdu: MRPDU, for application: some Application) async throws {
     let packet = try IEEE802Packet(
@@ -60,4 +58,10 @@ extension Port {
     )
     try await tx(packet)
   }
+}
+
+protocol PortMonitor<P> {
+  associatedtype P: Port
+
+  var observe: AnyAsyncSequence<PortObservation<P>> { get }
 }

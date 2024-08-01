@@ -41,42 +41,44 @@ actor Controller<P: Port> {
       .normalParticipant
   )
 
-  let portObserver: PortObserver<P>
+  let portMonitor: any PortMonitor<P>
   var portObservationTask: Task<(), Error>!
 
-  init(portObserver: PortObserver<P>) async {
-    self.portObserver = portObserver
+  init(portMonitor: some PortMonitor<P>) async {
+    self.portMonitor = portMonitor
 
-    portObservationTask = Task {
-      for try await portObservation in self.portObserver {
-        switch portObservation {
-        case let .added(port):
-          ports.insert(port)
-          rxTasks[port] = Task { @Sendable in
-            for try await packet in port.rxPackets {
-              try await applications[packet.etherType]?.rx(packet: packet, from: port)
-            }
+    portObservationTask = Task { try await _handlePortObservations() }
+  }
+
+  private func _handlePortObservations() async throws {
+    for try await portObservation in portMonitor.observe {
+      switch portObservation {
+      case let .added(port):
+        ports.insert(port)
+        rxTasks[port] = Task { @Sendable in
+          for try await packet in port.rxPackets {
+            try await applications[packet.etherType]?.rx(packet: packet, from: port)
           }
-          var periodicTimer = periodicTimers[port]
-          if periodicTimer == nil {
-            periodicTimer = Timer {
-              try await self.apply { @Sendable application in
-                try await application.periodic()
-              }
-            }
-          }
-          periodicTimer!.start(interval: periodicTransmissionTime)
-        case let .removed(port):
-          rxTasks[port]?.cancel()
-          rxTasks[port] = nil
-          ports.remove(port)
-          periodicTimers[port]?.stop()
-        case let .changed(port):
-          ports.update(with: port)
         }
-        // forward port observation onto applications
-        try? await apply(with: portObservation, (any Application<P>).onPortObservation(_:))
+        var periodicTimer = periodicTimers[port]
+        if periodicTimer == nil {
+          periodicTimer = Timer {
+            try await self.apply { @Sendable application in
+              try await application.periodic()
+            }
+          }
+        }
+        periodicTimer!.start(interval: periodicTransmissionTime)
+      case let .removed(port):
+        rxTasks[port]?.cancel()
+        rxTasks[port] = nil
+        ports.remove(port)
+        periodicTimers[port]?.stop()
+      case let .changed(port):
+        ports.update(with: port)
       }
+      // forward port observation onto applications
+      try? await apply(with: portObservation, (any Application<P>).onPortObservation(_:))
     }
   }
 
