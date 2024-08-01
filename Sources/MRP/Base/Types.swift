@@ -111,11 +111,11 @@ struct AnyValue: Value, Equatable {
     try _value.serialize(into: &serializationContext)
   }
 
-  init(deserializationContext: inout DeserializationContext) throws {
+  init(deserializationContext _: inout DeserializationContext) throws {
     fatalError("cannot deserialize type-erased value")
   }
 
-  init(firstValue: Self?, index: Int) {
+  init(firstValue _: Self?, index _: Int) {
     fatalError("cannot init type-erased value")
   }
 }

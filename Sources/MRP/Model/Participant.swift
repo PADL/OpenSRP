@@ -98,7 +98,7 @@ final actor Participant<A: Application>: Equatable {
 
     mutating func handle(
       event: ProtocolEvent,
-      flags: StateMachineHandlerFlags = []
+      flags _: StateMachineHandlerFlags = []
     ) -> [ProtocolAction] {
       let action: ProtocolAction
 
@@ -134,7 +134,12 @@ final actor Participant<A: Application>: Equatable {
   private var _jointimer: Timer!
   fileprivate let _type: ParticipantType
 
-  init(controller: Controller<A.P>, application: A, port: A.P, type: ParticipantType? = nil) async {
+  init(
+    controller: Controller<A.P>,
+    application: A,
+    port: A.P,
+    type: ParticipantType? = nil
+  ) async {
     _controller = Weak(controller)
     _application = Weak(application)
 
@@ -218,7 +223,8 @@ final actor Participant<A: Application>: Equatable {
       let vector = try _makeVector(for: event.key, attributeEvents: attributeEvents)
 
       var vectorAttributes: [VectorAttribute<AnyValue>] = valueIndexGroups.map { group in
-        let firstValue = attributeEvents.first(where: { $0.attributeValue.index == group[0] })!
+        let firstValue = attributeEvents
+          .first(where: { $0.attributeValue.index == group[0] })!
           .attributeValue.value
         return VectorAttribute<AnyValue>(
           leaveAllEvent: leaveAll ? .LeaveAll : .NullLeaveAllEvent,

@@ -66,7 +66,10 @@ struct Applicant: Sendable {
 }
 
 extension Applicant.State {
-  mutating func handle(event: ProtocolEvent, flags: StateMachineHandlerFlags) -> [ProtocolAction] {
+  mutating func handle(
+    event: ProtocolEvent,
+    flags: StateMachineHandlerFlags
+  ) -> [ProtocolAction] {
     var action: ProtocolAction?
 
     switch event {

@@ -55,7 +55,10 @@ struct Registrar: Sendable {
  */
 
 extension Registrar.State {
-  mutating func handle(event: ProtocolEvent, flags: StateMachineHandlerFlags) -> [ProtocolAction] {
+  mutating func handle(
+    event: ProtocolEvent,
+    flags: StateMachineHandlerFlags
+  ) -> [ProtocolAction] {
     var actions = [ProtocolAction]()
 
     if flags.contains(.registrationForbidden) {

@@ -36,7 +36,10 @@ actor Controller<P: Port> {
   private(set) var ports = Set<P>()
   private var rxTasks = [P: Task<(), Error>]()
   private var periodicTimers = [P: Timer]()
-  private let _administrativeControl = ManagedCriticalState(AdministrativeControl.normalParticipant)
+  private let _administrativeControl = ManagedCriticalState(
+    AdministrativeControl
+      .normalParticipant
+  )
 
   let portObserver: PortObserver<P>
   var portObservationTask: Task<(), Error>!

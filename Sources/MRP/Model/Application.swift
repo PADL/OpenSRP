@@ -145,7 +145,10 @@ extension Application {
     for contextIdentifier: MAPContextIdentifier
   ) async throws {
     try await apply(for: contextIdentifier) { participant in
-      try await participant.leave(attributeType: attributeType, attributeValue: attributeValue)
+      try await participant.leave(
+        attributeType: attributeType,
+        attributeValue: attributeValue
+      )
     }
   }
 
@@ -184,7 +187,7 @@ protocol BaseApplication: Application where P == P {
 extension BaseApplication {
   var mad: Controller<P>? { _mad.object }
 
-  func add(context: MAPContext<P>, for contextidentifier: MAPContextIdentifier) throws {
+  func add(context _: MAPContext<P>, for _: MAPContextIdentifier) throws {
     throw MRPError.invalidContextIdentifier
   }
 
@@ -203,7 +206,10 @@ extension BaseApplication {
     }
   }
 
-  func remove(participant: Participant<Self>, for contextIdentifier: MAPContextIdentifier) throws {
+  func remove(
+    participant: Participant<Self>,
+    for contextIdentifier: MAPContextIdentifier
+  ) throws {
     guard contextIdentifier == MAPBaseSpanningTreeContext
     else { throw MRPError.invalidContextIdentifier }
     try _participants.withCriticalRegion {
@@ -216,7 +222,7 @@ extension BaseApplication {
 
   @discardableResult
   func apply<T>(
-    for contextIdentifier: MAPContextIdentifier? = nil,
+    for _: MAPContextIdentifier? = nil,
     _ block: ApplyFunction<T>
   ) async rethrows -> [T] {
     let participants = _participants.criticalState // snapshot
@@ -230,11 +236,16 @@ extension BaseApplication {
   func onPortObservation(_ observation: PortObservation<P>) async throws {
     switch observation {
     case let .added(port):
-      guard await (try? findParticipant(for: MAPBaseSpanningTreeContext, port: port)) == nil else {
+      guard await (try? findParticipant(for: MAPBaseSpanningTreeContext, port: port)) == nil
+      else {
         throw MRPError.portAlreadyExists
       }
       guard let mad else { throw MRPError.internalError }
-      let participant = await Participant<Self>(controller: mad, application: self, port: port)
+      let participant = await Participant<Self>(
+        controller: mad,
+        application: self,
+        port: port
+      )
       try add(participant: participant, for: MAPBaseSpanningTreeContext)
     case let .removed(port):
       let participant = try await findParticipant(
@@ -276,7 +287,10 @@ extension BaseApplication {
   ) async throws {
     try await apply(for: MAPBaseSpanningTreeContext) { participant in
       guard participant.port != port else { return }
-      try await participant.leave(attributeType: attributeType, attributeValue: attributeValue)
+      try await participant.leave(
+        attributeType: attributeType,
+        attributeValue: attributeValue
+      )
     }
   }
 }

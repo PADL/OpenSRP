@@ -50,13 +50,13 @@ final class MockApplication<P: Port>: BaseApplication, Sendable where P == P {
   }
 
   func deserialize(
-    attributeOfType: AttributeType,
+    attributeOfType _: AttributeType,
     from deserializationContext: inout DeserializationContext
   ) throws -> any Value {
     try MockValue(deserializationContext: &deserializationContext)
   }
 
-  func makeValue(for attributeType: AttributeType, at index: Int) throws -> any Value {
+  func makeValue(for _: AttributeType, at index: Int) throws -> any Value {
     MockValue(index: index)
   }
 

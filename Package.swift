@@ -9,9 +9,13 @@ let PlatformProducts: [Product]
 let PlatformTargets: [Target]
 
 #if os(Linux)
-PlatformPackageDependencies = [.package(url: "https://github.com/PADL/IORingSwift", branch: "main")]
+PlatformPackageDependencies = [.package(
+  url: "https://github.com/PADL/IORingSwift",
+  branch: "main"
+)]
 
 PlatformTargetDependencies = [
+  "NetLink",
   .product(
     name: "IORing",
     package: "IORingSwift",
@@ -29,8 +33,25 @@ PlatformTargetDependencies = [
   ),
 ]
 
-PlatformProducts = []
-PlatformTargets = []
+PlatformProducts = [
+  .library(
+    name: "CNetLink",
+    targets: ["CNetLink"]
+  ),
+]
+PlatformTargets = [
+  .systemLibrary(
+    name: "CNetLink",
+    providers: [.apt(["libnl-3-dev"])]
+
+  ),
+  .target(
+    name: "NetLink",
+    dependencies: ["CNetLink"],
+    cSettings: [.unsafeFlags(["-I", "/usr/include/libnl3"])]
+  ),
+]
+
 #elseif os(macOS) || os(iOS)
 PlatformPackageDependencies = []
 PlatformTargetDependencies = []

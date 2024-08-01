@@ -156,7 +156,10 @@ struct VectorAttribute<V: Value>: Sendable, Equatable {
     vector: [UInt8]
   ) {
     self.init(
-      vectorHeader: VectorHeader(leaveAllEvent: leaveAllEvent, numberOfValues: numberOfValues),
+      vectorHeader: VectorHeader(
+        leaveAllEvent: leaveAllEvent,
+        numberOfValues: numberOfValues
+      ),
       firstValue: firstValue,
       vector: vector
     )
@@ -202,7 +205,10 @@ struct VectorAttribute<V: Value>: Sendable, Equatable {
       attributeOfType: attributeType,
       from: &deserializationContext
     ))
-    vector = try Array(deserializationContext.deserialize(count: Int(vectorHeader.numberOfValues)))
+    vector = try Array(
+      deserializationContext
+        .deserialize(count: Int(vectorHeader.numberOfValues))
+    )
   }
 
   func eraseToAny() -> VectorAttribute<AnyValue> {
@@ -228,7 +234,9 @@ struct VectorAttribute<V: Value>: Sendable, Equatable {
     }
   }
 
-  func serialize(into serializationContext: inout SerializationContext) throws -> AttributeLength {
+  func serialize(into serializationContext: inout SerializationContext) throws
+    -> AttributeLength
+  {
     try vectorHeader.serialize(into: &serializationContext)
     let attributeLength: AttributeLength
     let oldPosition = serializationContext.position
@@ -250,7 +258,10 @@ struct Message: Serializable {
     self.attributeList = attributeList
   }
 
-  init(deserializationContext: inout DeserializationContext, application: some Application) throws {
+  init(
+    deserializationContext: inout DeserializationContext,
+    application: some Application
+  ) throws {
     attributeType = try deserializationContext.deserialize()
     let attributeLength: AttributeLength = try deserializationContext.deserialize()
     let attributeListLength: AttributeListLength = try deserializationContext.deserialize()
@@ -287,7 +298,10 @@ struct MRPDU: Serializable {
     self.messages = messages
   }
 
-  init(deserializationContext: inout DeserializationContext, application: some Application) throws {
+  init(
+    deserializationContext: inout DeserializationContext,
+    application: some Application
+  ) throws {
     protocolVersion = try deserializationContext.deserialize()
     var messages = [Message]()
     repeat {
