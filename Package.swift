@@ -47,7 +47,8 @@ PlatformTargets = [
   ),
   .target(
     name: "NetLink",
-    dependencies: ["CNetLink"],
+    dependencies: ["CNetLink",
+                   .product(name: "SystemPackage", package: "swift-system")],
     cSettings: [.unsafeFlags(["-I", "/usr/include/libnl3"])]
   ),
 ]
