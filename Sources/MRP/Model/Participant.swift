@@ -132,7 +132,7 @@ final actor Participant<A: Application>: Equatable {
   private var _leaveAllState = LeaveAllState.Passive
   private var _leaveAllTimer: Timer!
   private var _jointimer: Timer!
-  private let _type: ParticipantType
+  fileprivate let _type: ParticipantType
 
   init(controller: Controller<A.P>, application: A, port: A.P, type: ParticipantType? = nil) async {
     _controller = Weak(controller)
@@ -501,7 +501,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
 
   private let _participant: Weak<P>
   private let applicant = Applicant() // A per-Attribute Applicant state machine (10.7.7)
-  private var registrar: Registrar! // A per-Attribute Registrar state machine (10.7.8)
+  private var registrar: Registrar? // A per-Attribute Registrar state machine (10.7.8)
   let attributeType: AttributeType
   let value: AnyValue
   var index: Int { value.index }
@@ -512,9 +512,11 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
     _participant = Weak(participant)
     attributeType = type
     self.value = AnyValue(value)
-    registrar = Registrar(onLeaveTimerExpired: {
-      try await self.handle(event: .leavetimer)
-    })
+    if participant._type != .applicantOnly {
+      registrar = Registrar(onLeaveTimerExpired: {
+        try await self.handle(event: .leavetimer)
+      })
+    }
   }
 
   func hash(into hasher: inout Hasher) {
@@ -528,7 +530,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
     guard let participant else { throw MRPError.internalError }
     let smFlags = try await participant._getSmFlags(for: attributeType)
     let applicantActions = applicant.handle(event: event, flags: smFlags)
-    let registrarActions = registrar.handle(event: event, flags: smFlags)
+    let registrarActions = registrar?.handle(event: event, flags: smFlags) ?? []
 
     for action in applicantActions + registrarActions {
       try await handle(action: action)
@@ -570,6 +572,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
       // starting a new one, makes for more optimal/ encoding; i.e.,
       // transmitting the value is not necessary for correct/ protocol
       // operation.
+      guard let registrar else { break }
       if registrar.state == .IN {
         await participant._txEnqueue(attributeEvent: .JoinIn, attributeValue: self)
       } else if registrar.state == .MT || registrar.state == .LV {
@@ -582,6 +585,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
     case .s:
       fallthrough
     case .s_:
+      guard let registrar else { break }
       if registrar.state == .IN {
         await participant._txEnqueue(attributeEvent: .In, attributeValue: self)
       } else if registrar.state == .MT || registrar.state == .LV {
