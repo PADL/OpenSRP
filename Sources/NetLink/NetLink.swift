@@ -92,6 +92,19 @@ public final class NLSocket {
     try throwingErrno { nl_socket_set_passcred(_sk, value ? 1 : 0) }
   }
 
+  public var messageBufferSize: Int {
+    get {
+      nl_socket_get_msg_buf_size(_sk)
+    }
+    set {
+      nl_socket_set_msg_buf_size(_sk, newValue)
+    }
+  }
+
+  public func setAutoAck(_ enabled: Bool) {
+    enabled ? nl_socket_enable_auto_ack(_sk) : nl_socket_disable_auto_ack(_sk)
+  }
+
   private func onReadReady() {
     let r = nl_recvmsgs_default(_sk)
     guard r >= 0 else {
