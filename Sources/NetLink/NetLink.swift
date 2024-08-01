@@ -3,6 +3,11 @@ import Dispatch
 import Glibc
 import SystemPackage
 
+protocol NLMessageRepresentable {
+  init(msg: OpaquePointer) throws
+  var msg: OpaquePointer { get throws }
+}
+
 typealias NLMessage = OpaquePointer
 
 private func NLSocket_CB(
@@ -27,10 +32,9 @@ public final class NLSocket {
   private typealias Continuation = CheckedContinuation<OpaquePointer, Error>
 
   private let _sk: OpaquePointer!
-  private let _source: any DispatchSourceRead
-  private var _lastError: CInt = 0 // TODO: managedCriticalState
-
-  private var requests = [UInt32: Continuation]()
+  private let _readSource: any DispatchSourceRead
+  private let _lastError = ManagedCriticalState<CInt>(0)
+  private let _requests = ManagedCriticalState<[UInt32: Continuation]>([:])
 
   init() throws {
     guard let sk = nl_socket_alloc() else { throw Errno.noMemory }
@@ -39,9 +43,9 @@ public final class NLSocket {
     nl_socket_set_nonblocking(sk)
     let fd = nl_socket_get_fd(sk)
 
-    _source = DispatchSource.makeReadSource(fileDescriptor: fd)
-    _source.activate()
-    _source.setEventHandler(handler: onEvent)
+    _readSource = DispatchSource.makeReadSource(fileDescriptor: fd)
+    _readSource.activate()
+    _readSource.setEventHandler(handler: onReadReady)
 
     nl_socket_modify_cb(
       sk,
@@ -59,17 +63,44 @@ public final class NLSocket {
   }
 
   deinit {
-    _source.cancel()
+    _readSource.cancel()
     nl_socket_free(_sk)
   }
 
-  private func onEvent() {
-    if nl_recvmsgs_default(_sk) < 0 {
-      _lastError = errno
+  @discardableResult
+  func throwingErrno(_ body: () -> CInt) throws -> CInt {
+    let r = body()
+    guard r >= 0 else {
+      throw Errno(rawValue: -r)
+    }
+    return r
+  }
+
+  public func connect(proto: CInt) throws {
+    try throwingErrno { nl_connect(_sk, proto) }
+  }
+
+  public func addMembership(group: CInt) throws {
+    try throwingErrno { nl_socket_add_membership(_sk, group) }
+  }
+
+  public func dropMembership(group: CInt) throws {
+    try throwingErrno { nl_socket_drop_membership(_sk, group) }
+  }
+
+  public func setPassCred(_ value: Bool) throws {
+    try throwingErrno { nl_socket_set_passcred(_sk, value ? 1 : 0) }
+  }
+
+  private func onReadReady() {
+    let r = nl_recvmsgs_default(_sk)
+    guard r >= 0 else {
+      _lastError.withCriticalRegion { $0 = -r }
+      return
     }
   }
 
-  private func allocateSequenceNumber() -> UInt32 {
+  public func useNextSequenceNumber() -> UInt32 {
     nl_socket_use_seq(_sk)
   }
 
@@ -77,10 +108,13 @@ public final class NLSocket {
     sequence: UInt32,
     with result: Result<OpaquePointer, Error>
   ) {
-    guard let continuation = requests[sequence] else {
-      return
+    var continuation: Continuation!
+
+    _requests.withCriticalRegion {
+      continuation = $0[sequence]
+      $0.removeValue(forKey: sequence)
     }
-    requests.removeValue(forKey: sequence)
+
     continuation.resume(with: result)
   }
 
@@ -90,7 +124,7 @@ public final class NLSocket {
   ) async throws -> NLMessage {
     try await withTaskCancellationHandler(operation: {
       try await withCheckedThrowingContinuation { continuation in
-        requests[sequence] = continuation
+        _requests.withCriticalRegion { $0[sequence] = continuation }
         Task {
           let message = try body(sequence)
           if nl_send_auto(_sk, message) < 0 {
