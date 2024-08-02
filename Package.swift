@@ -42,6 +42,10 @@ PlatformProducts = [
     name: "nldump",
     targets: ["nldump"]
   ),
+  .executable(
+    name: "nlmonitor",
+    targets: ["nlmonitor"]
+  ),
 ]
 PlatformTargets = [
   .systemLibrary(
@@ -61,6 +65,11 @@ PlatformTargets = [
     name: "nldump",
     dependencies: ["NetLink"],
     path: "Examples/nldump"
+  ),
+  .executableTarget(
+    name: "nlmonitor",
+    dependencies: ["NetLink"],
+    path: "Examples/nlmonitor"
   ),
 ]
 

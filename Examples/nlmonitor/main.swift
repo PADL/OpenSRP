@@ -3,10 +3,11 @@ import Dispatch
 import NetLink
 
 @main
-struct nldump {
+struct nlmonitor {
   public static func main() async throws {
     let socket = try NLSocket(protocol: NETLINK_ROUTE)
-    for try await link in try await socket.getRtLinks() {
+    try socket.notifyRtLinks()
+    for try await link in socket.notifications {
       debugPrint("found link \(link)")
     }
   }

@@ -22,7 +22,7 @@ import SystemPackage
 public struct RTNLLink: NLObjectConstructible, Sendable, CustomStringConvertible {
   private let _object: NLObject
 
-  public init(object: NLObject) throws {
+  init(object: NLObject) throws {
     _object = object
   }
 
@@ -47,7 +47,7 @@ public enum RTNLLinkMessage: NLObjectConstructible, Sendable {
   case new(RTNLLink)
   case del(RTNLLink)
 
-  public init(object: NLObject) throws {
+  init(object: NLObject) throws {
     switch object.messageType {
     case RTM_NEWLINK:
       self = try .new(RTNLLink(object: object))
@@ -67,6 +67,11 @@ public extension NLSocket {
       try message.append(Array($0))
     }
     try message.put(u32: UInt32(IFLA_EXT_MASK), for: RTEXT_FILTER_BRVLAN)
-    return try streamRequest(message: message).map { try RTNLLinkMessage(object: $0) }.eraseToAnyAsyncSequence()
+    return try streamRequest(message: message).map { $0 as! RTNLLinkMessage }
+      .eraseToAnyAsyncSequence()
+  }
+
+  func notifyRtLinks() throws {
+    try add(membership: RTNLGRP_LINK)
   }
 }

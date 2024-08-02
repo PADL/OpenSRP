@@ -21,7 +21,24 @@ import Dispatch
 import Glibc
 import SystemPackage
 
-public final class NLObject: @unchecked Sendable, Equatable, Hashable, CustomStringConvertible {
+public protocol NLObjectConstructible {}
+
+protocol _NLObjectConstructible: NLObjectConstructible {
+  init(object: NLObject) throws
+}
+
+final class NLObject: @unchecked Sendable, Equatable, Hashable, CustomStringConvertible {
+  func parse() throws -> some NLObjectConstructible {
+    switch messageType {
+    case RTM_NEWLINK:
+      fallthrough
+    case RTM_DELLINK:
+      return try RTNLLinkMessage(object: self)
+    default:
+      throw Errno.invalidArgument
+    }
+  }
+
   public static func == (_ lhs: NLObject, _ rhs: NLObject) -> Bool {
     lhs._obj.withCriticalRegion { lhs in
       rhs._obj.withCriticalRegion { rhs in
@@ -149,21 +166,20 @@ private func NLSocket_ErrCB(
 }
 
 public final class NLSocket {
-  private typealias Continuation = CheckedContinuation<NLObject, Error>
-  private typealias Stream = AsyncThrowingStream<NLObject, Error>
-  private typealias Channel = AsyncThrowingChannel<NLObject, Error>
+  private typealias Continuation = CheckedContinuation<NLObjectConstructible, Error>
+  private typealias Stream = AsyncThrowingStream<NLObjectConstructible, Error>
+  public typealias Channel = AsyncThrowingChannel<NLObjectConstructible, Error>
 
   private enum _Request {
     case continuation(Continuation)
     case stream(Stream.Continuation)
-    case channel(Channel)
 
     var hasMultipleResults: Bool {
       switch self {
       case .continuation:
-        return false
+        false
       default:
-        return true
+        true
       }
     }
   }
@@ -173,8 +189,11 @@ public final class NLSocket {
   private let _lastError = ManagedCriticalState<CInt>(0)
   private let _requests = ManagedCriticalState<[UInt32: _Request]>([:])
 
+  public let notifications = Channel()
+
   public init(protocol: Int32) throws {
     guard let sk = nl_socket_alloc() else { throw Errno.noMemory }
+    nl_socket_disable_seq_check(sk)
     _sk = sk
 
     try throwingErrno {
@@ -221,12 +240,12 @@ public final class NLSocket {
     try throwingErrno { nl_connect(_sk, proto) }
   }
 
-  public func addMembership(group: CInt) throws {
-    try throwingErrno { nl_socket_add_membership(_sk, group) }
+  public func add(membership group: rtnetlink_groups) throws {
+    try throwingErrno { nl_socket_add_membership(_sk, CInt(group.rawValue)) }
   }
 
-  public func dropMembership(group: CInt) throws {
-    try throwingErrno { nl_socket_drop_membership(_sk, group) }
+  public func drop(membership group: rtnetlink_groups) throws {
+    try throwingErrno { nl_socket_drop_membership(_sk, CInt(group.rawValue)) }
   }
 
   public func setPassCred(_ value: Bool) throws {
@@ -273,7 +292,8 @@ public final class NLSocket {
 
   fileprivate func finish(sequence: UInt32) {
     guard let request = _lookup(sequence: sequence, forceRemove: true),
-      case let .stream(continuation) = request else {
+          case let .stream(continuation) = request
+    else {
       return
     }
     continuation.finish()
@@ -283,26 +303,32 @@ public final class NLSocket {
     sequence: UInt32,
     with result: Result<NLObject, Error>
   ) {
-    let request = _lookup(sequence: sequence, forceRemove: false)!
+    let result: Result<NLObjectConstructible, Error> = result.map { try! $0.parse() }
 
-    switch request {
-    case .continuation(let continuation):
-      continuation.resume(with: result)
-    case .stream(let continuation):
-      continuation.yield(with: result)
-    case .channel(let channel):
-      switch result {
-      case .success(let value):
-        Task { await channel.send(value) }
-      case .failure(let error):
-        channel.fail(error)
+    if sequence == 0 {
+      // else it is a notification
+      Task {
+        do {
+          try await notifications.send(result.get())
+        } catch {
+          notifications.fail(error)
+        }
+      }
+    } else {
+      let request = _lookup(sequence: sequence, forceRemove: false)!
+
+      switch request {
+      case let .continuation(continuation):
+        continuation.resume(with: result)
+      case let .stream(continuation):
+        continuation.yield(with: result)
       }
     }
   }
 
   func continuationRequest(
     message: consuming NLMessage
-  ) async throws -> NLObject {
+  ) async throws -> NLObjectConstructible {
     let sequence = message.sequence
     return try await withTaskCancellationHandler(operation: {
       try await withCheckedThrowingContinuation { continuation in
@@ -320,7 +346,7 @@ public final class NLSocket {
 
   func streamRequest(
     message: consuming NLMessage
-  ) throws -> AsyncThrowingStream<NLObject, Error> {
+  ) throws -> AsyncThrowingStream<NLObjectConstructible, Error> {
     let sequence = message.sequence
     var stream: Stream!
     _requests.withCriticalRegion { requests in
@@ -334,20 +360,6 @@ public final class NLSocket {
     try message.send(on: self)
     return stream
   }
-
-  func channelRequest(
-    message: consuming NLMessage
-  ) throws -> AnyAsyncSequence<NLObject> {
-    let sequence = message.sequence
-    var channel: Channel!
-    _requests.withCriticalRegion {
-      let _channel = Channel()
-      $0[sequence] = .channel(_channel)
-      channel = _channel
-    }
-    try message.send(on: self)
-    return channel.eraseToAnyAsyncSequence()
-  }
 }
 
 @discardableResult
@@ -357,10 +369,6 @@ func throwingErrno(_ body: () -> CInt) throws -> CInt {
     throw Errno(rawValue: -r)
   }
   return r
-}
-
-public protocol NLObjectConstructible {
-  init(object: NLObject) throws
 }
 
 struct NLAttribute {
