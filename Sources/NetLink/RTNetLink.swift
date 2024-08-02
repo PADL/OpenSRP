@@ -45,6 +45,12 @@ public struct RTNLLink: NLObjectConstructible, Sendable, CustomStringConvertible
     }
   }
 
+  public var mtu: Int {
+    _object.apply {
+      Int(rtnl_link_get_mtu($0))
+    }
+  }
+
   public var description: String {
     "\(index):\(name):\(family):\(macAddressString):\(String(format: "%08x", flags))"
   }

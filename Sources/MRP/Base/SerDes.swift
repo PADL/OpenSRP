@@ -121,6 +121,10 @@ struct DeserializationContext {
     return (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5])
   }
 
+  mutating func deserializeRemaining() -> ArraySlice<UInt8> {
+    bytes[position..<bytes.count]
+  }
+
   func peek() throws -> UInt8 {
     try peek(count: 1).first!
   }

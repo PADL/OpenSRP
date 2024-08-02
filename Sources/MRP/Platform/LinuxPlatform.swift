@@ -17,6 +17,7 @@
 #if os(Linux)
 
 import AsyncAlgorithms
+@preconcurrency
 import AsyncExtensions
 import CLinuxSockAddr
 import CNetLink
@@ -35,8 +36,6 @@ public struct LinuxPort: Port, Sendable {
   }
 
   private let _rtnl: RTNLLink
-  private let _rxPackets = AsyncChannel<IEEE802Packet>()
-//  private let _ioring = IORing.shared
   private let _socket: Socket
 
   private static func _makeSll(macAddress: EUI48, protocol: UInt16 = 0, index: Int) -> sockaddr_ll {
@@ -105,16 +104,18 @@ public struct LinuxPort: Port, Sendable {
 
   public func tx(_ packet: IEEE802Packet) async throws {
     var serializationContext = SerializationContext()
-    serializationContext.reserveCapacity(2 * Int(ETH_ALEN) + 6 + 2 + packet.data.count)
-    serializationContext.serialize(eui48: packet.destMacAddress)
-    serializationContext.serialize(eui48: packet.sourceMacAddress)
-    serializationContext.serialize(uint16: packet.etherType)
-    serializationContext.serialize(packet.data)
-    try await _socket.send(serializationContext.bytes)
+    try packet.serialize(into: &serializationContext)
+    // namespace issue means we can't instantiate IORing.Message by name
+    try await _socket.sendMessage(.init(buffer: serializationContext.bytes))
   }
 
   public var rxPackets: AnyAsyncSequence<IEEE802Packet> {
-    _rxPackets.eraseToAnyAsyncSequence()
+    get async throws {
+      try await _socket.receiveMessages(count: _rtnl.mtu).compactMap { message in
+        var deserializationContext = DeserializationContext(message.buffer)
+        return try? IEEE802Packet(deserializationContext: &deserializationContext)
+      }.eraseToAnyAsyncSequence()
+    }
   }
 }
 

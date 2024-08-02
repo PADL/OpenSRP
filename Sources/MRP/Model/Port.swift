@@ -17,11 +17,35 @@
 import AsyncExtensions
 
 @_spi(MRPPrivate)
-public struct IEEE802Packet: Sendable {
+public struct IEEE802Packet: Sendable, SerDes {
   let destMacAddress: EUI48
   let sourceMacAddress: EUI48
   let etherType: UInt16
   let data: [UInt8]
+
+  init(destMacAddress: EUI48, sourceMacAddress: EUI48, etherType: UInt16, data: [UInt8]) {
+    self.destMacAddress = destMacAddress
+    self.sourceMacAddress = sourceMacAddress
+    self.etherType = etherType
+    self.data = data
+  }
+
+  init(
+    deserializationContext: inout DeserializationContext
+  ) throws {
+    destMacAddress = try deserializationContext.deserialize()
+    sourceMacAddress = try deserializationContext.deserialize()
+    etherType = try deserializationContext.deserialize()
+    data = Array(deserializationContext.deserializeRemaining())
+  }
+
+  func serialize(into serializationContext: inout SerializationContext) throws {
+    serializationContext.reserveCapacity(2 * Int(6) + 6 + 2 + data.count)
+    serializationContext.serialize(eui48: destMacAddress)
+    serializationContext.serialize(eui48: sourceMacAddress)
+    serializationContext.serialize(uint16: etherType)
+    serializationContext.serialize(data)
+  }
 }
 
 @_spi(MRPPrivate)
@@ -41,7 +65,7 @@ public protocol Port: Hashable, Sendable, Identifiable {
   func removeFilter(for macAddress: EUI48, etherType: UInt16) throws
 
   func tx(_ packet: IEEE802Packet) async throws
-  var rxPackets: AnyAsyncSequence<IEEE802Packet> { get }
+  var rxPackets: AnyAsyncSequence<IEEE802Packet> { get async throws }
 }
 
 @_spi(MRPPrivate)

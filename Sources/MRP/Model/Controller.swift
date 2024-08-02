@@ -22,6 +22,9 @@
 // relative values of protocol timers, and the protocol design is based
 // primarily on the exchange of idempotent protocol state rather than commands.
 
+@preconcurrency
+import AsyncExtensions
+
 actor Controller<P: Port> {
   private var periodicTransmissionTime: Duration {
     .seconds(1)
@@ -59,7 +62,7 @@ actor Controller<P: Port> {
   private func _didAdd(port: P) async {
     ports.insert(port)
     rxTasks[port] = Task { @Sendable in
-      for try await packet in port.rxPackets {
+      for try await packet in try await port.rxPackets {
         try await applications[packet.etherType]?.rx(packet: packet, from: port)
       }
     }
