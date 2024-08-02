@@ -39,10 +39,12 @@ public struct LinuxPort: Port, Sendable {
 //  private let _ioring = IORing.shared
   private let _socket: Socket
 
-  private var _sll: sockaddr_ll {
-    let macAddress = macAddress
+  private static func _makeSll(macAddress: EUI48, protocol: UInt16 = 0, index: Int) -> sockaddr_ll {
     var sll = sockaddr_ll()
     sll.sll_family = UInt16(AF_PACKET)
+    sll.sll_protocol = `protocol`
+    sll.sll_ifindex = CInt(index)
+    sll.sll_halen = UInt8(ETH_ALEN)
     sll.sll_addr.0 = macAddress.0
     sll.sll_addr.1 = macAddress.1
     sll.sll_addr.2 = macAddress.2
@@ -50,6 +52,10 @@ public struct LinuxPort: Port, Sendable {
     sll.sll_addr.4 = macAddress.4
     sll.sll_addr.5 = macAddress.5
     return sll
+  }
+
+  private var _sll: sockaddr_ll {
+    Self._makeSll(macAddress: macAddress, index: 0)
   }
 
   init(rtnl: RTNLLink) throws {
@@ -87,11 +93,25 @@ public struct LinuxPort: Port, Sendable {
     _rtnl.macAddress
   }
 
-  public func addFilter(for macAddress: EUI48, etherType: UInt16) throws {}
+  public func addFilter(for macAddress: EUI48, etherType: UInt16) throws {
+    let sll = Self._makeSll(macAddress: macAddress, protocol: etherType, index: id)
+    try _socket.addMulticastMembership(for: sll)
+  }
 
-  public func removeFilter(for macAddress: EUI48, etherType: UInt16) throws {}
+  public func removeFilter(for macAddress: EUI48, etherType: UInt16) throws {
+    let sll = Self._makeSll(macAddress: macAddress, protocol: etherType, index: id)
+    try _socket.dropMulticastMembership(for: sll)
+  }
 
-  public func tx(_ packet: IEEE802Packet) async throws {}
+  public func tx(_ packet: IEEE802Packet) async throws {
+    var serializationContext = SerializationContext()
+    serializationContext.reserveCapacity(2 * Int(ETH_ALEN) + 6 + 2 + packet.data.count)
+    serializationContext.serialize(eui48: packet.destMacAddress)
+    serializationContext.serialize(eui48: packet.sourceMacAddress)
+    serializationContext.serialize(uint16: packet.etherType)
+    serializationContext.serialize(packet.data)
+    try await _socket.send(serializationContext.bytes)
+  }
 
   public var rxPackets: AnyAsyncSequence<IEEE802Packet> {
     _rxPackets.eraseToAnyAsyncSequence()

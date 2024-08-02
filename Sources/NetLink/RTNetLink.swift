@@ -16,6 +16,7 @@
 
 import AsyncAlgorithms
 import AsyncExtensions
+import CLinuxSockAddr
 import CNetLink
 import SystemPackage
 
@@ -72,7 +73,7 @@ public struct RTNLLink: NLObjectConstructible, Sendable, CustomStringConvertible
       // need to copy because address is not aligned on word boundary
       let _addr = rtnl_link_get_addr($0)
       var mac = [UInt8](repeating: 0, count: Int(nl_addr_get_len(_addr)))
-      precondition(mac.count == 6)
+      precondition(mac.count == Int(ETH_ALEN))
       _ = mac.withUnsafeMutableBytes {
         memcpy($0.baseAddress!, nl_addr_get_binary_addr(_addr), Int(nl_addr_get_len(_addr)))
       }

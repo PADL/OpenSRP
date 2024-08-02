@@ -59,6 +59,7 @@ PlatformTargets = [
   .target(
     name: "NetLink",
     dependencies: ["CNetLink",
+                   .product(name: "CLinuxSockAddr", package: "SocketAddress"),
                    .product(name: "SystemPackage", package: "swift-system"),
                    .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
                    "AsyncExtensions"],

@@ -35,6 +35,10 @@ protocol SerDes: Serializable, Deserializble {}
 struct SerializationContext {
   private(set) var bytes = [UInt8]()
 
+  mutating func reserveCapacity(_ capacity: Int) {
+    bytes.reserveCapacity(capacity)
+  }
+
   mutating func serialize(_ bytes: [UInt8], at index: Int? = nil) {
     if let index {
       precondition(self.bytes.count >= index + bytes.count)
@@ -58,6 +62,11 @@ struct SerializationContext {
 
   mutating func serialize(uint64: UInt32, at index: Int? = nil) {
     serialize(uint64.bigEndianBytes, at: index)
+  }
+
+  mutating func serialize(eui48: EUI48, at index: Int? = nil) {
+    let bytes = [eui48.0, eui48.1, eui48.2, eui48.3, eui48.4, eui48.0]
+    serialize(bytes, at: index)
   }
 
   var position: Int { bytes.count }
@@ -105,6 +114,11 @@ struct DeserializationContext {
 
   mutating func deserialize() throws -> UInt64 {
     try UInt64(bigEndianBytes: deserialize(count: 8))
+  }
+
+  mutating func deserialize() throws -> EUI48 {
+    let bytes = try deserialize(count: 6)
+    return (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5])
   }
 
   func peek() throws -> UInt8 {

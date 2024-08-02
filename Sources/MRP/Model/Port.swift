@@ -18,8 +18,8 @@ import AsyncExtensions
 
 @_spi(MRPPrivate)
 public struct IEEE802Packet: Sendable {
-  let sourceMacAddress: EUI48
   let destMacAddress: EUI48
+  let sourceMacAddress: EUI48
   let etherType: UInt16
   let data: [UInt8]
 }
@@ -54,8 +54,8 @@ public enum PortNotification<P: Port>: Sendable {
 extension Port {
   func tx(pdu: MRPDU, for application: some Application) async throws {
     let packet = try IEEE802Packet(
-      sourceMacAddress: macAddress,
       destMacAddress: application.groupMacAddress,
+      sourceMacAddress: macAddress,
       etherType: application.etherType,
       data: pdu.serialized()
     )
