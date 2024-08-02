@@ -17,14 +17,20 @@
 import CNetLink
 import Dispatch
 import NetLink
+@_spi(MRPPrivate)
+import MRP
 
 @main
-struct nlmonitor {
+struct portmon {
   public static func main() async throws {
-    let socket = try NLSocket(protocol: NETLINK_ROUTE)
-    try socket.notifyRtLinks()
-    for try await link in socket.notifications {
-      debugPrint("found link \(link)")
+    let portMonitor = try await LinuxPortMonitor()
+    print("Ports at startup:")
+    for port in try await portMonitor.ports {
+      print("\(port)")
+    }
+    print("Now monitoring for changes...")
+    for try await observation in portMonitor.observe {
+      print("\(observation)")
     }
   }
 }

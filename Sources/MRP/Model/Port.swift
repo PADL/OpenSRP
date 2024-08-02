@@ -16,14 +16,16 @@
 
 import AsyncExtensions
 
-struct IEEE802Packet: Sendable {
+@_spi(MRPPrivate)
+public struct IEEE802Packet: Sendable {
   let sourceMacAddress: EUI48
   let destMacAddress: EUI48
   let etherType: UInt16
   let data: [UInt8]
 }
 
-protocol Port: AnyObject, Hashable, Sendable, Identifiable {
+@_spi(MRPPrivate)
+public protocol Port: Hashable, Sendable, Identifiable {
   associatedtype ID = Int
 
   var isOperational: Bool { get }
@@ -42,7 +44,8 @@ protocol Port: AnyObject, Hashable, Sendable, Identifiable {
   var rxPackets: AnyAsyncSequence<IEEE802Packet> { get }
 }
 
-enum PortObservation<P: Port>: Sendable {
+@_spi(MRPPrivate)
+public enum PortObservation<P: Port>: Sendable {
   case added(P)
   case removed(P)
   case changed(P)
@@ -60,7 +63,8 @@ extension Port {
   }
 }
 
-protocol PortMonitor<P> {
+@_spi(MRPPrivate)
+public protocol PortMonitor<P> {
   associatedtype P: Port
 
   var observe: AnyAsyncSequence<PortObservation<P>> { get }

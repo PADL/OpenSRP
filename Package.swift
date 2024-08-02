@@ -46,6 +46,10 @@ PlatformProducts = [
     name: "nlmonitor",
     targets: ["nlmonitor"]
   ),
+  .executable(
+    name: "portmon",
+    targets: ["portmon"]
+  ),
 ]
 PlatformTargets = [
   .systemLibrary(
@@ -70,6 +74,11 @@ PlatformTargets = [
     name: "nlmonitor",
     dependencies: ["NetLink"],
     path: "Examples/nlmonitor"
+  ),
+  .executableTarget(
+    name: "portmon",
+    dependencies: ["MRP", "NetLink"],
+    path: "Examples/portmon"
   ),
 ]
 

@@ -21,7 +21,7 @@ import Dispatch
 import Glibc
 import SystemPackage
 
-public protocol NLObjectConstructible {}
+public protocol NLObjectConstructible: Sendable {}
 
 protocol _NLObjectConstructible: NLObjectConstructible {
   init(object: NLObject) throws
@@ -165,7 +165,7 @@ private func NLSocket_ErrCB(
   return 0
 }
 
-public final class NLSocket {
+public final class NLSocket: @unchecked Sendable {
   private typealias Continuation = CheckedContinuation<NLObjectConstructible, Error>
   private typealias Stream = AsyncThrowingStream<NLObjectConstructible, Error>
   public typealias Channel = AsyncThrowingChannel<NLObjectConstructible, Error>

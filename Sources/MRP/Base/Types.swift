@@ -44,7 +44,8 @@ struct OperationalStatistics {
   var failureToRegisterCount: Int
 }
 
-typealias EUI48 = (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8)
+@_spi(MRPPrivate)
+public typealias EUI48 = (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8)
 
 typealias MAPContextIdentifier = Int
 typealias MAPContext<P: Port> = Set<P>
