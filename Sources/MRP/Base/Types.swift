@@ -44,7 +44,6 @@ struct OperationalStatistics {
   var failureToRegisterCount: Int
 }
 
-@_spi(MRPPrivate)
 public typealias EUI48 = (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8)
 
 typealias MAPContextIdentifier = Int

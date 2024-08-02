@@ -45,22 +45,37 @@ actor Controller<P: Port> {
   )
 
   let portMonitor: any PortMonitor<P>
-  var portNotificationTask: Task<(), Error>!
+  var portNotificationTask: Task<(), Error>?
 
-  init(portMonitor: some PortMonitor<P>) async throws {
+  public init(portMonitor: some PortMonitor<P>) async throws {
     ports = try await Set(portMonitor.ports)
     self.portMonitor = portMonitor
-    portNotificationTask = Task { try await _handlePortNotifications() }
-
-    Task {
-      for port in ports {
-        await _didAdd(port: port)
-      }
-    }
   }
 
-  private func _didAdd(port: P) async {
+  public func run() async throws {
+    for port in ports {
+      try? await _didAdd(port: port)
+    }
+    portNotificationTask = Task { try await _handlePortNotifications() }
+  }
+
+  public func shutdown() async throws {
+    for port in ports {
+      await _didRemove(port: port)
+    }
+    portNotificationTask?.cancel()
+    portNotificationTask = nil
+  }
+
+  private func _didAdd(port: P) async throws {
     ports.insert(port)
+    for application in applications {
+      try? port.addFilter(
+        for: application.value.groupMacAddress,
+        etherType: application.value.etherType
+      )
+    }
+
     rxTasks[port] = Task { @Sendable in
       for try await packet in try await port.rxPackets {
         try await applications[packet.etherType]?.rx(packet: packet, from: port)
@@ -82,6 +97,12 @@ actor Controller<P: Port> {
   }
 
   private func _didRemove(port: P) async {
+    for application in applications {
+      try? port.removeFilter(
+        for: application.value.groupMacAddress,
+        etherType: application.value.etherType
+      )
+    }
     rxTasks[port]?.cancel()
     rxTasks[port] = nil
     ports.remove(port)
@@ -104,7 +125,7 @@ actor Controller<P: Port> {
     for try await portNotification in portMonitor.notifications {
       switch portNotification {
       case let .added(port):
-        await _didAdd(port: port)
+        try? await _didAdd(port: port)
       case let .removed(port):
         await _didRemove(port: port)
       case let .changed(port):
@@ -149,21 +170,11 @@ actor Controller<P: Port> {
     guard applications[application.etherType] == nil
     else { throw MRPError.applicationAlreadyRegistered }
     applications[application.etherType] = application
-    try ports.forEach { try $0.addFilter(
-      for: application.groupMacAddress,
-      etherType: application.etherType
-    ) }
   }
 
   func deregister(application: some Application<P>) throws {
     guard applications[application.etherType] == nil
     else { throw MRPError.applicationNotFound }
     applications.removeValue(forKey: application.etherType)
-    for port in ports {
-      try? port.removeFilter(
-        for: application.groupMacAddress,
-        etherType: application.etherType
-      )
-    }
   }
 }

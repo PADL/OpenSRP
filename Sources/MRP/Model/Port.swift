@@ -16,7 +16,6 @@
 
 import AsyncExtensions
 
-@_spi(MRPPrivate)
 public struct IEEE802Packet: Sendable, SerDes {
   let destMacAddress: EUI48
   let sourceMacAddress: EUI48
@@ -48,7 +47,6 @@ public struct IEEE802Packet: Sendable, SerDes {
   }
 }
 
-@_spi(MRPPrivate)
 public protocol Port: Hashable, Sendable, Identifiable {
   associatedtype ID = Int
 
@@ -68,7 +66,6 @@ public protocol Port: Hashable, Sendable, Identifiable {
   var rxPackets: AnyAsyncSequence<IEEE802Packet> { get async throws }
 }
 
-@_spi(MRPPrivate)
 public enum PortNotification<P: Port>: Sendable {
   case added(P)
   case removed(P)
@@ -87,7 +84,6 @@ extension Port {
   }
 }
 
-@_spi(MRPPrivate)
 public protocol PortMonitor<P>: Sendable {
   associatedtype P: Port
 

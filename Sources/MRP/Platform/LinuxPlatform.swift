@@ -27,7 +27,6 @@ import IORingUtils
 import NetLink
 import SocketAddress
 
-@_spi(MRPPrivate)
 public struct LinuxPort: Port, Sendable {
   public typealias ID = Int
 
@@ -123,7 +122,6 @@ public struct LinuxPort: Port, Sendable {
   }
 }
 
-@_spi(MRPPrivate)
 public struct LinuxPortMonitor: PortMonitor, Sendable {
   public typealias Port = LinuxPort
 
