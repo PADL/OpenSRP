@@ -18,10 +18,13 @@
 
 import AsyncAlgorithms
 import AsyncExtensions
+import CLinuxSockAddr
 import CNetLink
+import Glibc
 import IORing
 import IORingUtils
 import NetLink
+import SocketAddress
 
 @_spi(MRPPrivate)
 public struct LinuxPort: Port, Sendable {
@@ -33,11 +36,27 @@ public struct LinuxPort: Port, Sendable {
 
   private let _rtnl: RTNLLink
   private let _rxPackets = AsyncChannel<IEEE802Packet>()
-  private let _ioring = IORing.shared
-//  private let _socket: Socket
+//  private let _ioring = IORing.shared
+  private let _socket: Socket
 
-  init(rtnl: RTNLLink) {
+  private var _sll: sockaddr_ll {
+    let macAddress = macAddress
+    var sll = sockaddr_ll()
+    sll.sll_family = UInt16(AF_PACKET)
+    sll.sll_addr.0 = macAddress.0
+    sll.sll_addr.1 = macAddress.1
+    sll.sll_addr.2 = macAddress.2
+    sll.sll_addr.3 = macAddress.3
+    sll.sll_addr.4 = macAddress.4
+    sll.sll_addr.5 = macAddress.5
+    return sll
+  }
+
+  init(rtnl: RTNLLink) throws {
     _rtnl = rtnl
+    _socket = try Socket(ring: IORing.shared, domain: sa_family_t(AF_PACKET), type: SOCK_RAW)
+    try _socket.bind(to: _sll)
+    try _socket.bindTo(device: name)
   }
 
   public func hash(into hasher: inout Hasher) {
@@ -45,15 +64,15 @@ public struct LinuxPort: Port, Sendable {
   }
 
   public var isOperational: Bool {
-    true
+    _rtnl.flags & IFF_RUNNING != 0
   }
 
   public var isEnabled: Bool {
-    true
+    _rtnl.flags & IFF_UP != 0
   }
 
   public var isPointToPoint: Bool {
-    false
+    _rtnl.flags & IFF_POINTOPOINT != 0
   }
 
   public var name: String {
@@ -65,7 +84,7 @@ public struct LinuxPort: Port, Sendable {
   }
 
   public var macAddress: EUI48 {
-    fatalError()
+    _rtnl.macAddress
   }
 
   public func addFilter(for macAddress: EUI48, etherType: UInt16) throws {}
@@ -90,11 +109,11 @@ public struct LinuxPortMonitor: PortMonitor, Sendable {
     try socket.notifyRtLinks()
   }
 
-  public var ports: [P] {
+  public var ports: [Port] {
     get async throws {
       try await socket.getRtLinks().compactMap { link in
         if case let .new(link) = link {
-          P(rtnl: link)
+          try Port(rtnl: link)
         } else {
           nil
         }
@@ -102,14 +121,14 @@ public struct LinuxPortMonitor: PortMonitor, Sendable {
     }
   }
 
-  public var observe: AnyAsyncSequence<PortObservation<Port>> {
+  public var notifications: AnyAsyncSequence<PortNotification<Port>> {
     socket.notifications.compactMap { @Sendable notification in
       let link = notification as! RTNLLinkMessage
       switch link {
       case let .new(link):
-        return .added(P(rtnl: link))
+        return try .added(Port(rtnl: link))
       case let .del(link):
-        return .removed(P(rtnl: link))
+        return try .removed(Port(rtnl: link))
       }
     }.eraseToAnyAsyncSequence()
   }

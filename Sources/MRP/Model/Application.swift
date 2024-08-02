@@ -39,7 +39,7 @@ protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
   func add(participant: Participant<Self>, for contextIdentifier: MAPContextIdentifier) throws
   func remove(participant: Participant<Self>, for contextIdentifier: MAPContextIdentifier) throws
 
-  func onPortObservation(_: PortObservation<P>) async throws
+  func onPortNotification(_: PortNotification<P>) async throws
 
   @discardableResult
   func apply<T>(
@@ -181,7 +181,7 @@ protocol BaseApplication: Application where P == P {
   var _mad: Weak<Controller<P>> { get }
   var _participants: ManagedCriticalState<[Participant<Self>]> { get }
 
-  func onPortObservationDelegate(_: PortObservation<P>)
+  func onPortNotificationDelegate(_: PortNotification<P>)
 }
 
 extension BaseApplication {
@@ -233,8 +233,8 @@ extension BaseApplication {
     return ret
   }
 
-  func onPortObservation(_ observation: PortObservation<P>) async throws {
-    switch observation {
+  func onPortNotification(_ notification: PortNotification<P>) async throws {
+    switch notification {
     case let .added(port):
       guard await (try? findParticipant(for: MAPBaseSpanningTreeContext, port: port)) == nil
       else {
@@ -261,7 +261,7 @@ extension BaseApplication {
       )
       try await participant.redeclare()
     }
-    onPortObservationDelegate(observation)
+    onPortNotificationDelegate(notification)
   }
 
   func joinIndicated(

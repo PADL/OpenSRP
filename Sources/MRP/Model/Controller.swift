@@ -42,17 +42,18 @@ actor Controller<P: Port> {
   )
 
   let portMonitor: any PortMonitor<P>
-  var portObservationTask: Task<(), Error>!
+  var portNotificationTask: Task<(), Error>!
 
-  init(portMonitor: some PortMonitor<P>) async {
+  init(portMonitor: some PortMonitor<P>) async throws {
     self.portMonitor = portMonitor
 
-    portObservationTask = Task { try await _handlePortObservations() }
+    ports = try await Set(portMonitor.ports)
+    portNotificationTask = Task { try await _handlePortNotifications() }
   }
 
-  private func _handlePortObservations() async throws {
-    for try await portObservation in portMonitor.observe {
-      switch portObservation {
+  private func _handlePortNotifications() async throws {
+    for try await portNotification in portMonitor.notifications {
+      switch portNotification {
       case let .added(port):
         ports.insert(port)
         rxTasks[port] = Task { @Sendable in
@@ -78,7 +79,7 @@ actor Controller<P: Port> {
         ports.update(with: port)
       }
       // forward port observation onto applications
-      try? await apply(with: portObservation, (any Application<P>).onPortObservation(_:))
+      try? await apply(with: portNotification, (any Application<P>).onPortNotification(_:))
     }
   }
 
@@ -111,7 +112,7 @@ actor Controller<P: Port> {
   }
 
   deinit {
-    portObservationTask?.cancel()
+    portNotificationTask?.cancel()
   }
 
   func register(application: some Application<P>) throws {

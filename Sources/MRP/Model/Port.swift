@@ -45,7 +45,7 @@ public protocol Port: Hashable, Sendable, Identifiable {
 }
 
 @_spi(MRPPrivate)
-public enum PortObservation<P: Port>: Sendable {
+public enum PortNotification<P: Port>: Sendable {
   case added(P)
   case removed(P)
   case changed(P)
@@ -64,8 +64,9 @@ extension Port {
 }
 
 @_spi(MRPPrivate)
-public protocol PortMonitor<P> {
+public protocol PortMonitor<P>: Sendable {
   associatedtype P: Port
 
-  var observe: AnyAsyncSequence<PortObservation<P>> { get }
+  var ports: [P] { get async throws }
+  var notifications: AnyAsyncSequence<PortNotification<P>> { get }
 }

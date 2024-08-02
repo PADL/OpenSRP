@@ -70,5 +70,5 @@ final class MockApplication<P: Port>: BaseApplication, Sendable where P == P {
     return .normalParticipant
   }
 
-  func onPortObservationDelegate(_: PortObservation<P>) {}
+  func onPortNotificationDelegate(_: PortNotification<P>) {}
 }

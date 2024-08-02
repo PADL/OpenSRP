@@ -29,8 +29,8 @@ struct portmon {
       print("\(port)")
     }
     print("Now monitoring for changes...")
-    for try await observation in portMonitor.observe {
-      print("\(observation)")
+    for try await notification in portMonitor.notifications {
+      print("\(notification)")
     }
   }
 }
