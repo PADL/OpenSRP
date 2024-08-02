@@ -38,18 +38,29 @@ PlatformProducts = [
     name: "CNetLink",
     targets: ["CNetLink"]
   ),
+  .executable(
+    name: "nldump",
+    targets: ["nldump"]
+  ),
 ]
 PlatformTargets = [
   .systemLibrary(
     name: "CNetLink",
     providers: [.apt(["libnl-3-dev"])]
-
   ),
   .target(
     name: "NetLink",
     dependencies: ["CNetLink",
-                   .product(name: "SystemPackage", package: "swift-system")],
-    cSettings: [.unsafeFlags(["-I", "/usr/include/libnl3"])]
+                   .product(name: "SystemPackage", package: "swift-system"),
+                   .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
+                   "AsyncExtensions"],
+    cSettings: [.unsafeFlags(["-I", "/usr/include/libnl3"])],
+    linkerSettings: [.linkedLibrary("nl-3"), .linkedLibrary("nl-route-3")]
+  ),
+  .executableTarget(
+    name: "nldump",
+    dependencies: ["NetLink"],
+    path: "Examples/nldump"
   ),
 ]
 
