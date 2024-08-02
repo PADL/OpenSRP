@@ -60,13 +60,13 @@ public enum RTNLLinkMessage: NLObjectConstructible, Sendable {
 }
 
 public extension NLSocket {
-  func subscribeRtLinks() async throws -> AnyAsyncSequence<RTNLLinkMessage> {
+  func getRtLinks() async throws -> AnyAsyncSequence<RTNLLinkMessage> {
     let message = try NLMessage(socket: self, type: RTM_GETLINK, flags: NLM_F_REQUEST | NLM_F_DUMP)
     var ifinfo = ifinfomsg()
     try withUnsafeBytes(of: &ifinfo) {
       try message.append(Array($0))
     }
     try message.put(u32: UInt32(IFLA_EXT_MASK), for: RTEXT_FILTER_BRVLAN)
-    return try request_N(message: message).map { try RTNLLinkMessage(object: $0) }.eraseToAnyAsyncSequence()
+    return try streamRequest(message: message).map { try RTNLLinkMessage(object: $0) }.eraseToAnyAsyncSequence()
   }
 }

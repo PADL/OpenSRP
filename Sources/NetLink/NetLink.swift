@@ -111,37 +111,61 @@ public final class NLObject: @unchecked Sendable, Equatable, Hashable, CustomStr
   }
 }
 
-private func NLSocket_CB(
+private func NLSocket_CB_VALID(
   _ msg: OpaquePointer!,
   _ arg: UnsafeMutableRawPointer!
 ) -> CInt {
   let nlSocket = Unmanaged<NLSocket>.fromOpaque(arg).takeUnretainedValue()
-  let hdr = nlmsg_hdr(msg)!
+  let hdr = nlmsg_hdr(msg)!.pointee
   do {
     let object = try NLObject(msg: msg)
-    nlSocket.resume(sequence: hdr.pointee.nlmsg_seq, with: Result.success(object))
+    nlSocket.yield(sequence: hdr.nlmsg_seq, with: Result.success(object))
   } catch {
-    nlSocket.resume(sequence: hdr.pointee.nlmsg_seq, with: Result.failure(error))
+    nlSocket.yield(sequence: hdr.nlmsg_seq, with: Result.failure(error))
+    return CInt(NL_SKIP.rawValue)
   }
-  return 0
+  return CInt(NL_OK.rawValue)
+}
+
+private func NLSocket_CB_FINISH(
+  _ msg: OpaquePointer!,
+  _ arg: UnsafeMutableRawPointer!
+) -> CInt {
+  let nlSocket = Unmanaged<NLSocket>.fromOpaque(arg).takeUnretainedValue()
+  let hdr = nlmsg_hdr(msg)!.pointee
+  nlSocket.finish(sequence: hdr.nlmsg_seq)
+  return CInt(NL_STOP.rawValue)
 }
 
 private func NLSocket_ErrCB(
-  _ nla: UnsafeMutablePointer<sockaddr_nl>?,
-  _ err: UnsafeMutablePointer<nlmsgerr>?,
-  _ arg: UnsafeMutableRawPointer?
+  _ nla: UnsafeMutablePointer<sockaddr_nl>!,
+  _ err: UnsafeMutablePointer<nlmsgerr>!,
+  _ arg: UnsafeMutableRawPointer!
 ) -> CInt {
-  debugPrint("NLSocket_ErrCB")
+  let nlSocket = Unmanaged<NLSocket>.fromOpaque(arg).takeUnretainedValue()
+  let hdr = err.pointee.msg
+  nlSocket.yield(sequence: hdr.nlmsg_seq, with: Result.failure(Errno(rawValue: -err.pointee.error)))
   return 0
 }
 
 public final class NLSocket {
   private typealias Continuation = CheckedContinuation<NLObject, Error>
+  private typealias Stream = AsyncThrowingStream<NLObject, Error>
   private typealias Channel = AsyncThrowingChannel<NLObject, Error>
 
   private enum _Request {
-    case response(Continuation)
-    case event(Channel)
+    case continuation(Continuation)
+    case stream(Stream.Continuation)
+    case channel(Channel)
+
+    var hasMultipleResults: Bool {
+      switch self {
+      case .continuation:
+        return false
+      default:
+        return true
+      }
+    }
   }
 
   fileprivate let _sk: OpaquePointer!
@@ -168,7 +192,14 @@ public final class NLSocket {
       sk,
       NL_CB_VALID,
       NL_CB_CUSTOM,
-      NLSocket_CB,
+      NLSocket_CB_VALID,
+      Unmanaged.passUnretained(self).toOpaque()
+    )
+    nl_socket_modify_cb(
+      sk,
+      NL_CB_FINISH,
+      NL_CB_CUSTOM,
+      NLSocket_CB_FINISH,
       Unmanaged.passUnretained(self).toOpaque()
     )
     nl_socket_modify_err_cb(
@@ -227,23 +258,39 @@ public final class NLSocket {
     nl_socket_use_seq(_sk)
   }
 
-  fileprivate func resume(
-    sequence: UInt32,
-    with result: Result<NLObject, Error>
-  ) {
-    var request: _Request!
+  private func _lookup(sequence: UInt32, forceRemove: Bool) -> _Request? {
+    var request: _Request?
 
     _requests.withCriticalRegion {
       request = $0[sequence]
-      if case .response = request {
+      if let request, !request.hasMultipleResults || forceRemove {
         $0.removeValue(forKey: sequence)
       }
     }
 
-    switch request! {
-    case .response(let continuation):
+    return request
+  }
+
+  fileprivate func finish(sequence: UInt32) {
+    guard let request = _lookup(sequence: sequence, forceRemove: true),
+      case let .stream(continuation) = request else {
+      return
+    }
+    continuation.finish()
+  }
+
+  fileprivate func yield(
+    sequence: UInt32,
+    with result: Result<NLObject, Error>
+  ) {
+    let request = _lookup(sequence: sequence, forceRemove: false)!
+
+    switch request {
+    case .continuation(let continuation):
       continuation.resume(with: result)
-    case .event(let channel):
+    case .stream(let continuation):
+      continuation.yield(with: result)
+    case .channel(let channel):
       switch result {
       case .success(let value):
         Task { await channel.send(value) }
@@ -253,36 +300,53 @@ public final class NLSocket {
     }
   }
 
-  func request_N(
+  func continuationRequest(
+    message: consuming NLMessage
+  ) async throws -> NLObject {
+    let sequence = message.sequence
+    return try await withTaskCancellationHandler(operation: {
+      try await withCheckedThrowingContinuation { continuation in
+        _requests.withCriticalRegion { $0[sequence] = .continuation(continuation) }
+        do {
+          try message.send(on: self)
+        } catch {
+          yield(sequence: sequence, with: .failure(error))
+        }
+      }
+    }, onCancel: {
+      yield(sequence: sequence, with: .failure(CancellationError()))
+    })
+  }
+
+  func streamRequest(
+    message: consuming NLMessage
+  ) throws -> AsyncThrowingStream<NLObject, Error> {
+    let sequence = message.sequence
+    var stream: Stream!
+    _requests.withCriticalRegion { requests in
+      let _stream = Stream { continuation in
+        requests[sequence] = .stream(continuation)
+        continuation.onTermination = { @Sendable _ in
+        }
+      }
+      stream = _stream
+    }
+    try message.send(on: self)
+    return stream
+  }
+
+  func channelRequest(
     message: consuming NLMessage
   ) throws -> AnyAsyncSequence<NLObject> {
     let sequence = message.sequence
     var channel: Channel!
     _requests.withCriticalRegion {
       let _channel = Channel()
-      $0[sequence] = .event(_channel)
+      $0[sequence] = .channel(_channel)
       channel = _channel
     }
     try message.send(on: self)
     return channel.eraseToAnyAsyncSequence()
-  }
-
-  func request_N(
-    message: consuming NLMessage
-  ) async throws -> NLObject {
-    let sequence = message.sequence
-    return try await withTaskCancellationHandler(operation: {
-      try await withCheckedThrowingContinuation { continuation in
-        _requests.withCriticalRegion { $0[sequence] = .response(continuation) }
-        do {
-          try message.send(on: self)
-        } catch {
-          resume(sequence: sequence, with: .failure(error))
-        }
-      }
-    }, onCancel: {
-      resume(sequence: sequence, with: .failure(CancellationError()))
-    })
   }
 }
 
