@@ -24,6 +24,7 @@
 
 @preconcurrency
 import AsyncExtensions
+import Logging
 
 actor Controller<P: Port> {
   private var periodicTransmissionTime: Duration {
@@ -35,10 +36,10 @@ actor Controller<P: Port> {
     return Duration.seconds(leaveAllTime)
   }
 
-  private var applications = [UInt16: any Application<P>]()
+  private var _applications = [UInt16: any Application<P>]()
   private(set) var ports = Set<P>()
-  private var rxTasks = [P: Task<(), Error>]()
-  private var periodicTimers = [P: Timer]()
+  private var _rxTasks = [P: Task<(), Error>]()
+  private var _periodicTimers = [P: Timer]()
   private let _administrativeControl = ManagedCriticalState(
     AdministrativeControl
       .normalParticipant
@@ -46,10 +47,14 @@ actor Controller<P: Port> {
 
   let portMonitor: any PortMonitor<P>
   var portNotificationTask: Task<(), Error>?
+  let logger: Logger
 
   public init(portMonitor: some PortMonitor<P>) async throws {
     ports = try await Set(portMonitor.ports)
     self.portMonitor = portMonitor
+    var logger = Logger(label: "com.padl.SwiftMRP")
+    logger.logLevel = .trace
+    self.logger = logger
   }
 
   public func run() async throws {
@@ -69,19 +74,19 @@ actor Controller<P: Port> {
 
   private func _didAdd(port: P) async throws {
     ports.insert(port)
-    for application in applications {
+    for application in _applications {
       try? port.addFilter(
         for: application.value.groupMacAddress,
         etherType: application.value.etherType
       )
     }
 
-    rxTasks[port] = Task { @Sendable in
+    _rxTasks[port] = Task { @Sendable in
       for try await packet in try await port.rxPackets {
-        try await applications[packet.etherType]?.rx(packet: packet, from: port)
+        try await _applications[packet.etherType]?.rx(packet: packet, from: port)
       }
     }
-    var periodicTimer = periodicTimers[port]
+    var periodicTimer = _periodicTimers[port]
     if periodicTimer == nil {
       periodicTimer = Timer {
         try await self.apply { @Sendable application in
@@ -97,16 +102,16 @@ actor Controller<P: Port> {
   }
 
   private func _didRemove(port: P) async {
-    for application in applications {
+    for application in _applications {
       try? port.removeFilter(
         for: application.value.groupMacAddress,
         etherType: application.value.etherType
       )
     }
-    rxTasks[port]?.cancel()
-    rxTasks[port] = nil
+    _rxTasks[port]?.cancel()
+    _rxTasks[port] = nil
     ports.remove(port)
-    periodicTimers[port]?.stop()
+    _periodicTimers[port]?.stop()
     try? await apply(
       with: PortNotification.removed(port),
       (any Application<P>).onPortNotification(_:)
@@ -135,18 +140,18 @@ actor Controller<P: Port> {
   }
 
   func periodicEnabled() {
-    periodicTimers.forEach { $0.value.start(interval: periodicTransmissionTime) }
+    _periodicTimers.forEach { $0.value.start(interval: periodicTransmissionTime) }
   }
 
   func periodicDisabled() {
-    periodicTimers.forEach { $0.value.stop() }
+    _periodicTimers.forEach { $0.value.stop() }
   }
 
   typealias MADApplyFunction = (any Application<P>) async throws -> ()
 
   @Sendable
   private func apply(_ block: MADApplyFunction) async rethrows {
-    for application in applications {
+    for application in _applications {
       try await block(application.value)
     }
   }
@@ -167,14 +172,14 @@ actor Controller<P: Port> {
   }
 
   func register(application: some Application<P>) throws {
-    guard applications[application.etherType] == nil
+    guard _applications[application.etherType] == nil
     else { throw MRPError.applicationAlreadyRegistered }
-    applications[application.etherType] = application
+    _applications[application.etherType] = application
   }
 
   func deregister(application: some Application<P>) throws {
-    guard applications[application.etherType] == nil
+    guard _applications[application.etherType] == nil
     else { throw MRPError.applicationNotFound }
-    applications.removeValue(forKey: application.etherType)
+    _applications.removeValue(forKey: application.etherType)
   }
 }

@@ -35,6 +35,8 @@
 // (8.4).
 //
 
+import Logging
+
 enum ParticipantType {
   case full
   case pointToPoint
@@ -132,6 +134,7 @@ final actor Participant<A: Application>: Equatable {
   private var _leaveAllState = LeaveAllState.Passive
   private var _leaveAllTimer: Timer!
   private var _jointimer: Timer!
+  private let _logger: Logger
   fileprivate let _type: ParticipantType
 
   init(
@@ -152,6 +155,8 @@ final actor Participant<A: Application>: Equatable {
     } else {
       _type = .full
     }
+
+    _logger = controller.logger
 
     // The Join Period Timer, jointimer, controls the interval between transmit
     // opportunities that are applied to the Applicant state machine. An

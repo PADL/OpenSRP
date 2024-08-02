@@ -37,7 +37,11 @@ public struct LinuxPort: Port, Sendable {
   private let _rtnl: RTNLLink
   private let _socket: Socket
 
-  private static func _makeSll(macAddress: EUI48, etherType: UInt16 = UInt16(ETH_P_ALL), index: Int) -> sockaddr_ll {
+  private static func _makeSll(
+    macAddress: EUI48,
+    etherType: UInt16 = UInt16(ETH_P_ALL),
+    index: Int
+  ) -> sockaddr_ll {
     var sll = sockaddr_ll()
     sll.sll_family = UInt16(AF_PACKET)
     sll.sll_protocol = etherType.bigEndian
@@ -108,7 +112,8 @@ public struct LinuxPort: Port, Sendable {
   public func tx(_ packet: IEEE802Packet) async throws {
     var serializationContext = SerializationContext()
     try packet.serialize(into: &serializationContext)
-    // let address = Self._makeSll(macAddress: packet.destMacAddress, etherType: packet.etherType, index: id)
+    // let address = Self._makeSll(macAddress: packet.destMacAddress, etherType: packet.etherType,
+    // index: id)
     // namespace issue means we can't instantiate IORing.Message by name
     // try await _socket.sendMessage(.init(name: nil, buffer: serializationContext.bytes))
     try await _socket.send(serializationContext.bytes)

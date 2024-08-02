@@ -14,6 +14,8 @@
 // limitations under the License.
 //
 
+import Logging
+
 enum AdministrativeControl {
   case normalParticipant // the state machine participates normally in MRP exchanges
   case newOnlyParticipant // the state machine sends only New MRP messages
@@ -77,6 +79,10 @@ extension Application {
 
   static func == (lhs: Self, rhs: Self) -> Bool {
     lhs.etherType == rhs.etherType
+  }
+
+  var logger: Logger? {
+    mad?.logger
   }
 }
 
