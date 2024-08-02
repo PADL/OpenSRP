@@ -37,10 +37,10 @@ public struct LinuxPort: Port, Sendable {
   private let _rtnl: RTNLLink
   private let _socket: Socket
 
-  private static func _makeSll(macAddress: EUI48, protocol: UInt16 = 0, index: Int) -> sockaddr_ll {
+  private static func _makeSll(macAddress: EUI48, etherType: UInt16 = UInt16(ETH_P_ALL), index: Int) -> sockaddr_ll {
     var sll = sockaddr_ll()
     sll.sll_family = UInt16(AF_PACKET)
-    sll.sll_protocol = `protocol`
+    sll.sll_protocol = etherType.bigEndian
     sll.sll_ifindex = CInt(index)
     sll.sll_halen = UInt8(ETH_ALEN)
     sll.sll_addr.0 = macAddress.0
@@ -93,14 +93,14 @@ public struct LinuxPort: Port, Sendable {
 
   public func addFilter(for macAddress: EUI48, etherType: UInt16) throws {
     if macAddress.0 & 1 != 0 {
-      let sll = Self._makeSll(macAddress: macAddress, protocol: etherType, index: id)
+      let sll = Self._makeSll(macAddress: macAddress, etherType: etherType, index: id)
       try _socket.addMulticastMembership(for: sll)
     }
   }
 
   public func removeFilter(for macAddress: EUI48, etherType: UInt16) throws {
     if macAddress.0 & 1 != 0 {
-      let sll = Self._makeSll(macAddress: macAddress, protocol: etherType, index: id)
+      let sll = Self._makeSll(macAddress: macAddress, etherType: etherType, index: id)
       try _socket.dropMulticastMembership(for: sll)
     }
   }
@@ -108,8 +108,9 @@ public struct LinuxPort: Port, Sendable {
   public func tx(_ packet: IEEE802Packet) async throws {
     var serializationContext = SerializationContext()
     try packet.serialize(into: &serializationContext)
+    // let address = Self._makeSll(macAddress: packet.destMacAddress, etherType: packet.etherType, index: id)
     // namespace issue means we can't instantiate IORing.Message by name
-    try await _socket.sendMessage(.init(buffer: serializationContext.bytes))
+    try await _socket.sendMessage(.init(name: nil, buffer: serializationContext.bytes))
   }
 
   public var rxPackets: AnyAsyncSequence<IEEE802Packet> {
