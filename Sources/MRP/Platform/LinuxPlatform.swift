@@ -93,13 +93,17 @@ public struct LinuxPort: Port, Sendable {
   }
 
   public func addFilter(for macAddress: EUI48, etherType: UInt16) throws {
-    let sll = Self._makeSll(macAddress: macAddress, protocol: etherType, index: id)
-    try _socket.addMulticastMembership(for: sll)
+    if macAddress.0 & 1 != 0 {
+      let sll = Self._makeSll(macAddress: macAddress, protocol: etherType, index: id)
+      try _socket.addMulticastMembership(for: sll)
+    }
   }
 
   public func removeFilter(for macAddress: EUI48, etherType: UInt16) throws {
-    let sll = Self._makeSll(macAddress: macAddress, protocol: etherType, index: id)
-    try _socket.dropMulticastMembership(for: sll)
+    if macAddress.0 & 1 != 0 {
+      let sll = Self._makeSll(macAddress: macAddress, protocol: etherType, index: id)
+      try _socket.dropMulticastMembership(for: sll)
+    }
   }
 
   public func tx(_ packet: IEEE802Packet) async throws {

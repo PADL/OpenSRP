@@ -20,6 +20,7 @@ import CLinuxSockAddr
 import CNetLink
 import SystemPackage
 
+// TODO: if object is never mutated, we can probably remove the locks
 public struct RTNLLink: NLObjectConstructible, Sendable, CustomStringConvertible {
   private let _object: NLObject
 
