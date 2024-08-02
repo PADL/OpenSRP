@@ -16,7 +16,19 @@
 
 import AsyncExtensions
 
-public struct IEEE802Packet: Sendable, SerDes {
+private func _macAddressToString(_ macAddress: EUI48) -> String {
+  String(
+    format: "%02x:%02x:%02x:%02x:%02x:%02x",
+    macAddress.0,
+    macAddress.1,
+    macAddress.2,
+    macAddress.3,
+    macAddress.4,
+    macAddress.5
+  )
+}
+
+public struct IEEE802Packet: Sendable, SerDes, CustomStringConvertible {
   let destMacAddress: EUI48
   let sourceMacAddress: EUI48
   let etherType: UInt16
@@ -44,6 +56,10 @@ public struct IEEE802Packet: Sendable, SerDes {
     serializationContext.serialize(eui48: sourceMacAddress)
     serializationContext.serialize(uint16: etherType)
     serializationContext.serialize(data)
+  }
+
+  public var description: String {
+    "IEEE802Packet(destMacAddress: \(_macAddressToString(destMacAddress)), sourceMacAddress: \(_macAddressToString(sourceMacAddress)), etherType: \(String(format: "%04x", etherType)), packetLength: \(data.count)"
   }
 }
 
