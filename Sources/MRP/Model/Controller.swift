@@ -58,6 +58,7 @@ actor Controller<P: Port> {
   }
 
   public func run() async throws {
+    logger.debug("starting \(self)")
     for port in ports {
       try? await _didAdd(port: port)
     }
@@ -65,6 +66,7 @@ actor Controller<P: Port> {
   }
 
   public func shutdown() async throws {
+    logger.debug("shutting down \(self)")
     for port in ports {
       await _didRemove(port: port)
     }
@@ -73,6 +75,8 @@ actor Controller<P: Port> {
   }
 
   private func _didAdd(port: P) async throws {
+    logger.debug("added port \(port)")
+
     ports.insert(port)
     for application in _applications {
       try? port.addFilter(
@@ -102,6 +106,8 @@ actor Controller<P: Port> {
   }
 
   private func _didRemove(port: P) async {
+    logger.debug("removed port \(port)")
+
     for application in _applications {
       try? port.removeFilter(
         for: application.value.groupMacAddress,
@@ -119,6 +125,8 @@ actor Controller<P: Port> {
   }
 
   private func _didUpdate(port: P) async {
+    logger.debug("updated port \(port)")
+
     ports.update(with: port)
     try? await apply(
       with: PortNotification.changed(port),
@@ -140,10 +148,12 @@ actor Controller<P: Port> {
   }
 
   func periodicEnabled() {
+    logger.trace("enabled periodic timer")
     _periodicTimers.forEach { $0.value.start(interval: periodicTransmissionTime) }
   }
 
   func periodicDisabled() {
+    logger.trace("disabled periodic timer")
     _periodicTimers.forEach { $0.value.stop() }
   }
 
@@ -175,11 +185,13 @@ actor Controller<P: Port> {
     guard _applications[application.etherType] == nil
     else { throw MRPError.applicationAlreadyRegistered }
     _applications[application.etherType] = application
+    logger.info("registered application \(application)")
   }
 
   func deregister(application: some Application<P>) throws {
     guard _applications[application.etherType] == nil
     else { throw MRPError.applicationNotFound }
     _applications.removeValue(forKey: application.etherType)
+    logger.info("deregistered application \(application)")
   }
 }
