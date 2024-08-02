@@ -110,13 +110,15 @@ public struct LinuxPort: Port, Sendable {
     try packet.serialize(into: &serializationContext)
     // let address = Self._makeSll(macAddress: packet.destMacAddress, etherType: packet.etherType, index: id)
     // namespace issue means we can't instantiate IORing.Message by name
-    try await _socket.sendMessage(.init(name: nil, buffer: serializationContext.bytes))
+    // try await _socket.sendMessage(.init(name: nil, buffer: serializationContext.bytes))
+    try await _socket.send(serializationContext.bytes)
   }
 
   public var rxPackets: AnyAsyncSequence<IEEE802Packet> {
     get async throws {
-      try await _socket.receiveMessages(count: _rtnl.mtu).compactMap { message in
-        var deserializationContext = DeserializationContext(message.buffer)
+      let rxPackets: AnyAsyncSequence<[UInt8]> = try await _socket.receive(count: _rtnl.mtu)
+      return rxPackets.compactMap { buffer in
+        var deserializationContext = DeserializationContext(buffer)
         return try? IEEE802Packet(deserializationContext: &deserializationContext)
       }.eraseToAnyAsyncSequence()
     }
