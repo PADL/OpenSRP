@@ -48,35 +48,43 @@ public struct RTNLLink: NLObjectConstructible, Sendable, CustomStringConvertible
   }
 
   public var description: String {
-    "\(index):\(name):\(family):\(macAddressString):\(String(format: "%08x", flags))"
+    "\(index):\(name):\(family):\(addressString):\(String(format: "%08x", flags))"
   }
 
   public var flags: Int {
     Int(rtnl_link_get_flags(_obj))
   }
 
-  public var macAddressString: String {
-    let macAddress = macAddress
+  public var addressString: String {
+    let address = address
     return String(
       format: "%02x:%02x:%02x:%02x:%02x:%02x",
-      macAddress.0,
-      macAddress.1,
-      macAddress.2,
-      macAddress.3,
-      macAddress.4,
-      macAddress.5
+      address.0,
+      address.1,
+      address.2,
+      address.3,
+      address.4,
+      address.5
     )
   }
 
-  public var macAddress: (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8) {
-    // need to copy because address is not aligned on word boundary
-    let _addr = rtnl_link_get_addr(_obj)
-    var mac = [UInt8](repeating: 0, count: Int(nl_addr_get_len(_addr)))
+  private func _makeAddress(_ addr: OpaquePointer)
+    -> (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8)
+  {
+    var mac = [UInt8](repeating: 0, count: Int(nl_addr_get_len(addr)))
     precondition(mac.count == Int(ETH_ALEN))
     _ = mac.withUnsafeMutableBytes {
-      memcpy($0.baseAddress!, nl_addr_get_binary_addr(_addr), Int(nl_addr_get_len(_addr)))
+      memcpy($0.baseAddress!, nl_addr_get_binary_addr(addr), Int(nl_addr_get_len(addr)))
     }
     return (mac[0], mac[1], mac[2], mac[3], mac[4], mac[5])
+  }
+
+  public var address: (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8) {
+    _makeAddress(rtnl_link_get_addr(_obj))
+  }
+
+  public var broadcastAddress: (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8) {
+    _makeAddress(rtnl_link_get_broadcast(_obj))
   }
 
   public var family: Int {

@@ -96,7 +96,7 @@ public struct LinuxPort: Port, Sendable {
   }
 
   public var macAddress: EUI48 {
-    _rtnl.macAddress
+    _rtnl.address
   }
 
   public var pvid: UInt16? {
