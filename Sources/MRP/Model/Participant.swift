@@ -560,7 +560,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
     let registrarActions = registrar?.handle(event: event, flags: smFlags) ?? []
     if participant._logger.logLevel == .trace {
       logString += "applicantState \(applicant) registrarState \(registrar?.description ?? "none")"
-      participant._logger.trace("\(logString) -- actions \(applicantActions + registrarActions)")
+      participant._logger.trace("\(logString!) -- actions \(applicantActions + registrarActions)")
     }
     for action in applicantActions + registrarActions {
       try await handle(action: action)
