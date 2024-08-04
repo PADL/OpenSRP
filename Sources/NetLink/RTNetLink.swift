@@ -27,16 +27,12 @@ public struct RTNLLink: NLObjectConstructible, Sendable, CustomStringConvertible
     _object = object
   }
 
-  private var _obj: OpaquePointer {
+  fileprivate var _obj: OpaquePointer {
     _object._obj
   }
 
   public var name: String {
     String(cString: rtnl_link_get_name(_obj))
-  }
-
-  public var master: Int {
-    Int(rtnl_link_get_master(_obj))
   }
 
   public var index: Int {
@@ -53,6 +49,10 @@ public struct RTNLLink: NLObjectConstructible, Sendable, CustomStringConvertible
 
   public var flags: Int {
     Int(rtnl_link_get_flags(_obj))
+  }
+
+  public var group: UInt32 {
+    rtnl_link_get_group(_obj)
   }
 
   public var addressString: String {
@@ -87,8 +87,127 @@ public struct RTNLLink: NLObjectConstructible, Sendable, CustomStringConvertible
     _makeAddress(rtnl_link_get_broadcast(_obj))
   }
 
-  public var family: Int {
-    Int(rtnl_link_get_family(_obj))
+  public var family: sa_family_t {
+    sa_family_t(rtnl_link_get_family(_obj))
+  }
+
+  public var arpType: UInt16 {
+    UInt16(rtnl_link_get_arptype(_obj))
+  }
+
+  public var txQLen: Int {
+    Int(rtnl_link_get_txqlen(_obj))
+  }
+
+  public var master: Int {
+    Int(rtnl_link_get_master(_obj))
+  }
+
+  public var slaveOf: Int {
+    Int(rtnl_link_get_link(_obj))
+  }
+
+  public var carrier: UInt8 {
+    rtnl_link_get_carrier(_obj)
+  }
+
+  // IF_OPER_XXX
+  public var operationalState: UInt8 {
+    rtnl_link_get_operstate(_obj)
+  }
+
+  // LINK_MODE_XXX
+  public var linkMode: UInt8 {
+    rtnl_link_get_linkmode(_obj)
+  }
+
+  public var aliasName: String? {
+    if let alias = rtnl_link_get_ifalias(_obj) {
+      String(cString: alias)
+    } else {
+      nil
+    }
+  }
+
+  public var qDisc: String? {
+    if let qdisc = rtnl_link_get_qdisc(_obj) {
+      String(cString: qdisc)
+    } else {
+      nil
+    }
+  }
+
+  public var numVF: Int {
+    get throws {
+      var numVF = UInt32(0)
+      let r = rtnl_link_get_num_vf(_obj, &numVF)
+      if r < 0 {
+        throw Errno(rawValue: -r)
+      }
+      return Int(numVF)
+    }
+  }
+
+  public func getStatistics(id: rtnl_link_stat_id_t) -> UInt64 {
+    rtnl_link_get_stat(_obj, id)
+  }
+
+  public var type: String? {
+    if let type = rtnl_link_get_type(_obj) {
+      String(cString: type)
+    } else {
+      nil
+    }
+  }
+
+  public var slaveType: String? {
+    if let type = rtnl_link_get_slave_type(_obj) {
+      String(cString: type)
+    } else {
+      nil
+    }
+  }
+
+  public var promiscuity: UInt32 {
+    rtnl_link_get_promiscuity(_obj)
+  }
+
+  public var numTXQueues: UInt32 {
+    rtnl_link_get_num_tx_queues(_obj)
+  }
+
+  public var numRXQueues: UInt32 {
+    rtnl_link_get_num_rx_queues(_obj)
+  }
+
+  public var physicalPortName: String? {
+    if let name = rtnl_link_get_phys_port_name(_obj) {
+      String(cString: name)
+    } else {
+      nil
+    }
+  }
+
+  public var physicalPortID: NLData? {
+    NLData(data: rtnl_link_get_phys_port_id(_obj))
+  }
+
+  public var physicalSwitchID: NLData? {
+    NLData(data: rtnl_link_get_phys_switch_id(_obj))
+  }
+}
+
+public extension NLSocket {
+  func enslave(link slave: RTNLLink, to master: RTNLLink) throws {
+    try throwingErrno {
+      rtnl_link_enslave(_sk, master._obj, slave._obj)
+    }
+  }
+
+  func release(link slave: RTNLLink) throws {
+    try throwingErrno {
+      rtnl_link_release(_sk, slave._obj)
+    }
   }
 }
 

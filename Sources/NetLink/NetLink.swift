@@ -27,6 +27,26 @@ protocol _NLObjectConstructible: NLObjectConstructible {
   init(object: NLObject) throws
 }
 
+public typealias NLData = [UInt8]
+
+extension NLData {
+  init?(data: OpaquePointer?) {
+    guard let data else { return nil }
+    var buffer: UnsafeBufferPointer<UInt8>!
+    let size = nl_data_get_size(data)
+    nl_data_get(data).withMemoryRebound(to: UInt8.self, capacity: size) {
+      buffer = UnsafeBufferPointer<UInt8>(start: $0, count: size)
+    }
+    self = Array(buffer)
+  }
+
+  var nl_data: OpaquePointer {
+    withUnsafeBytes {
+      nl_data_alloc($0.baseAddress, $0.count)
+    }
+  }
+}
+
 final class NLObject: @unchecked Sendable, Equatable, Hashable, CustomStringConvertible {
   func parse() throws -> some NLObjectConstructible {
     switch messageType {
@@ -168,7 +188,7 @@ public final class NLSocket: @unchecked Sendable {
     }
   }
 
-  fileprivate let _sk: OpaquePointer!
+  let _sk: OpaquePointer!
   private let _readSource: any DispatchSourceRead
   private let _requests = ManagedCriticalState<[UInt32: _Request]>([:])
 
