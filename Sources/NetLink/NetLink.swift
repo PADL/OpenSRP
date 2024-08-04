@@ -170,7 +170,6 @@ public final class NLSocket: @unchecked Sendable {
 
   fileprivate let _sk: OpaquePointer!
   private let _readSource: any DispatchSourceRead
-  private let _lastError = ManagedCriticalState<CInt>(0)
   private let _requests = ManagedCriticalState<[UInt32: _Request]>([:])
 
   public let notifications = Channel()
@@ -252,7 +251,7 @@ public final class NLSocket: @unchecked Sendable {
   private func onReadReady() {
     let r = nl_recvmsgs_default(_sk)
     guard r >= 0 else {
-      _lastError.withCriticalRegion { $0 = -r }
+      yield(sequence: 0, with: Result.failure(Errno(rawValue: -r)))
       return
     }
   }
