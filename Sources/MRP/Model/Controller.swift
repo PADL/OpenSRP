@@ -59,7 +59,7 @@ actor Controller<P: Port> {
 
   public func run() async throws {
     logger.debug("starting \(self)")
-    try await _register(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
+    try await _didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
     for port in ports {
       try? await _didAdd(port: port)
     }
@@ -89,7 +89,7 @@ actor Controller<P: Port> {
     _startTx(port: port)
 
     ports.insert(port)
-    try _update(contextIdentifier: MAPBaseSpanningTreeContext, with: [port])
+    try _didUpdate(contextIdentifier: MAPBaseSpanningTreeContext, with: [port])
   }
 
   private func _didRemove(port: P) async {
@@ -104,7 +104,7 @@ actor Controller<P: Port> {
     _stopTx(port: port)
     _stopRx(port: port)
 
-    try? _deregister(contextIdentifier: MAPBaseSpanningTreeContext, with: [port])
+    try? _didRemove(contextIdentifier: MAPBaseSpanningTreeContext, with: [port])
     ports.remove(port)
   }
 
@@ -112,7 +112,7 @@ actor Controller<P: Port> {
     logger.debug("updated port \(port)")
 
     ports.update(with: port)
-    try _update(contextIdentifier: MAPBaseSpanningTreeContext, with: [port])
+    try _didUpdate(contextIdentifier: MAPBaseSpanningTreeContext, with: [port])
   }
 
   private func _handleBridgeNotifications() async throws {
@@ -201,30 +201,30 @@ actor Controller<P: Port> {
     logger.info("deregistered application \(application)")
   }
 
-  private func _register(
+  private func _didAdd(
     contextIdentifier: MAPContextIdentifier,
     with context: MAPContext<P>
   ) async throws {
     for application in _applications.values {
-      try await application.register(contextIdentifier: contextIdentifier, with: context)
+      try await application.didAdd(contextIdentifier: contextIdentifier, with: context)
     }
   }
 
-  private func _update(
+  private func _didUpdate(
     contextIdentifier: MAPContextIdentifier,
     with context: MAPContext<P>
   ) throws {
     for application in _applications.values {
-      try application.update(contextIdentifier: contextIdentifier, with: context)
+      try application.didUpdate(contextIdentifier: contextIdentifier, with: context)
     }
   }
 
-  private func _deregister(
+  private func _didRemove(
     contextIdentifier: MAPContextIdentifier,
     with context: MAPContext<P>
   ) throws {
     for application in _applications.values {
-      try application.deregister(contextIdentifier: contextIdentifier, with: context)
+      try application.didRemove(contextIdentifier: contextIdentifier, with: context)
     }
   }
 

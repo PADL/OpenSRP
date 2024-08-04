@@ -28,7 +28,6 @@ protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
   typealias ApplyFunction<T> = (Participant<Self>) throws -> T
   typealias AsyncApplyFunction<T> = (Participant<Self>) async throws -> T
 
-  // these are constant values defined by the application type
   var validAttributeTypes: ClosedRange<AttributeType> { get }
   var groupMacAddress: EUI48 { get }
   var etherType: UInt16 { get }
@@ -36,10 +35,15 @@ protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
 
   var mad: Controller<P>? { get }
 
-  func register(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) async throws
-  func update(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
-  func deregister(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
+  // notifications from controller when a port is added, didUpdated or removed
+  // if contextIdentifier is MAPBaseSpanningTreeContext, the ports are physical
+  // ports on the bridge; otherwise, they are virtual ports managed by MVRP.
+  func didAdd(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) async throws
+  func didUpdate(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
+  func didRemove(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
 
+  // apply for all participants. if contextIdentifier is nil, then all participants are called
+  // regardless of contextIdentifier.
   @discardableResult
   func apply<T>(
     for contextIdentifier: MAPContextIdentifier?,
@@ -52,14 +56,14 @@ protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
     _ block: AsyncApplyFunction<T>
   ) async rethrows -> [T]
 
+  func packedEventsType(for: AttributeType) throws -> PackedEventsType
+  func administrativeControl(for: AttributeType) throws -> AdministrativeControl
+
   func makeValue(for attributeType: AttributeType, at index: Int) throws -> any Value
   func deserialize(
     attributeOfType attributeType: AttributeType,
     from deserializationContext: inout DeserializationContext
   ) throws -> any Value
-
-  func packedEventsType(for: AttributeType) throws -> PackedEventsType
-  func administrativeControl(for: AttributeType) throws -> AdministrativeControl
 
   func joinIndicated<V: Value>(
     contextIdentifier: MAPContextIdentifier,
@@ -184,176 +188,12 @@ extension Application {
       try await participant.rx(message: message)
     }
   }
-}
 
-extension Application {
   func flush(for contextIdentifier: MAPContextIdentifier) async throws {
     try await apply(for: contextIdentifier) { try await $0.flush() }
   }
 
   func redeclare(for contextIdentifier: MAPContextIdentifier) async throws {
     try await apply(for: contextIdentifier) { try await $0.redeclare() }
-  }
-}
-
-protocol ApplicationDelegate<P>: Sendable {
-  associatedtype P: Port
-
-  func register(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
-  func update(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
-  func deregister(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
-}
-
-protocol BaseApplication: Application where P == P {
-  typealias MAPParticipantDictionary = [MAPContextIdentifier: Set<Participant<Self>>]
-
-  var _mad: Weak<Controller<P>> { get }
-  var _participants: ManagedCriticalState<MAPParticipantDictionary> { get }
-  var _delegate: (any ApplicationDelegate<P>)? { get }
-
-  var _contextsSupported: Bool { get }
-}
-
-extension BaseApplication {
-  var mad: Controller<P>? { _mad.object }
-
-  func add(participant: Participant<Self>) throws {
-    precondition(_contextsSupported || participant.contextIdentifier == MAPBaseSpanningTreeContext)
-    _participants.withCriticalRegion {
-      if let index = $0.index(forKey: participant.contextIdentifier) {
-        $0.values[index].insert(participant)
-      } else {
-        $0[participant.contextIdentifier] = Set([participant])
-      }
-    }
-  }
-
-  func remove(
-    participant: Participant<Self>
-  ) throws {
-    precondition(_contextsSupported || participant.contextIdentifier == MAPBaseSpanningTreeContext)
-    _participants.withCriticalRegion {
-      $0[participant.contextIdentifier]?.remove(participant)
-    }
-  }
-
-  @discardableResult
-  func apply<T>(
-    for contextIdentifier: MAPContextIdentifier? = nil,
-    _ block: AsyncApplyFunction<T>
-  ) async rethrows -> [T] {
-    var participants: Set<Participant<Self>>?
-    _participants.withCriticalRegion {
-      if let contextIdentifier {
-        participants = $0[contextIdentifier]
-      } else {
-        participants = Set($0.flatMap { Array($1) })
-      }
-    }
-    var ret = [T]()
-    if let participants {
-      for participant in participants {
-        try await ret.append(block(participant))
-      }
-    }
-    return ret
-  }
-
-  @discardableResult
-  func apply<T>(
-    for contextIdentifier: MAPContextIdentifier? = nil,
-    _ block: ApplyFunction<T>
-  ) rethrows -> [T] {
-    var participants: Set<Participant<Self>>?
-    _participants.withCriticalRegion {
-      if let contextIdentifier {
-        participants = $0[contextIdentifier]
-      } else {
-        participants = Set($0.flatMap { Array($1) })
-      }
-    }
-    var ret = [T]()
-    if let participants {
-      for participant in participants {
-        try ret.append(block(participant))
-      }
-    }
-    return ret
-  }
-
-  func register(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) async throws {
-    guard _contextsSupported || contextIdentifier == MAPBaseSpanningTreeContext else { return }
-    for port in context {
-      guard (try? findParticipant(for: contextIdentifier, port: port)) == nil
-      else {
-        throw MRPError.portAlreadyExists
-      }
-      guard let mad else { throw MRPError.internalError }
-      let participant = await Participant<Self>(
-        controller: mad,
-        application: self,
-        port: port,
-        contextIdentifier: contextIdentifier
-      )
-      try add(participant: participant)
-    }
-    try _delegate?.register(contextIdentifier: contextIdentifier, with: context)
-  }
-
-  func update(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws {
-    guard _contextsSupported || contextIdentifier == MAPBaseSpanningTreeContext else { return }
-    for port in context {
-      let participant = try findParticipant(
-        for: contextIdentifier,
-        port: port
-      )
-      Task { try await participant.redeclare() }
-    }
-    try _delegate?.update(contextIdentifier: contextIdentifier, with: context)
-  }
-
-  func deregister(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws {
-    guard _contextsSupported || contextIdentifier == MAPBaseSpanningTreeContext else { return }
-    for port in context {
-      let participant = try findParticipant(
-        for: contextIdentifier,
-        port: port
-      )
-      Task { try await participant.flush() }
-      try remove(participant: participant)
-    }
-    try _delegate?.deregister(contextIdentifier: contextIdentifier, with: context)
-  }
-
-  func joinIndicated(
-    contextIdentifier: MAPContextIdentifier,
-    port: P,
-    attributeType: AttributeType,
-    attributeValue: some Value,
-    isNew: Bool
-  ) async throws {
-    try await apply(for: contextIdentifier) { participant in
-      guard participant.port != port else { return }
-      try await participant.join(
-        attributeType: attributeType,
-        attributeValue: attributeValue,
-        isNew: isNew
-      )
-    }
-  }
-
-  func leaveIndicated(
-    contextIdentifier: MAPContextIdentifier,
-    port: P,
-    attributeType: AttributeType,
-    attributeValue: some Value
-  ) async throws {
-    try await apply(for: contextIdentifier) { participant in
-      guard participant.port != port else { return }
-      try await participant.leave(
-        attributeType: attributeType,
-        attributeValue: attributeValue
-      )
-    }
   }
 }

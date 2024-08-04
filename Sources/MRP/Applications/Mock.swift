@@ -35,10 +35,12 @@ struct MockValue: Value {
   }
 }
 
-final class MockApplication<P: Port>: BaseApplication, Sendable where P == P {
-  var _contextsSupported: Bool { false }
+final class MockApplication<P: Port>: BaseApplication, BaseApplicationDelegate,
+  Sendable where P == P
+{
+  var _delegate: (any BaseApplicationDelegate<P>)? { self }
 
-  let _delegate: (any ApplicationDelegate<P>)? = nil
+  var _contextsSupported: Bool { false }
 
   func set(logger: Logger) {
     _logger.withCriticalRegion { $0 = logger }
@@ -78,4 +80,19 @@ final class MockApplication<P: Port>: BaseApplication, Sendable where P == P {
     guard attributeType == 0 else { throw MRPError.attributeNotFound }
     return .normalParticipant
   }
+
+  func onContextAdded(
+    contextIdentifier: MAPContextIdentifier,
+    with context: MAPContext<P>
+  ) throws {}
+
+  func onContextUpdated(
+    contextIdentifier: MAPContextIdentifier,
+    with context: MAPContext<P>
+  ) throws {}
+
+  func onContextRemoved(
+    contextIdentifier: MAPContextIdentifier,
+    with context: MAPContext<P>
+  ) throws {}
 }
