@@ -174,7 +174,7 @@ extension Application {
   func rx(packet: IEEE802Packet, from port: P) async throws {
     var deserializationContext = DeserializationContext(packet.data)
     let pdu = try MRPDU(deserializationContext: &deserializationContext, application: self)
-    try await rx(pdu: pdu, for: MAPContextIdentifier(tci: packet.tci), from: port)
+    try await rx(pdu: pdu, for: MAPContextIdentifier(packet: packet), from: port)
   }
 
   func rx(pdu: MRPDU, for contextIdentifier: MAPContextIdentifier, from port: P) async throws {

@@ -62,12 +62,16 @@ struct MAPContextIdentifier: Identifiable, Sendable, Hashable, Equatable,
     self.init(id: value)
   }
 
-  init(tci: IEEE802Packet.TCI?) {
+  private init(tci: IEEE802Packet.TCI?) {
     if let tci {
       self.init(id: tci.vid)
     } else {
       self = MAPBaseSpanningTreeContext
     }
+  }
+
+  init(packet: IEEE802Packet) {
+    self.init(tci: packet.tci)
   }
 
   var tci: IEEE802Packet.TCI? {
