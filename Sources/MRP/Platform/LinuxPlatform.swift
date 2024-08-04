@@ -99,8 +99,12 @@ public struct LinuxPort: Port, Sendable {
     _rtnl.macAddress
   }
 
-  public var vid: UInt16? {
+  public var pvid: UInt16? {
     nil
+  }
+
+  public var vlans: [VLAN] {
+    []
   }
 
   public func addFilter(for macAddress: EUI48, etherType: UInt16) throws {
@@ -142,15 +146,24 @@ public struct LinuxBridge: Bridge, Sendable {
   public typealias Port = LinuxPort
 
   private let _socket: NLSocket
-  private let _bridgePort: Port
+  private var _bridgePort: Port!
 
   public init(name: String) async throws {
     _socket = try NLSocket(protocol: NETLINK_ROUTE)
     try _socket.notifyRtLinks()
-    guard let bridgePort = ports.filter({ $0.name == name && $0.isBridge }) else {
+    let bridgePorts = try await ports.filter { $0.name == name && $0.isBridge }
+    guard bridgePorts.count == 1 else {
       throw MRPError.invalidBridgeIdentity
     }
-    _bridgePort = bridgePort
+    _bridgePort = bridgePorts.first!
+  }
+
+  public var defaultPVid: UInt16? {
+    nil
+  }
+
+  public var vlans: [VLAN] {
+    []
   }
 
   public var ports: [Port] {
