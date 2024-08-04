@@ -551,12 +551,17 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
   func handle(event: ProtocolEvent) async throws {
     guard let participant else { throw MRPError.internalError }
     let smFlags = try await participant._getSmFlags(for: attributeType)
-    var logString =
-      "participant handling protocol event \(event) flags \(smFlags) applicantState \(applicant) registrarState \(registrar?.description ?? "none") =>"
+    var logString: String!
+    if participant._logger.logLevel == .trace {
+      logString = "participant handling protocol event \(event) flags \(smFlags) " +
+        "applicantState \(applicant) registrarState \(registrar?.description ?? "none") =>"
+    }
     let applicantActions = applicant.handle(event: event, flags: smFlags)
     let registrarActions = registrar?.handle(event: event, flags: smFlags) ?? []
-    logString += "applicantState \(applicant) registrarState \(registrar?.description ?? "none")"
-    participant._logger.trace("\(logString) -- actions \(applicantActions + registrarActions)")
+    if participant._logger.logLevel == .trace {
+      logString += "applicantState \(applicant) registrarState \(registrar?.description ?? "none")"
+      participant._logger.trace("\(logString) -- actions \(applicantActions + registrarActions)")
+    }
     for action in applicantActions + registrarActions {
       try await handle(action: action)
     }
