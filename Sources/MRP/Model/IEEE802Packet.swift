@@ -144,7 +144,9 @@ public struct IEEE802Packet: Sendable, SerDes, CustomStringConvertible {
   }
 
   public var description: String {
-    "IEEE802Packet(destMacAddress: \(_macAddressToString(destMacAddress)), sourceMacAddress: \(_macAddressToString(sourceMacAddress)), vid: \(vid ?? 0), etherType: \(String(format: "%04x", etherType)), packetLength: \(data.count)"
+    "IEEE802Packet(destMacAddress: \(_macAddressToString(destMacAddress)), " +
+      "sourceMacAddress: \(_macAddressToString(sourceMacAddress)), " +
+      "vid: \(vid ?? 0), etherType: \(String(format: "%04x", etherType)), packetLength: \(data.count)"
   }
 }
 
