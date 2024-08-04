@@ -17,7 +17,7 @@
 /*
  The job of the Registrar is to record declarations of the attribute made by other Participants on the LAN. It does not send any protocol messages, as the Applicant looks after the interests of all would-be Participants.
  */
-struct Registrar: Sendable {
+struct Registrar: Sendable, CustomStringConvertible {
   enum State: Sendable, StateMachineHandler {
     case IN // Registered
     case LV // Previously registered, but now being timed out
@@ -43,6 +43,10 @@ struct Registrar: Sendable {
 
   func stopLeaveTimer() {
     _leavetimer.stop()
+  }
+
+  var description: String {
+    String(describing: _state.criticalState)
   }
 }
 

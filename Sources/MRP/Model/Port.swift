@@ -16,53 +16,6 @@
 
 import AsyncExtensions
 
-private func _macAddressToString(_ macAddress: EUI48) -> String {
-  String(
-    format: "%02x:%02x:%02x:%02x:%02x:%02x",
-    macAddress.0,
-    macAddress.1,
-    macAddress.2,
-    macAddress.3,
-    macAddress.4,
-    macAddress.5
-  )
-}
-
-public struct IEEE802Packet: Sendable, SerDes, CustomStringConvertible {
-  let destMacAddress: EUI48
-  let sourceMacAddress: EUI48
-  let etherType: UInt16
-  let data: [UInt8]
-
-  init(destMacAddress: EUI48, sourceMacAddress: EUI48, etherType: UInt16, data: [UInt8]) {
-    self.destMacAddress = destMacAddress
-    self.sourceMacAddress = sourceMacAddress
-    self.etherType = etherType
-    self.data = data
-  }
-
-  init(
-    deserializationContext: inout DeserializationContext
-  ) throws {
-    destMacAddress = try deserializationContext.deserialize()
-    sourceMacAddress = try deserializationContext.deserialize()
-    etherType = try deserializationContext.deserialize()
-    data = Array(deserializationContext.deserializeRemaining())
-  }
-
-  func serialize(into serializationContext: inout SerializationContext) throws {
-    serializationContext.reserveCapacity(2 * Int(6) + 6 + 2 + data.count)
-    serializationContext.serialize(eui48: destMacAddress)
-    serializationContext.serialize(eui48: sourceMacAddress)
-    serializationContext.serialize(uint16: etherType)
-    serializationContext.serialize(data)
-  }
-
-  public var description: String {
-    "IEEE802Packet(destMacAddress: \(_macAddressToString(destMacAddress)), sourceMacAddress: \(_macAddressToString(sourceMacAddress)), etherType: \(String(format: "%04x", etherType)), packetLength: \(data.count)"
-  }
-}
-
 public protocol Port: Hashable, Sendable, Identifiable {
   associatedtype ID = Int
 
@@ -72,6 +25,7 @@ public protocol Port: Hashable, Sendable, Identifiable {
 
   var name: String { get }
   var id: ID { get }
+  var vid: UInt16? { get }
 
   var macAddress: EUI48 { get }
 
@@ -86,12 +40,28 @@ public enum PortNotification<P: Port>: Sendable {
   case added(P)
   case removed(P)
   case changed(P)
+
+  var port: P {
+    switch self {
+    case let .added(port):
+      port
+    case let .removed(port):
+      port
+    case let .changed(port):
+      port
+    }
+  }
 }
 
 extension Port {
-  func tx(pdu: MRPDU, for application: some Application) async throws {
+  func tx(
+    pdu: MRPDU,
+    for application: some Application,
+    contextIdentifier: MAPContextIdentifier
+  ) async throws {
     let packet = try IEEE802Packet(
       destMacAddress: application.groupMacAddress,
+      tci: IEEE802Packet.TCI(contextIdentifier: contextIdentifier),
       sourceMacAddress: macAddress,
       etherType: application.etherType,
       data: pdu.serialized()
@@ -100,9 +70,25 @@ extension Port {
   }
 }
 
-public protocol PortMonitor<P>: Sendable {
+public protocol Bridge<P>: Sendable {
   associatedtype P: Port
 
   var ports: [P] { get async throws }
   var notifications: AnyAsyncSequence<PortNotification<P>> { get }
+}
+
+extension Bridge {
+  func port(name: String) async throws -> P {
+    guard let port = try await ports.first(where: { $0.name == name }) else {
+      throw MRPError.portNotFound
+    }
+    return port
+  }
+
+  func port(id: P.ID) async throws -> P {
+    guard let port = try await ports.first(where: { $0.id == id }) else {
+      throw MRPError.portNotFound
+    }
+    return port
+  }
 }

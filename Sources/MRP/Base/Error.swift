@@ -22,6 +22,7 @@ enum MRPError: Error {
   case badVectorAttribute
   case badProtocolVersion
   case badPduLength
+  case invalidBridgeIdentity
   case invalidEnumerationCase
   case invalidContextIdentifier
   case invalidParticipantIdentifier

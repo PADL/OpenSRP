@@ -14,6 +14,8 @@
 // limitations under the License.
 //
 
+import Logging
+
 struct MockValue: Value {
   let _index: UInt32
 
@@ -34,16 +36,21 @@ struct MockValue: Value {
 }
 
 final class MockApplication<P: Port>: BaseApplication, Sendable where P == P {
+  let _delegate: (any ApplicationDelegate<P>)? = nil
+
+  func set(logger: Logger) {
+    _logger.withCriticalRegion { $0 = logger }
+  }
+
   var validAttributeTypes: ClosedRange<AttributeType> { 0...0 }
-
   var groupMacAddress: EUI48 { EUI48(0, 0, 0, 0, 0, 0) }
-
   var etherType: UInt16 { 0xFFFF }
-
   var protocolVersion: ProtocolVersion { 1 }
 
   let _mad: Weak<Controller<P>>
-  let _participants = ManagedCriticalState<[Participant<MockApplication<P>>]>([])
+  let _participants =
+    ManagedCriticalState<[MAPContextIdentifier: Set<Participant<MockApplication<P>>>]>([:])
+  let _logger = ManagedCriticalState<Logger?>(nil)
 
   init(owner: Controller<P>) {
     _mad = Weak(owner)
@@ -69,6 +76,4 @@ final class MockApplication<P: Port>: BaseApplication, Sendable where P == P {
     guard attributeType == 0 else { throw MRPError.attributeNotFound }
     return .normalParticipant
   }
-
-  func onPortNotificationDelegate(_: PortNotification<P>) {}
 }

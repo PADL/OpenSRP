@@ -28,7 +28,7 @@
  The Applicant for each Attribute implements states that record whether it wishes to make a new declaration, to maintain or withdraw an existing declaration, or has no declaration to make. It also records whether it has actively made a declaration, or has been passive, taking advantage of or simply observing the declarations of others. It counts the New, JoinIn, and JoinEmpty messages it has sent, and JoinIn messages sent by others, to ensure that at least two such messages have been sent since it last received a LeaveAll or Leave message, and at least one since it last received a JoinEmpty or Empty message. This ensures that each of the other Participant’s Registrars for the Attribute either have received (assuming no packet loss) two Join or New messages or have reported the Attribute as registered
  */
 
-struct Applicant: Sendable {
+struct Applicant: Sendable, CustomStringConvertible {
   enum State: Sendable, StateMachineHandler {
     case VO // Very anxious Observer
     case VP // Very anxious Passive
@@ -62,7 +62,9 @@ struct Applicant: Sendable {
     _state.withCriticalRegion { $0.handle(event: event, flags: flags) }
   }
 
-  // var state: State { _state.criticalState }
+  var description: String {
+    String(describing: _state.criticalState)
+  }
 }
 
 extension Applicant.State {

@@ -25,7 +25,8 @@ enum AdministrativeControl {
 protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
   associatedtype P: Port
 
-  typealias ApplyFunction<T> = (Participant<Self>) async throws -> T
+  typealias ApplyFunction<T> = (Participant<Self>) throws -> T
+  typealias AsyncApplyFunction<T> = (Participant<Self>) async throws -> T
 
   // these are constant values defined by the application type
   var validAttributeTypes: ClosedRange<AttributeType> { get }
@@ -35,18 +36,20 @@ protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
 
   var mad: Controller<P>? { get }
 
-  func add(context: MAPContext<P>, for contextidentifier: MAPContextIdentifier) throws
-  func context(for contextIdentifier: MAPContextIdentifier) async throws -> MAPContext<P>
-
-  func add(participant: Participant<Self>, for contextIdentifier: MAPContextIdentifier) throws
-  func remove(participant: Participant<Self>, for contextIdentifier: MAPContextIdentifier) throws
-
-  func onPortNotification(_: PortNotification<P>) async throws
+  func register(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) async throws
+  func update(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
+  func deregister(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
 
   @discardableResult
   func apply<T>(
     for contextIdentifier: MAPContextIdentifier?,
     _ block: ApplyFunction<T>
+  ) rethrows -> [T]
+
+  @discardableResult
+  func apply<T>(
+    for contextIdentifier: MAPContextIdentifier?,
+    _ block: AsyncApplyFunction<T>
   ) async rethrows -> [T]
 
   func makeValue(for attributeType: AttributeType, at index: Int) throws -> any Value
@@ -59,6 +62,7 @@ protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
   func administrativeControl(for: AttributeType) throws -> AdministrativeControl
 
   func joinIndicated<V: Value>(
+    contextIdentifier: MAPContextIdentifier,
     port: P,
     attributeType: AttributeType,
     attributeValue: V,
@@ -66,6 +70,7 @@ protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
   ) async throws
 
   func leaveIndicated<V: Value>(
+    contextIdentifier: MAPContextIdentifier,
     port: P,
     attributeType: AttributeType,
     attributeValue: V
@@ -87,7 +92,8 @@ extension Application {
 }
 
 extension Application {
-  typealias ParticipantSpecificApplyFunction<T> = (Participant<Self>) -> (T) async throws -> ()
+  typealias ParticipantSpecificApplyFunction<T> = (Participant<Self>) -> (T) throws -> ()
+  typealias AsyncParticipantSpecificApplyFunction<T> = (Participant<Self>) -> (T) async throws -> ()
 
   func periodic(
     for contextIdentifier: MAPContextIdentifier =
@@ -106,23 +112,33 @@ extension Application {
     for contextIdentifier: MAPContextIdentifier,
     with arg: T,
     _ block: ParticipantSpecificApplyFunction<T>
+  ) throws {
+    try apply(for: contextIdentifier) { participant in
+      try block(participant)(arg)
+    }
+  }
+
+  private func apply<T>(
+    for contextIdentifier: MAPContextIdentifier,
+    with arg: T,
+    _ block: AsyncParticipantSpecificApplyFunction<T>
   ) async throws {
     try await apply(for: contextIdentifier) { participant in
       try await block(participant)(arg)
     }
   }
 
-  func findParticipants(for contextIdentifier: MAPContextIdentifier? = nil) async
+  func findParticipants(for contextIdentifier: MAPContextIdentifier? = nil)
     -> [Participant<Self>]
   {
-    await apply(for: contextIdentifier) { $0 }
+    apply(for: contextIdentifier) { $0 }
   }
 
   func findParticipant(
     for contextIdentifier: MAPContextIdentifier? = nil,
     port: P
-  ) async throws -> Participant<Self> {
-    guard let participant = await findParticipants(for: contextIdentifier)
+  ) throws -> Participant<Self> {
+    guard let participant = findParticipants(for: contextIdentifier)
       .first(where: { $0.port == port })
     else {
       throw MRPError.participantNotFound
@@ -166,7 +182,7 @@ extension Application {
 
   func rx(pdu: MRPDU, from port: P) async throws {
     guard pdu.protocolVersion <= protocolVersion else { throw MRPError.badProtocolVersion }
-    let participant = try await findParticipant(port: port)
+    let participant = try findParticipant(port: port)
     for message in pdu.messages {
       try await participant.rx(message: message)
     }
@@ -183,66 +199,82 @@ extension Application {
   }
 }
 
-protocol BaseApplication: Application where P == P {
-  var _mad: Weak<Controller<P>> { get }
-  var _participants: ManagedCriticalState<[Participant<Self>]> { get }
+protocol ApplicationDelegate<P>: Sendable {
+  associatedtype P: Port
 
-  func onPortNotificationDelegate(_: PortNotification<P>)
+  func register(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
+  func update(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
+  func deregister(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
+}
+
+protocol BaseApplication: Application where P == P {
+  typealias MAPParticipantDictionary = [MAPContextIdentifier: Set<Participant<Self>>]
+
+  var _mad: Weak<Controller<P>> { get }
+  var _participants: ManagedCriticalState<MAPParticipantDictionary> { get }
+  var _delegate: (any ApplicationDelegate<P>)? { get }
 }
 
 extension BaseApplication {
   var mad: Controller<P>? { _mad.object }
 
-  func add(context _: MAPContext<P>, for _: MAPContextIdentifier) throws {
-    throw MRPError.invalidContextIdentifier
-  }
-
-  func context(for contextIdentifier: MAPContextIdentifier) async throws -> MAPContext<P> {
-    guard contextIdentifier == MAPBaseSpanningTreeContext
-    else { throw MRPError.invalidContextIdentifier }
-    guard let mad else { throw MRPError.internalError }
-    return await mad.ports
-  }
-
-  func add(participant: Participant<Self>, for contextIdentifier: MAPContextIdentifier) throws {
-    guard contextIdentifier == MAPBaseSpanningTreeContext
-    else { throw MRPError.invalidContextIdentifier }
+  func add(participant: Participant<Self>) throws {
     _participants.withCriticalRegion {
-      $0.append(participant)
+      if let index = $0.index(forKey: participant.contextIdentifier) {
+        $0.values[index].insert(participant)
+      } else {
+        $0[participant.contextIdentifier] = Set([participant])
+      }
     }
   }
 
   func remove(
-    participant: Participant<Self>,
-    for contextIdentifier: MAPContextIdentifier
+    participant: Participant<Self>
   ) throws {
-    guard contextIdentifier == MAPBaseSpanningTreeContext
-    else { throw MRPError.invalidContextIdentifier }
-    try _participants.withCriticalRegion {
-      guard let index = $0.firstIndex(where: {
-        $0 == participant
-      }) else { throw MRPError.invalidParticipantIdentifier }
-      $0.remove(at: index)
+    _participants.withCriticalRegion {
+      $0[participant.contextIdentifier]?.remove(participant)
     }
   }
 
   @discardableResult
   func apply<T>(
-    for _: MAPContextIdentifier? = nil,
-    _ block: ApplyFunction<T>
+    for contextIdentifier: MAPContextIdentifier? = nil,
+    _ block: AsyncApplyFunction<T>
   ) async rethrows -> [T] {
-    let participants = _participants.criticalState // snapshot
+    var participants: Set<Participant<Self>>?
+    _participants.withCriticalRegion {
+      participants = $0[contextIdentifier ?? 0]
+    }
     var ret = [T]()
-    for participant in participants {
-      try await ret.append(block(participant))
+    if let participants {
+      for participant in participants {
+        try await ret.append(block(participant))
+      }
     }
     return ret
   }
 
-  func onPortNotification(_ notification: PortNotification<P>) async throws {
-    switch notification {
-    case let .added(port):
-      guard await (try? findParticipant(for: MAPBaseSpanningTreeContext, port: port)) == nil
+  @discardableResult
+  func apply<T>(
+    for contextIdentifier: MAPContextIdentifier? = nil,
+    _ block: ApplyFunction<T>
+  ) rethrows -> [T] {
+    var participants: Set<Participant<Self>>?
+    _participants.withCriticalRegion {
+      participants = $0[contextIdentifier ?? 0]
+    }
+    var ret = [T]()
+    if let participants {
+      for participant in participants {
+        try ret.append(block(participant))
+      }
+    }
+    return ret
+  }
+
+  func register(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) async throws {
+    for port in context {
+      guard (try? findParticipant(for: MAPBaseSpanningTreeContext, port: port)) == nil
       else {
         throw MRPError.portAlreadyExists
       }
@@ -250,33 +282,45 @@ extension BaseApplication {
       let participant = await Participant<Self>(
         controller: mad,
         application: self,
-        port: port
+        port: port,
+        contextIdentifier: contextIdentifier
       )
-      try add(participant: participant, for: MAPBaseSpanningTreeContext)
-    case let .removed(port):
-      let participant = try await findParticipant(
-        for: MAPBaseSpanningTreeContext,
-        port: port
-      )
-      try await participant.flush()
-      try remove(participant: participant, for: MAPBaseSpanningTreeContext)
-    case let .changed(port):
-      let participant = try await findParticipant(
-        for: MAPBaseSpanningTreeContext,
-        port: port
-      )
-      try await participant.redeclare()
+      try add(participant: participant)
     }
-    onPortNotificationDelegate(notification)
+    try _delegate?.register(contextIdentifier: contextIdentifier, with: context)
+  }
+
+  func update(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws {
+    for port in context {
+      let participant = try findParticipant(
+        for: MAPBaseSpanningTreeContext,
+        port: port
+      )
+      Task { try await participant.redeclare() }
+    }
+    try _delegate?.update(contextIdentifier: contextIdentifier, with: context)
+  }
+
+  func deregister(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws {
+    for port in context {
+      let participant = try findParticipant(
+        for: MAPBaseSpanningTreeContext,
+        port: port
+      )
+      Task { try await participant.flush() }
+      try remove(participant: participant)
+    }
+    try _delegate?.deregister(contextIdentifier: contextIdentifier, with: context)
   }
 
   func joinIndicated(
+    contextIdentifier: MAPContextIdentifier,
     port: P,
     attributeType: AttributeType,
     attributeValue: some Value,
     isNew: Bool
   ) async throws {
-    try await apply(for: MAPBaseSpanningTreeContext) { participant in
+    try await apply(for: contextIdentifier) { participant in
       guard participant.port != port else { return }
       try await participant.join(
         attributeType: attributeType,
@@ -287,11 +331,12 @@ extension BaseApplication {
   }
 
   func leaveIndicated(
+    contextIdentifier: MAPContextIdentifier,
     port: P,
     attributeType: AttributeType,
     attributeValue: some Value
   ) async throws {
-    try await apply(for: MAPBaseSpanningTreeContext) { participant in
+    try await apply(for: contextIdentifier) { participant in
       guard participant.port != port else { return }
       try await participant.leave(
         attributeType: attributeType,

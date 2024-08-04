@@ -83,6 +83,10 @@ public struct LinuxPort: Port, Sendable {
     _rtnl.flags & IFF_POINTOPOINT != 0
   }
 
+  public var isBridge: Bool {
+    false
+  }
+
   public var name: String {
     _rtnl.name
   }
@@ -93,6 +97,10 @@ public struct LinuxPort: Port, Sendable {
 
   public var macAddress: EUI48 {
     _rtnl.macAddress
+  }
+
+  public var vid: UInt16? {
+    nil
   }
 
   public func addFilter(for macAddress: EUI48, etherType: UInt16) throws {
@@ -130,19 +138,24 @@ public struct LinuxPort: Port, Sendable {
   }
 }
 
-public struct LinuxPortMonitor: PortMonitor, Sendable {
+public struct LinuxBridge: Bridge, Sendable {
   public typealias Port = LinuxPort
 
-  private let socket: NLSocket
+  private let _socket: NLSocket
+  private let _bridgePort: Port
 
-  public init() async throws {
-    socket = try NLSocket(protocol: NETLINK_ROUTE)
-    try socket.notifyRtLinks()
+  public init(name: String) async throws {
+    _socket = try NLSocket(protocol: NETLINK_ROUTE)
+    try _socket.notifyRtLinks()
+    guard let bridgePort = ports.filter({ $0.name == name && $0.isBridge }) else {
+      throw MRPError.invalidBridgeIdentity
+    }
+    _bridgePort = bridgePort
   }
 
   public var ports: [Port] {
     get async throws {
-      try await socket.getRtLinks().compactMap { link in
+      try await _socket.getRtLinks().compactMap { link in
         if case let .new(link) = link {
           try Port(rtnl: link)
         } else {
@@ -153,7 +166,7 @@ public struct LinuxPortMonitor: PortMonitor, Sendable {
   }
 
   public var notifications: AnyAsyncSequence<PortNotification<Port>> {
-    socket.notifications.compactMap { @Sendable notification in
+    _socket.notifications.compactMap { @Sendable notification in
       let link = notification as! RTNLLinkMessage
       switch link {
       case let .new(link):

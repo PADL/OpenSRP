@@ -44,9 +44,16 @@ enum ParticipantType {
   case applicantOnly
 }
 
-final actor Participant<A: Application>: Equatable {
+final actor Participant<A: Application>: Equatable, Hashable {
   static func == (lhs: Participant<A>, rhs: Participant<A>) -> Bool {
-    lhs.application == rhs.application && lhs.port == rhs.port
+    lhs.application == rhs.application && lhs.port == rhs.port && lhs.contextIdentifier == rhs
+      .contextIdentifier
+  }
+
+  nonisolated func hash(into hasher: inout Hasher) {
+    application?.hash(into: &hasher)
+    port.hash(into: &hasher)
+    contextIdentifier.hash(into: &hasher)
   }
 
   private nonisolated let _controller: Weak<Controller<A.P>>
@@ -54,6 +61,7 @@ final actor Participant<A: Application>: Equatable {
   private nonisolated let _application: Weak<A>
   fileprivate nonisolated var application: A? { _application.object }
   nonisolated let port: A.P
+  nonisolated let contextIdentifier: MAPContextIdentifier
 
   private enum EnqueuedEvent {
     struct AttributeEvent {
@@ -134,17 +142,19 @@ final actor Participant<A: Application>: Equatable {
   private var _leaveAllState = LeaveAllState.Passive
   private var _leaveAllTimer: Timer!
   private var _jointimer: Timer!
-  private let _logger: Logger
+  fileprivate let _logger: Logger
   fileprivate let _type: ParticipantType
 
   init(
     controller: Controller<A.P>,
     application: A,
     port: A.P,
+    contextIdentifier: MAPContextIdentifier,
     type: ParticipantType? = nil
   ) async {
     _controller = Weak(controller)
     _application = Weak(application)
+    self.contextIdentifier = contextIdentifier
 
     self.port = port
 
@@ -256,6 +266,7 @@ final actor Participant<A: Application>: Equatable {
   }
 
   private func _txEnqueue(_ event: EnqueuedEvent) {
+    _logger.trace("enqueing event \(event)")
     if let index = _enqueuedEvents.index(forKey: event.attributeType) {
       _enqueuedEvents.values[index].append(event)
     } else {
@@ -441,7 +452,7 @@ final actor Participant<A: Application>: Equatable {
 
   func tx() async throws {
     guard let application else { throw MRPError.internalError }
-    try await port.tx(pdu: _txDequeue(), for: application)
+    try await port.tx(pdu: _txDequeue(), for: application, contextIdentifier: contextIdentifier)
   }
 
   // A Flush! event signals to the Registrar state machine that there is a
@@ -540,9 +551,12 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
   func handle(event: ProtocolEvent) async throws {
     guard let participant else { throw MRPError.internalError }
     let smFlags = try await participant._getSmFlags(for: attributeType)
+    var logString =
+      "participant handling protocol event \(event) flags \(smFlags) applicantState \(applicant) registrarState \(registrar?.description ?? "none") =>"
     let applicantActions = applicant.handle(event: event, flags: smFlags)
     let registrarActions = registrar?.handle(event: event, flags: smFlags) ?? []
-
+    logString += "applicantState \(applicant) registrarState \(registrar?.description ?? "none")"
+    participant._logger.trace("\(logString) -- actions \(applicantActions + registrarActions)")
     for action in applicantActions + registrarActions {
       try await handle(action: action)
     }
@@ -550,9 +564,11 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
 
   func handle(action: ProtocolAction) async throws {
     guard let participant else { throw MRPError.internalError }
+    participant._logger.trace("handling protocol action \(action)")
     switch action {
     case .New:
       try await participant.application?.joinIndicated(
+        contextIdentifier: participant.contextIdentifier,
         port: participant.port,
         attributeType: attributeType,
         attributeValue: value,
@@ -560,6 +576,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
       )
     case .Join:
       try await participant.application?.joinIndicated(
+        contextIdentifier: participant.contextIdentifier,
         port: participant.port,
         attributeType: attributeType,
         attributeValue: value,
@@ -567,6 +584,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
       )
     case .Lv:
       try await participant.application?.leaveIndicated(
+        contextIdentifier: participant.contextIdentifier,
         port: participant.port,
         attributeType: attributeType,
         attributeValue: value

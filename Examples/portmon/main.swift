@@ -23,13 +23,13 @@ import MRP
 @main
 struct portmon {
   public static func main() async throws {
-    let portMonitor = try await LinuxPortMonitor()
+    let bridge = try await LinuxBridge(name: "br0")
     print("Ports at startup:")
-    for port in try await portMonitor.ports {
+    for port in try await bridge.ports {
       print("\(port)")
     }
     print("Now monitoring for changes...")
-    for try await notification in portMonitor.notifications {
+    for try await notification in bridge.notifications {
       print("\(notification)")
     }
   }

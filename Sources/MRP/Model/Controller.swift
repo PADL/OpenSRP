@@ -38,20 +38,20 @@ actor Controller<P: Port> {
 
   private var _applications = [UInt16: any Application<P>]()
   private(set) var ports = Set<P>()
-  private var _rxTasks = [P: Task<(), Error>]()
-  private var _periodicTimers = [P: Timer]()
+  private var _rxTasks = [P.ID: Task<(), Error>]()
+  private var _periodicTimers = [P.ID: Timer]()
   private let _administrativeControl = ManagedCriticalState(
     AdministrativeControl
       .normalParticipant
   )
 
-  let portMonitor: any PortMonitor<P>
-  var portNotificationTask: Task<(), Error>?
+  let bridge: any Bridge<P>
+  var bridgeNotificationTask: Task<(), Error>?
   let logger: Logger
 
-  public init(portMonitor: some PortMonitor<P>) async throws {
-    ports = try await Set(portMonitor.ports)
-    self.portMonitor = portMonitor
+  public init(bridgePort: P, bridge: some Bridge<P>) async throws {
+    ports = try await Set(bridge.ports)
+    self.bridge = bridge
     var logger = Logger(label: "com.padl.SwiftMRP")
     logger.logLevel = .trace
     self.logger = logger
@@ -59,10 +59,11 @@ actor Controller<P: Port> {
 
   public func run() async throws {
     logger.debug("starting \(self)")
+    try await _register(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
     for port in ports {
       try? await _didAdd(port: port)
     }
-    portNotificationTask = Task { try await _handlePortNotifications() }
+    bridgeNotificationTask = Task { try await _handleBridgeNotifications() }
   }
 
   public func shutdown() async throws {
@@ -70,14 +71,13 @@ actor Controller<P: Port> {
     for port in ports {
       await _didRemove(port: port)
     }
-    portNotificationTask?.cancel()
-    portNotificationTask = nil
+    bridgeNotificationTask?.cancel()
+    bridgeNotificationTask = nil
   }
 
   private func _didAdd(port: P) async throws {
     logger.debug("added port \(port)")
 
-    ports.insert(port)
     for application in _applications {
       try? port.addFilter(
         for: application.value.groupMacAddress,
@@ -85,24 +85,11 @@ actor Controller<P: Port> {
       )
     }
 
-    _rxTasks[port] = Task { @Sendable in
-      for try await packet in try await port.rxPackets {
-        try await _applications[packet.etherType]?.rx(packet: packet, from: port)
-      }
-    }
-    var periodicTimer = _periodicTimers[port]
-    if periodicTimer == nil {
-      periodicTimer = Timer {
-        try await self.apply { @Sendable application in
-          try await application.periodic()
-        }
-      }
-    }
-    periodicTimer!.start(interval: periodicTransmissionTime)
-    try? await apply(
-      with: PortNotification.added(port),
-      (any Application<P>).onPortNotification(_:)
-    )
+    _startRx(port: port)
+    _startTx(port: port)
+
+    ports.insert(port)
+    try _update(contextIdentifier: MAPBaseSpanningTreeContext, with: [port])
   }
 
   private func _didRemove(port: P) async {
@@ -114,35 +101,34 @@ actor Controller<P: Port> {
         etherType: application.value.etherType
       )
     }
-    _rxTasks[port]?.cancel()
-    _rxTasks[port] = nil
+    _stopRx(port: port)
+    _stopTx(port: port)
+
+    try? _deregister(contextIdentifier: MAPBaseSpanningTreeContext, with: [port])
     ports.remove(port)
-    _periodicTimers[port]?.stop()
-    try? await apply(
-      with: PortNotification.removed(port),
-      (any Application<P>).onPortNotification(_:)
-    )
   }
 
-  private func _didUpdate(port: P) async {
+  private func _didUpdate(port: P) async throws {
     logger.debug("updated port \(port)")
 
     ports.update(with: port)
-    try? await apply(
-      with: PortNotification.changed(port),
-      (any Application<P>).onPortNotification(_:)
-    )
+    try _update(contextIdentifier: MAPBaseSpanningTreeContext, with: [port])
   }
 
-  private func _handlePortNotifications() async throws {
-    for try await portNotification in portMonitor.notifications {
-      switch portNotification {
-      case let .added(port):
-        try? await _didAdd(port: port)
-      case let .removed(port):
-        await _didRemove(port: port)
-      case let .changed(port):
-        await _didUpdate(port: port)
+  private func _handleBridgeNotifications() async throws {
+    for try await notification in bridge.notifications {
+      do {
+        switch notification {
+        case let .added(port):
+          try await ports.contains(port) ? _didUpdate(port: port) : _didAdd(port: port)
+        case let .removed(port):
+          await _didRemove(port: port)
+        case let .changed(port):
+          try await _didUpdate(port: port)
+        }
+      } catch {
+        logger
+          .info("failed to handle notification for port \(notification.port): \(error)")
       }
     }
   }
@@ -157,28 +143,48 @@ actor Controller<P: Port> {
     _periodicTimers.forEach { $0.value.stop() }
   }
 
-  typealias MADApplyFunction = (any Application<P>) async throws -> ()
+  typealias MADApplyFunction = (any Application<P>) throws -> ()
+
+  private func _apply(_ block: MADApplyFunction) rethrows {
+    for application in _applications {
+      try block(application.value)
+    }
+  }
+
+  typealias AsyncMADApplyFunction = (any Application<P>) async throws -> ()
 
   @Sendable
-  private func apply(_ block: MADApplyFunction) async rethrows {
+  private func _apply(_ block: AsyncMADApplyFunction) async rethrows {
     for application in _applications {
       try await block(application.value)
     }
   }
 
-  typealias MADContextSpecificApplyFunction<T> = (any Application<P>) -> (T) async throws -> ()
+  typealias MADContextSpecificApplyFunction<T> = (any Application<P>) throws -> (T) throws -> ()
 
-  private func apply<T>(
+  private func _apply<T>(
     with arg: T,
     _ block: MADContextSpecificApplyFunction<T>
-  ) async throws {
-    try await apply { application in
+  ) rethrows {
+    try _apply { application in
+      try block(application)(arg)
+    }
+  }
+
+  typealias AsyncMADContextSpecificApplyFunction<T> = (any Application<P>) throws
+    -> (T) async throws -> ()
+
+  private func _apply<T>(
+    with arg: T,
+    _ block: AsyncMADContextSpecificApplyFunction<T>
+  ) async rethrows {
+    try await _apply { application in
       try await block(application)(arg)
     }
   }
 
   deinit {
-    portNotificationTask?.cancel()
+    bridgeNotificationTask?.cancel()
   }
 
   func register(application: some Application<P>) throws {
@@ -193,5 +199,61 @@ actor Controller<P: Port> {
     else { throw MRPError.applicationNotFound }
     _applications.removeValue(forKey: application.etherType)
     logger.info("deregistered application \(application)")
+  }
+
+  private func _register(
+    contextIdentifier: MAPContextIdentifier,
+    with context: MAPContext<P>
+  ) async throws {
+    for application in _applications.values {
+      try await application.register(contextIdentifier: contextIdentifier, with: context)
+    }
+  }
+
+  private func _update(
+    contextIdentifier: MAPContextIdentifier,
+    with context: MAPContext<P>
+  ) throws {
+    for application in _applications.values {
+      try application.update(contextIdentifier: contextIdentifier, with: context)
+    }
+  }
+
+  private func _deregister(
+    contextIdentifier: MAPContextIdentifier,
+    with context: MAPContext<P>
+  ) throws {
+    for application in _applications.values {
+      try application.deregister(contextIdentifier: contextIdentifier, with: context)
+    }
+  }
+
+  private func _startRx(port: P) {
+    _rxTasks[port.id] = Task { @Sendable in
+      for try await packet in try await port.rxPackets {
+        try await _applications[packet.etherType]?.rx(packet: packet, from: port)
+      }
+    }
+  }
+
+  private func _startTx(port: P) {
+    var periodicTimer = _periodicTimers[port.id]
+    if periodicTimer == nil {
+      periodicTimer = Timer {
+        try await self._apply { @Sendable application in
+          try await application.periodic()
+        }
+      }
+    }
+    periodicTimer!.start(interval: periodicTransmissionTime)
+  }
+
+  private func _stopRx(port: P) {
+    _rxTasks[port.id]?.cancel()
+    _rxTasks[port.id] = nil
+  }
+
+  private func _stopTx(port: P) {
+    _periodicTimers[port.id]?.stop()
   }
 }
