@@ -61,7 +61,7 @@ extension Port {
   ) async throws {
     let packet = try IEEE802Packet(
       destMacAddress: application.groupMacAddress,
-      tci: IEEE802Packet.TCI(contextIdentifier: contextIdentifier),
+      contextIdentifier: contextIdentifier,
       sourceMacAddress: macAddress,
       etherType: application.etherType,
       data: pdu.serialized()

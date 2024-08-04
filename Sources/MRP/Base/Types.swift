@@ -46,7 +46,39 @@ struct OperationalStatistics {
 
 public typealias EUI48 = (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8)
 
-typealias MAPContextIdentifier = Int
+struct MAPContextIdentifier: Identifiable, Sendable, Hashable, Equatable,
+  ExpressibleByIntegerLiteral
+{
+  typealias ID = UInt16
+  typealias IntegerLiteralType = ID
+
+  let id: UInt16
+
+  init(id: UInt16) {
+    self.id = id
+  }
+
+  init(integerLiteral value: ID) {
+    self.init(id: value)
+  }
+
+  init(tci: IEEE802Packet.TCI?) {
+    if let tci {
+      self.init(id: tci.vid)
+    } else {
+      self = MAPBaseSpanningTreeContext
+    }
+  }
+
+  var tci: IEEE802Packet.TCI? {
+    if self != MAPBaseSpanningTreeContext {
+      IEEE802Packet.TCI(tci: id)
+    } else {
+      nil
+    }
+  }
+}
+
 typealias MAPContext<P: Port> = Set<P>
 
 let MAPBaseSpanningTreeContext = MAPContextIdentifier(0)

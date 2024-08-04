@@ -174,12 +174,12 @@ extension Application {
   func rx(packet: IEEE802Packet, from port: P) async throws {
     var deserializationContext = DeserializationContext(packet.data)
     let pdu = try MRPDU(deserializationContext: &deserializationContext, application: self)
-    try await rx(pdu: pdu, from: port)
+    try await rx(pdu: pdu, for: MAPContextIdentifier(tci: packet.tci), from: port)
   }
 
-  func rx(pdu: MRPDU, from port: P) async throws {
+  func rx(pdu: MRPDU, for contextIdentifier: MAPContextIdentifier, from port: P) async throws {
     guard pdu.protocolVersion <= protocolVersion else { throw MRPError.badProtocolVersion }
-    let participant = try findParticipant(port: port)
+    let participant = try findParticipant(for: contextIdentifier, port: port)
     for message in pdu.messages {
       try await participant.rx(message: message)
     }

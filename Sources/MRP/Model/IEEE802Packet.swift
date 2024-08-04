@@ -73,11 +73,6 @@ public struct IEEE802Packet: Sendable, SerDes, CustomStringConvertible {
     init(deserializationContext: inout DeserializationContext) throws {
       tci = try deserializationContext.deserialize()
     }
-
-    init?(contextIdentifier: MAPContextIdentifier) {
-      if contextIdentifier == MAPBaseSpanningTreeContext { return nil }
-      self.init(tci: UInt16(contextIdentifier))
-    }
   }
 
   public let destMacAddress: EUI48
@@ -102,6 +97,22 @@ public struct IEEE802Packet: Sendable, SerDes, CustomStringConvertible {
     self.tci = tci
     self.etherType = etherType
     self.data = data
+  }
+
+  init(
+    destMacAddress: EUI48,
+    contextIdentifier: MAPContextIdentifier,
+    sourceMacAddress: EUI48,
+    etherType: UInt16,
+    data: [UInt8]
+  ) {
+    self.init(
+      destMacAddress: destMacAddress,
+      tci: contextIdentifier.tci,
+      sourceMacAddress: sourceMacAddress,
+      etherType: etherType,
+      data: data
+    )
   }
 
   init(
