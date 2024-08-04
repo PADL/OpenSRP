@@ -20,7 +20,6 @@ import CLinuxSockAddr
 import CNetLink
 import SystemPackage
 
-// TODO: if object is never mutated, we can probably remove the locks
 public struct RTNLLink: NLObjectConstructible, Sendable, CustomStringConvertible {
   private let _object: NLObject
 
@@ -28,28 +27,24 @@ public struct RTNLLink: NLObjectConstructible, Sendable, CustomStringConvertible
     _object = object
   }
 
+  private var _obj: OpaquePointer {
+    _object._obj
+  }
+
   public var name: String {
-    _object.apply {
-      String(cString: rtnl_link_get_name($0))
-    }
+    String(cString: rtnl_link_get_name(_obj))
   }
 
   public var master: Int {
-    _object.apply {
-      Int(rtnl_link_get_master($0))
-    }
+    Int(rtnl_link_get_master(_obj))
   }
 
   public var index: Int {
-    _object.apply {
-      Int(rtnl_link_get_ifindex($0))
-    }
+    Int(rtnl_link_get_ifindex(_obj))
   }
 
   public var mtu: Int {
-    _object.apply {
-      Int(rtnl_link_get_mtu($0))
-    }
+    Int(rtnl_link_get_mtu(_obj))
   }
 
   public var description: String {
@@ -57,9 +52,7 @@ public struct RTNLLink: NLObjectConstructible, Sendable, CustomStringConvertible
   }
 
   public var flags: Int {
-    _object.apply {
-      Int(rtnl_link_get_flags($0))
-    }
+    Int(rtnl_link_get_flags(_obj))
   }
 
   public var macAddressString: String {
@@ -76,22 +69,18 @@ public struct RTNLLink: NLObjectConstructible, Sendable, CustomStringConvertible
   }
 
   public var macAddress: (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8) {
-    _object.apply {
-      // need to copy because address is not aligned on word boundary
-      let _addr = rtnl_link_get_addr($0)
-      var mac = [UInt8](repeating: 0, count: Int(nl_addr_get_len(_addr)))
-      precondition(mac.count == Int(ETH_ALEN))
-      _ = mac.withUnsafeMutableBytes {
-        memcpy($0.baseAddress!, nl_addr_get_binary_addr(_addr), Int(nl_addr_get_len(_addr)))
-      }
-      return (mac[0], mac[1], mac[2], mac[3], mac[4], mac[5])
+    // need to copy because address is not aligned on word boundary
+    let _addr = rtnl_link_get_addr(_obj)
+    var mac = [UInt8](repeating: 0, count: Int(nl_addr_get_len(_addr)))
+    precondition(mac.count == Int(ETH_ALEN))
+    _ = mac.withUnsafeMutableBytes {
+      memcpy($0.baseAddress!, nl_addr_get_binary_addr(_addr), Int(nl_addr_get_len(_addr)))
     }
+    return (mac[0], mac[1], mac[2], mac[3], mac[4], mac[5])
   }
 
   public var family: Int {
-    _object.apply {
-      Int(rtnl_link_get_family($0))
-    }
+    Int(rtnl_link_get_family(_obj))
   }
 }
 

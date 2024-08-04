@@ -40,14 +40,10 @@ final class NLObject: @unchecked Sendable, Equatable, Hashable, CustomStringConv
   }
 
   public static func == (_ lhs: NLObject, _ rhs: NLObject) -> Bool {
-    lhs._obj.withCriticalRegion { lhs in
-      rhs._obj.withCriticalRegion { rhs in
-        nl_object_identical(lhs, rhs) != 0
-      }
-    }
+    nl_object_identical(lhs._obj, rhs._obj) != 0
   }
 
-  let _obj: ManagedCriticalState<OpaquePointer>
+  let _obj: OpaquePointer
 
   convenience init(msg: OpaquePointer) throws {
     var obj: OpaquePointer! = nil
@@ -73,58 +69,46 @@ final class NLObject: @unchecked Sendable, Equatable, Hashable, CustomStringConv
 
   public init(obj: OpaquePointer!) {
     nl_object_get(obj)
-    _obj = ManagedCriticalState(obj)
+    _obj = obj
   }
 
   deinit {
-    _obj.withCriticalRegion { nl_object_put($0) }
+    nl_object_put(_obj)
   }
 
   public var description: String {
     var buffer = [CChar](repeating: 0, count: 1024)
-    _obj.withCriticalRegion { obj in
-      buffer.withUnsafeMutableBufferPointer {
-        nl_object_dump_buf(obj, $0.baseAddress!, $0.count)
-      }
+    buffer.withUnsafeMutableBufferPointer {
+      nl_object_dump_buf(_obj, $0.baseAddress!, $0.count)
     }
     return String(cString: buffer)
   }
 
   public var isMarked: Bool {
     get {
-      nl_object_is_marked(_obj.criticalState) != 0
+      nl_object_is_marked(_obj) != 0
     }
     set {
-      _obj.withCriticalRegion { obj in
-        newValue ? nl_object_mark(obj) : nl_object_unmark(obj)
-      }
+      newValue ? nl_object_mark(_obj) : nl_object_unmark(_obj)
     }
   }
 
   public func hash(into hasher: inout Hasher) {
     var hashkey: UInt32 = 0
-    _obj.withCriticalRegion { obj in
-      nl_object_keygen(obj, &hashkey, UInt32(MemoryLayout<UInt32>.size))
-    }
+    nl_object_keygen(_obj, &hashkey, UInt32(MemoryLayout<UInt32>.size))
     hasher.combine(hashkey)
   }
 
   public var typeString: String {
-    String(cString: nl_object_get_type(_obj.criticalState))
+    String(cString: nl_object_get_type(_obj))
   }
 
   public var messageType: Int {
-    Int(nl_object_get_msgtype(_obj.criticalState))
+    Int(nl_object_get_msgtype(_obj))
   }
 
   public var isAttributeMask: UInt32 {
-    nl_object_get_id_attrs(_obj.criticalState)
-  }
-
-  public func apply<T>(_ block: (OpaquePointer) throws -> T) rethrows -> T {
-    try _obj.withCriticalRegion { obj in
-      try block(obj)
-    }
+    nl_object_get_id_attrs(_obj)
   }
 }
 
