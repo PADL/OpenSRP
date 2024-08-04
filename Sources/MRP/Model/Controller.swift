@@ -101,8 +101,8 @@ actor Controller<P: Port> {
         etherType: application.value.etherType
       )
     }
-    _stopRx(port: port)
     _stopTx(port: port)
+    _stopRx(port: port)
 
     try? _deregister(contextIdentifier: MAPBaseSpanningTreeContext, with: [port])
     ports.remove(port)

@@ -95,10 +95,7 @@ extension Application {
   typealias ParticipantSpecificApplyFunction<T> = (Participant<Self>) -> (T) throws -> ()
   typealias AsyncParticipantSpecificApplyFunction<T> = (Participant<Self>) -> (T) async throws -> ()
 
-  func periodic(
-    for contextIdentifier: MAPContextIdentifier =
-      MAPBaseSpanningTreeContext
-  ) async throws {
+  func periodic(for contextIdentifier: MAPContextIdentifier? = nil) async throws {
     try await apply(for: contextIdentifier) { participant in
       try await participant.tx()
     }
@@ -243,7 +240,11 @@ extension BaseApplication {
   ) async rethrows -> [T] {
     var participants: Set<Participant<Self>>?
     _participants.withCriticalRegion {
-      participants = $0[contextIdentifier ?? 0]
+      if let contextIdentifier {
+        participants = $0[contextIdentifier]
+      } else {
+        participants = Set($0.flatMap { Array($1) })
+      }
     }
     var ret = [T]()
     if let participants {
@@ -261,7 +262,11 @@ extension BaseApplication {
   ) rethrows -> [T] {
     var participants: Set<Participant<Self>>?
     _participants.withCriticalRegion {
-      participants = $0[contextIdentifier ?? 0]
+      if let contextIdentifier {
+        participants = $0[contextIdentifier]
+      } else {
+        participants = Set($0.flatMap { Array($1) })
+      }
     }
     var ret = [T]()
     if let participants {
@@ -274,7 +279,7 @@ extension BaseApplication {
 
   func register(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) async throws {
     for port in context {
-      guard (try? findParticipant(for: MAPBaseSpanningTreeContext, port: port)) == nil
+      guard (try? findParticipant(for: contextIdentifier, port: port)) == nil
       else {
         throw MRPError.portAlreadyExists
       }
@@ -293,7 +298,7 @@ extension BaseApplication {
   func update(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws {
     for port in context {
       let participant = try findParticipant(
-        for: MAPBaseSpanningTreeContext,
+        for: contextIdentifier,
         port: port
       )
       Task { try await participant.redeclare() }
@@ -304,7 +309,7 @@ extension BaseApplication {
   func deregister(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws {
     for port in context {
       let participant = try findParticipant(
-        for: MAPBaseSpanningTreeContext,
+        for: contextIdentifier,
         port: port
       )
       Task { try await participant.flush() }
