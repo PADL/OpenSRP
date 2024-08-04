@@ -36,6 +36,8 @@ struct MockValue: Value {
 }
 
 final class MockApplication<P: Port>: BaseApplication, Sendable where P == P {
+  var _contextsSupported: Bool { false }
+
   let _delegate: (any ApplicationDelegate<P>)? = nil
 
   func set(logger: Logger) {

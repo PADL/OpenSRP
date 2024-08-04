@@ -210,12 +210,15 @@ protocol BaseApplication: Application where P == P {
   var _mad: Weak<Controller<P>> { get }
   var _participants: ManagedCriticalState<MAPParticipantDictionary> { get }
   var _delegate: (any ApplicationDelegate<P>)? { get }
+
+  var _contextsSupported: Bool { get }
 }
 
 extension BaseApplication {
   var mad: Controller<P>? { _mad.object }
 
   func add(participant: Participant<Self>) throws {
+    precondition(_contextsSupported || participant.contextIdentifier == MAPBaseSpanningTreeContext)
     _participants.withCriticalRegion {
       if let index = $0.index(forKey: participant.contextIdentifier) {
         $0.values[index].insert(participant)
@@ -228,6 +231,7 @@ extension BaseApplication {
   func remove(
     participant: Participant<Self>
   ) throws {
+    precondition(_contextsSupported || participant.contextIdentifier == MAPBaseSpanningTreeContext)
     _participants.withCriticalRegion {
       $0[participant.contextIdentifier]?.remove(participant)
     }
@@ -278,6 +282,7 @@ extension BaseApplication {
   }
 
   func register(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) async throws {
+    guard _contextsSupported || contextIdentifier == MAPBaseSpanningTreeContext else { return }
     for port in context {
       guard (try? findParticipant(for: contextIdentifier, port: port)) == nil
       else {
@@ -296,6 +301,7 @@ extension BaseApplication {
   }
 
   func update(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws {
+    guard _contextsSupported || contextIdentifier == MAPBaseSpanningTreeContext else { return }
     for port in context {
       let participant = try findParticipant(
         for: contextIdentifier,
@@ -307,6 +313,7 @@ extension BaseApplication {
   }
 
   func deregister(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws {
+    guard _contextsSupported || contextIdentifier == MAPBaseSpanningTreeContext else { return }
     for port in context {
       let participant = try findParticipant(
         for: contextIdentifier,
