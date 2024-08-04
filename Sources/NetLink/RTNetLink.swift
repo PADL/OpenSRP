@@ -68,9 +68,9 @@ public struct RTNLLink: NLObjectConstructible, Sendable, CustomStringConvertible
     )
   }
 
-  private func _makeAddress(_ addr: OpaquePointer)
-    -> (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8)
-  {
+  public typealias Address = (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8)
+
+  private func _makeAddress(_ addr: OpaquePointer) -> Address {
     var mac = [UInt8](repeating: 0, count: Int(nl_addr_get_len(addr)))
     precondition(mac.count == Int(ETH_ALEN))
     _ = mac.withUnsafeMutableBytes {
@@ -79,11 +79,11 @@ public struct RTNLLink: NLObjectConstructible, Sendable, CustomStringConvertible
     return (mac[0], mac[1], mac[2], mac[3], mac[4], mac[5])
   }
 
-  public var address: (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8) {
+  public var address: Address {
     _makeAddress(rtnl_link_get_addr(_obj))
   }
 
-  public var broadcastAddress: (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8) {
+  public var broadcastAddress: Address {
     _makeAddress(rtnl_link_get_broadcast(_obj))
   }
 
