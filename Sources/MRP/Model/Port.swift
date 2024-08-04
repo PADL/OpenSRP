@@ -16,6 +16,13 @@
 
 import AsyncExtensions
 
+public struct VLAN: Hashable, Sendable, Identifiable {
+  public typealias ID = UInt16
+
+  public var id: ID { vid }
+  var vid: UInt16
+}
+
 public protocol Port: Hashable, Sendable, Identifiable {
   associatedtype ID = Int
 
@@ -25,7 +32,8 @@ public protocol Port: Hashable, Sendable, Identifiable {
 
   var name: String { get }
   var id: ID { get }
-  var vid: UInt16? { get }
+  var pvid: UInt16? { get }
+  var vlans: [VLAN] { get }
 
   var macAddress: EUI48 { get }
 
@@ -73,6 +81,8 @@ extension Port {
 public protocol Bridge<P>: Sendable {
   associatedtype P: Port
 
+  var defaultPVid: UInt16? { get }
+  var vlans: [VLAN] { get }
   var ports: [P] { get async throws }
   var notifications: AnyAsyncSequence<PortNotification<P>> { get }
 }
