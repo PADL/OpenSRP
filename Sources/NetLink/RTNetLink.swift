@@ -20,11 +20,31 @@ import CLinuxSockAddr
 import CNetLink
 import SystemPackage
 
-public struct RTNLLink: NLObjectConstructible, Sendable, CustomStringConvertible {
+protocol RTNLLinkFactory {}
+
+extension RTNLLinkFactory {
+  init(reassigningSelfTo other: Self) {
+    self = other
+  }
+}
+
+public class RTNLLink: NLObjectConstructible, @unchecked Sendable, CustomStringConvertible,
+  RTNLLinkFactory
+{
   private let _object: NLObject
 
-  init(object: NLObject) throws {
+  fileprivate init(_ object: NLObject) {
     _object = object
+  }
+
+  convenience init(object: NLObject) {
+    if rtnl_link_is_bridge(object._obj) != 0 {
+      self.init(reassigningSelfTo: RTNLLinkBridge(object) as! Self)
+    } else if rtnl_link_is_vlan(object._obj) != 0 {
+      self.init(reassigningSelfTo: RTNLLinkVLAN(object) as! Self)
+    } else {
+      self.init(object)
+    }
   }
 
   fileprivate var _obj: OpaquePointer {
@@ -44,7 +64,7 @@ public struct RTNLLink: NLObjectConstructible, Sendable, CustomStringConvertible
   }
 
   public var description: String {
-    "\(index):\(name):\(family):\(addressString):\(String(format: "%08x", flags))"
+    "\(Swift.type(of: self))(\(index):\(name):\(family):\(addressString):\(String(format: "%08x", flags)))"
   }
 
   public var flags: Int {
@@ -197,6 +217,76 @@ public struct RTNLLink: NLObjectConstructible, Sendable, CustomStringConvertible
   }
 }
 
+public final class RTNLLinkBridge: RTNLLink {
+  var bridgeHasExtendedInfo: Bool {
+    rtnl_link_bridge_has_ext_info(_obj) != 0
+  }
+
+  public var bridgePortState: UInt8 {
+    UInt8(rtnl_link_bridge_get_port_state(_obj))
+  }
+
+  public var bridgePriority: UInt16 {
+    UInt16(rtnl_link_bridge_get_priority(_obj))
+  }
+
+  public var bridgeCost: UInt32 {
+    var cost = UInt32(0)
+    let r = rtnl_link_bridge_get_cost(_obj, &cost)
+    precondition(r == 0)
+    return cost
+  }
+
+  public var bridgeFlags: UInt32 {
+    UInt32(rtnl_link_bridge_get_flags(_obj))
+  }
+
+  public var bridgeHWMode: UInt16 {
+    get throws {
+      var hwmode = UInt16(0)
+      try throwingErrno {
+        rtnl_link_bridge_get_hwmode(_obj, &hwmode)
+      }
+      return hwmode
+    }
+  }
+
+  public var bridgePVID: UInt16? {
+    let pvid = rtnl_link_bridge_pvid(_obj)
+    if pvid <= 0 {
+      return nil
+    }
+    return UInt16(pvid)
+  }
+
+  public var bridgeHasVLAN: Bool {
+    rtnl_link_bridge_has_vlan(_obj) != 0
+  }
+
+  public var bridgePortVLAN: rtnl_link_bridge_vlan? {
+    guard let p = rtnl_link_bridge_get_port_vlan(_obj) else { return nil }
+    return p.pointee
+  }
+}
+
+public final class RTNLLinkVLAN: RTNLLink {
+  public var vlanID: UInt16? {
+    let vid = rtnl_link_vlan_get_id(_obj)
+    if vid == 0 { return nil }
+    return UInt16(vid)
+  }
+
+  public var vlanProtocol: UInt16? {
+    let proto = rtnl_link_vlan_get_protocol(_obj)
+    if proto == 0 { return nil }
+    return UInt16(proto)
+  }
+
+  public var vlanFlags: UInt32 {
+    UInt32(rtnl_link_vlan_get_flags(_obj))
+  }
+}
+
 public extension NLSocket {
   func enslave(link slave: RTNLLink, to master: RTNLLink) throws {
     try throwingErrno {
@@ -218,9 +308,9 @@ public enum RTNLLinkMessage: NLObjectConstructible, Sendable {
   init(object: NLObject) throws {
     switch object.messageType {
     case RTM_NEWLINK:
-      self = try .new(RTNLLink(object: object))
+      self = .new(RTNLLink(object: object))
     case RTM_DELLINK:
-      self = try .del(RTNLLink(object: object))
+      self = .del(RTNLLink(object: object))
     default:
       throw Errno.invalidArgument
     }
