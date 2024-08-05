@@ -62,6 +62,10 @@ struct MAPContextIdentifier: Identifiable, Sendable, Hashable, Equatable,
     self.init(id: value)
   }
 
+  init(vlan: VLAN) {
+    self.init(id: vlan.vid)
+  }
+
   private init(tci: IEEE802Packet.TCI?) {
     if let tci {
       self.init(id: tci.vid)

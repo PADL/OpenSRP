@@ -21,6 +21,22 @@ public struct VLAN: Hashable, Sendable, Identifiable {
 
   public var id: ID { vid }
   var vid: UInt16
+
+  var contextIdentifier: MAPContextIdentifier {
+    MAPContextIdentifier(id: vid)
+  }
+
+  public init(id: ID) {
+    self.init(vid: id)
+  }
+
+  init(vid: UInt16) {
+    self.vid = vid
+  }
+
+  init(contextIdentifier: MAPContextIdentifier) {
+    self.init(vid: contextIdentifier.id)
+  }
 }
 
 public protocol Port: Hashable, Sendable, Identifiable {
@@ -75,5 +91,11 @@ extension Port {
       data: pdu.serialized()
     )
     try await tx(packet)
+  }
+}
+
+extension Port {
+  var contextIdentifiers: Set<MAPContextIdentifier> {
+    Set(vlans.map { MAPContextIdentifier(vlan: $0) })
   }
 }

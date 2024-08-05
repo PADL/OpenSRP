@@ -75,6 +75,24 @@ actor Controller<P: Port> {
     bridgeNotificationTask = nil
   }
 
+  var knownContextIdentifiers: Set<MAPContextIdentifier> {
+    Set([MAPBaseSpanningTreeContext] + bridge.vlans.map { MAPContextIdentifier(vlan: $0) })
+  }
+
+  typealias MAPContextDictionary = [MAPContextIdentifier: MAPContext<P>]
+
+  func context(for contextIdentifier: MAPContextIdentifier) -> MAPContext<P> {
+    ports.filter { port in
+      port.vlans.contains(VLAN(contextIdentifier: contextIdentifier))
+    }
+  }
+
+  var knownContexts: MAPContextDictionary {
+    MAPContextDictionary(uniqueKeysWithValues: knownContextIdentifiers.map { contextIdentifier in
+      (contextIdentifier, context(for: contextIdentifier))
+    })
+  }
+
   private func _didAdd(port: P) async throws {
     logger.debug("added port \(port)")
 
