@@ -111,14 +111,40 @@ public struct LinuxPort: Port, Sendable {
     []
   }
 
+  private func _makeBpfFilter(etherType: UInt16) -> [sock_filter] {
+    let filter = [
+      sock_filter(code: 0x28, jt: 0, jf: 0, k: 0x0000_000C),
+      sock_filter(code: 0x15, jt: 5, jf: 0, k: UInt32(etherType)),
+      sock_filter(code: 0x15, jt: 2, jf: 0, k: 0x0000_8100),
+      sock_filter(code: 0x15, jt: 1, jf: 0, k: 0x0000_88A8),
+      sock_filter(code: 0x15, jt: 0, jf: 3, k: 0x0000_9100),
+      sock_filter(code: 0x28, jt: 0, jf: 0, k: 0x0000_0010),
+      sock_filter(code: 0x15, jt: 0, jf: 1, k: UInt32(etherType)),
+      sock_filter(code: 0x06, jt: 0, jf: 0, k: 0x0004_0000),
+      sock_filter(code: 0x06, jt: 0, jf: 0, k: 0x0000_0000),
+    ]
+    return filter
+  }
+
+  private func _addOrDropBpfFilter(etherType: UInt16, add: Bool) throws {
+    var filter = _makeBpfFilter(etherType: etherType)
+    try filter.withUnsafeMutableBufferPointer {
+      var bpf = sock_fprog(len: UInt16($0.count), filter: $0.baseAddress!)
+      let option = add ? SO_ATTACH_FILTER : SO_DETACH_FILTER
+      try _socket.setOpaqueOption(level: SOL_SOCKET, option: option, to: &bpf)
+    }
+  }
+
   public func addFilter(for macAddress: EUI48, etherType: UInt16) throws {
     if macAddress.0 & 1 != 0 {
       let sll = Self._makeSll(macAddress: macAddress, etherType: etherType, index: id)
       try _socket.addMulticastMembership(for: sll)
+      try _addOrDropBpfFilter(etherType: etherType, add: true)
     }
   }
 
   public func removeFilter(for macAddress: EUI48, etherType: UInt16) throws {
+    try _addOrDropBpfFilter(etherType: etherType, add: false)
     if macAddress.0 & 1 != 0 {
       let sll = Self._makeSll(macAddress: macAddress, etherType: etherType, index: id)
       try _socket.dropMulticastMembership(for: sll)

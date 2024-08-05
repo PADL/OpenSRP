@@ -14,8 +14,9 @@
 #include <netlink/route/route.h>
 #include <netlink/route/rtnl.h>
 #include <netlink/route/rule.h>
-#include <netlink/route/link/api.h>
 #include <netlink/route/link/inet.h>
 #include <netlink/route/link/inet6.h>
 #include <netlink/route/link/bridge.h>
 #include <netlink/route/link/vlan.h>
+
+#include <linux/filter.h>

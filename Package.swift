@@ -7,12 +7,17 @@ let PlatformPackageDependencies: [Package.Dependency]
 let PlatformTargetDependencies: [Target.Dependency]
 let PlatformProducts: [Product]
 let PlatformTargets: [Target]
+let PlatformCSettings: [CSetting]
+let PlatformLinkerSettings: [LinkerSetting]
 
 #if os(Linux)
 PlatformPackageDependencies = [.package(
   url: "https://github.com/PADL/IORingSwift",
   branch: "main"
 )]
+
+PlatformCSettings = [.unsafeFlags(["-I", "/usr/include/libnl3"])]
+PlatformLinkerSettings = [.linkedLibrary("nl-3"), .linkedLibrary("nl-route-3")]
 
 PlatformTargetDependencies = [
   "NetLink",
@@ -63,8 +68,8 @@ PlatformTargets = [
                    .product(name: "SystemPackage", package: "swift-system"),
                    .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
                    "AsyncExtensions"],
-    cSettings: [.unsafeFlags(["-I", "/usr/include/libnl3"])],
-    linkerSettings: [.linkedLibrary("nl-3"), .linkedLibrary("nl-route-3")]
+    cSettings: PlatformCSettings,
+    linkerSettings: PlatformLinkerSettings
   ),
   .executableTarget(
     name: "nldump",
@@ -88,6 +93,8 @@ PlatformPackageDependencies = []
 PlatformTargetDependencies = []
 PlatformProducts = []
 PlatformTargets = []
+PlatformCSettings = []
+PlatformLinkerSettings = []
 #endif
 
 let CommonPackageDependencies: [Package.Dependency] = [
@@ -117,9 +124,11 @@ let CommonTargets: [Target] = [
       .product(name: "SystemPackage", package: "swift-system"),
       .product(name: "Logging", package: "swift-log"),
     ] + PlatformTargetDependencies,
+    cSettings: PlatformCSettings,
     swiftSettings: [
       .enableExperimentalFeature("StrictConcurrency"),
-    ]
+    ],
+    linkerSettings: PlatformLinkerSettings
   ),
   .testTarget(
     name: "MRPTests",
