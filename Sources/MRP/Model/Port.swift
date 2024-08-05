@@ -33,7 +33,7 @@ public protocol Port: Hashable, Sendable, Identifiable {
   var name: String { get }
   var id: ID { get }
   var pvid: UInt16? { get }
-  var vlans: [VLAN] { get }
+  var vlans: Set<VLAN> { get }
 
   var macAddress: EUI48 { get }
 
@@ -75,31 +75,5 @@ extension Port {
       data: pdu.serialized()
     )
     try await tx(packet)
-  }
-}
-
-public protocol Bridge<P>: Sendable {
-  associatedtype P: Port
-
-  var defaultPVid: UInt16? { get }
-  var vlans: Set<VLAN> { get async throws }
-  var notifications: AnyAsyncSequence<PortNotification<P>> { get }
-
-  func getPorts() async throws -> Set<P>
-}
-
-extension Bridge {
-  func port(name: String) async throws -> P {
-    guard let port = try await getPorts().first(where: { $0.name == name }) else {
-      throw MRPError.portNotFound
-    }
-    return port
-  }
-
-  func port(id: P.ID) async throws -> P {
-    guard let port = try await getPorts().first(where: { $0.id == id }) else {
-      throw MRPError.portNotFound
-    }
-    return port
   }
 }

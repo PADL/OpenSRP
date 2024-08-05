@@ -107,8 +107,8 @@ public struct LinuxPort: Port, Sendable {
     nil
   }
 
-  public var vlans: [VLAN] {
-    []
+  public var vlans: Set<VLAN> {
+    Set([])
   }
 
   private func _makeBpfFilter(etherType: UInt16) -> [sock_filter] {

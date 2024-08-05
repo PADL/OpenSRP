@@ -28,7 +28,7 @@ struct nldump {
       )
       if let bridge = link as? RTNLLinkBridge {
         debugPrint(
-          " bridge flags \(bridge.bridgeFlags) pvid \(String(describing: bridge.bridgePVID)) hasVLAN \(bridge.bridgeHasVLAN) tagged \(String(describing: bridge.bridgeTaggedVLANs)) untagged \(String(describing: bridge.bridgeUntaggedVLANs))"
+          " bridge port state \(bridge.bridgePortState) flags \(bridge.bridgeFlags) pvid \(String(describing: bridge.bridgePVID)) hasVLAN \(bridge.bridgeHasVLAN) tagged \(String(describing: bridge.bridgeTaggedVLANs)) untagged \(String(describing: bridge.bridgeUntaggedVLANs))"
         )
       } else if let vlan = link as? RTNLLinkVLAN {
         debugPrint(" vlan ID \(vlan.vlanID ?? 0) flags \(vlan.vlanFlags)")
