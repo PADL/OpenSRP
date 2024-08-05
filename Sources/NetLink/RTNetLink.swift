@@ -263,9 +263,62 @@ public final class RTNLLinkBridge: RTNLLink {
     rtnl_link_bridge_has_vlan(_obj) != 0
   }
 
-  public var bridgePortVLAN: rtnl_link_bridge_vlan? {
+  private var _bridgePortVLAN: rtnl_link_bridge_vlan? {
     guard let p = rtnl_link_bridge_get_port_vlan(_obj) else { return nil }
     return p.pointee
+  }
+
+  private func _findNextBit(index: inout Int, in bitmap: UInt32) {
+    var ret: Int
+    if index < 0 {
+      ret = Int(ffs(Int32(bitPattern: bitmap)))
+    } else {
+      ret = Int(ffs(Int32(bitPattern: bitmap >> index)))
+      if ret > 0 { ret += index }
+      else { ret = 0 }
+    }
+    index = ret
+  }
+
+  private func _expandBitmap(_ bitmap: [UInt32]) -> Set<UInt16> {
+    var ret = Set<UInt16>()
+
+    for k in 0..<bitmap.count {
+      var index: Int = -1
+      repeat {
+        _findNextBit(index: &index, in: bitmap[k])
+        guard index > 0 else { break }
+        ret.insert(UInt16(k * 32 + index) - 1)
+      } while true
+    }
+
+    return ret
+  }
+
+  public var bridgeTaggedVLANs: Set<UInt16>? {
+    guard let bpv = _bridgePortVLAN else { return nil }
+
+    return withUnsafePointer(to: bpv.vlan_bitmap) { pointer in
+      let start = pointer.propertyBasePointer(to: \.0)!
+      let bitmap = [UInt32](UnsafeBufferPointer(
+        start: start,
+        count: Int(RTNL_LINK_BRIDGE_VLAN_BITMAP_LEN)
+      ))
+      return _expandBitmap(bitmap)
+    }
+  }
+
+  public var bridgeUntaggedVLANs: Set<UInt16>? {
+    guard let bpv = _bridgePortVLAN else { return nil }
+
+    return withUnsafePointer(to: bpv.untagged_bitmap) { pointer in
+      let start = pointer.propertyBasePointer(to: \.0)!
+      let bitmap = [UInt32](UnsafeBufferPointer(
+        start: start,
+        count: Int(RTNL_LINK_BRIDGE_VLAN_BITMAP_LEN)
+      ))
+      return _expandBitmap(bitmap)
+    }
   }
 }
 
@@ -315,21 +368,43 @@ public enum RTNLLinkMessage: NLObjectConstructible, Sendable {
       throw Errno.invalidArgument
     }
   }
+
+  public var link: RTNLLink {
+    switch self {
+    case let .new(link):
+      link
+    case let .del(link):
+      link
+    }
+  }
 }
 
 public extension NLSocket {
-  func getRtLinks() async throws -> AnyAsyncSequence<RTNLLinkMessage> {
-    let message = try NLMessage(socket: self, type: RTM_GETLINK, flags: NLM_F_REQUEST | NLM_F_DUMP)
-    var ifinfo = ifinfomsg()
-    try withUnsafeBytes(of: &ifinfo) {
+  func getLinks(family: sa_family_t) async throws -> AnyAsyncSequence<RTNLLink> {
+    let message = try NLMessage(socket: self, type: RTM_GETLINK, flags: NLM_F_DUMP)
+    var hdr = ifinfomsg()
+    hdr.ifi_family = UInt8(family)
+    try withUnsafeBytes(of: &hdr) {
       try message.append(Array($0))
     }
-    try message.put(u32: UInt32(IFLA_EXT_MASK), for: RTEXT_FILTER_BRVLAN)
-    return try streamRequest(message: message).map { $0 as! RTNLLinkMessage }
+    try message.put(
+      u32: UInt32(RTEXT_FILTER_VF | RTEXT_FILTER_BRVLAN | RTEXT_FILTER_MRP),
+      for: CInt(IFLA_EXT_MASK)
+    )
+    return try streamRequest(message: message).map { ($0 as! RTNLLinkMessage).link }
       .eraseToAnyAsyncSequence()
   }
 
-  func notifyRtLinks() throws {
+  func subscribeLinks() throws {
     try add(membership: RTNLGRP_LINK)
+  }
+}
+
+extension UnsafePointer {
+  func propertyBasePointer<Property>(to property: KeyPath<Pointee, Property>)
+    -> UnsafePointer<Property>?
+  {
+    guard let offset = MemoryLayout<Pointee>.offset(of: property) else { return nil }
+    return (UnsafeRawPointer(self) + offset).assumingMemoryBound(to: Property.self)
   }
 }

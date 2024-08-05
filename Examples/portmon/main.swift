@@ -27,7 +27,7 @@ struct portmon {
         .arguments[1] : "br0"
     )
     print("Ports at startup on bridge \(bridge.name):")
-    for port in try await bridge.ports {
+    for port in try await bridge.getPorts() {
       print("\(port)")
       do {
         try port.addFilter(for: groupAddress, etherType: etherType)
@@ -47,7 +47,7 @@ struct portmon {
       }
       group.addTask { @Sendable in
         print("Now monitoring for packets...")
-        for port in try await bridge.ports {
+        for port in try await bridge.getPorts() {
           do {
             for try await packet in try await port.rxPackets {
               print("received packet \(packet)\n\(packet.data.hexEncodedString())")

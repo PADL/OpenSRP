@@ -7,8 +7,8 @@ let PlatformPackageDependencies: [Package.Dependency]
 let PlatformTargetDependencies: [Target.Dependency]
 let PlatformProducts: [Product]
 let PlatformTargets: [Target]
-let PlatformCSettings: [CSetting]
-let PlatformLinkerSettings: [LinkerSetting]
+var PlatformCSettings: [CSetting] = []
+var PlatformLinkerSettings: [LinkerSetting] = []
 
 #if os(Linux)
 PlatformPackageDependencies = [.package(
@@ -16,8 +16,16 @@ PlatformPackageDependencies = [.package(
   branch: "main"
 )]
 
-PlatformCSettings = [.unsafeFlags(["-I", "/usr/include/libnl3"])]
-PlatformLinkerSettings = [.linkedLibrary("nl-3"), .linkedLibrary("nl-route-3")]
+let LocalLibNL = false // use locally built libnl, for debugging
+
+if LocalLibNL {
+  PlatformCSettings = [.unsafeFlags(["-I", "/usr/local/include/libnl3"])]
+  PlatformLinkerSettings = [.unsafeFlags(["-L", "/usr/local/lib"])]
+} else {
+  PlatformCSettings = [.unsafeFlags(["-I", "/usr/include/libnl3"])]
+}
+
+PlatformLinkerSettings += [.linkedLibrary("nl-3"), .linkedLibrary("nl-route-3")]
 
 PlatformTargetDependencies = [
   "NetLink",
@@ -93,8 +101,6 @@ PlatformPackageDependencies = []
 PlatformTargetDependencies = []
 PlatformProducts = []
 PlatformTargets = []
-PlatformCSettings = []
-PlatformLinkerSettings = []
 #endif
 
 let CommonPackageDependencies: [Package.Dependency] = [

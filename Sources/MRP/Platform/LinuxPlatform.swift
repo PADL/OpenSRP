@@ -173,51 +173,91 @@ public struct LinuxPort: Port, Sendable {
   }
 }
 
-public struct LinuxBridge: Bridge, Sendable {
+private extension LinuxPort {
+  var _vlans: Set<UInt16>? {
+    (_rtnl as! RTNLLinkBridge).bridgeTaggedVLANs
+  }
+
+  var _pvid: UInt16? {
+    (_rtnl as! RTNLLinkBridge).bridgePVID
+  }
+}
+
+public final class LinuxBridge: Bridge, @unchecked Sendable {
   public typealias Port = LinuxPort
 
   private let _socket: NLSocket
-  private var _bridgePort: Port!
+  private let _bridgePort = ManagedCriticalState<Port?>(nil)
+  private var _task: Task<(), Error>!
+  private let _portNotificationChannel = AsyncChannel<PortNotification<Port>>()
 
   public init(name: String) async throws {
     _socket = try NLSocket(protocol: NETLINK_ROUTE)
-    try _socket.notifyRtLinks()
-    let bridgePorts = try await _ports.filter { $0._isBridge && $0.name == name }
+    try _socket.subscribeLinks()
+    let bridgePorts = try await _getPorts(family: sa_family_t(AF_BRIDGE))
+      .filter { $0._isBridge && $0.name == name }
     guard bridgePorts.count == 1 else {
       throw MRPError.invalidBridgeIdentity
     }
-    _bridgePort = bridgePorts.first!
-  }
+    _bridgePort.withCriticalRegion { $0 = bridgePorts.first! }
 
-  public var defaultPVid: UInt16? {
-    nil
-  }
-
-  public var vlans: [VLAN] {
-    []
-  }
-
-  public var name: String {
-    _bridgePort.name
-  }
-
-  private var _ports: [Port] {
-    get async throws {
-      try await _socket.getRtLinks().compactMap { link in
-        if case let .new(link) = link {
-          try Port(rtnl: link)
-        } else {
-          nil
-        }
-      }.collect()
+    _task = Task<(), Error> { [self] in
+      for try await notification in _socket.notifications {
+        do {
+          var portNotification: PortNotification<Port>!
+          try _bridgePort.withCriticalRegion { bridgePort in
+            let bridgeIndex = bridgePort!._rtnl.index
+            let linkMessage = notification as! RTNLLinkMessage
+            let port = try Port(rtnl: linkMessage.link)
+            switch linkMessage {
+            case .new:
+              if let bridge = port._rtnl as? RTNLLinkBridge,
+                 bridge.index == bridgeIndex
+              {
+                bridgePort = port
+              } else if port._rtnl.master == bridgeIndex {
+                portNotification = .added(port)
+              }
+            case .del:
+              if port._rtnl.master == bridgeIndex {
+                portNotification = .removed(port)
+              } // else what if the bridge is deleted?
+            }
+          }
+          await _portNotificationChannel.send(portNotification)
+        } catch {}
+      }
     }
   }
 
-  public var ports: [Port] {
-    get async throws {
-      try await _ports.filter {
-        !$0._isBridge && $0._rtnl.master == _bridgePort._rtnl.index
-      }
+  public var defaultPVid: UInt16? {
+    _bridgePort.criticalState!._pvid
+  }
+
+  public var vlans: Set<VLAN> {
+    if let vlans = _bridgePort.criticalState!._vlans {
+      Set(vlans.map { VLAN(vid: $0) })
+    } else {
+      Set()
+    }
+  }
+
+  public var name: String {
+    _bridgePort.criticalState!.name
+  }
+
+  private func _getPorts(family: sa_family_t = sa_family_t(AF_UNSPEC)) async throws -> Set<Port> {
+    try await Set(_socket.getLinks(family: family).map { try Port(rtnl: $0) }.collect())
+  }
+
+  private var _bridgeIndex: Int {
+    _bridgePort.criticalState!._rtnl.index
+  }
+
+  public func getPorts() async throws -> Set<Port> {
+    let bridgeIndex = _bridgeIndex
+    return try await _getPorts().filter {
+      !$0._isBridge && $0._rtnl.master == bridgeIndex
     }
   }
 

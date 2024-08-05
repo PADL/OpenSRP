@@ -82,21 +82,22 @@ public protocol Bridge<P>: Sendable {
   associatedtype P: Port
 
   var defaultPVid: UInt16? { get }
-  var vlans: [VLAN] { get }
-  var ports: [P] { get async throws }
+  var vlans: Set<VLAN> { get async throws }
   var notifications: AnyAsyncSequence<PortNotification<P>> { get }
+
+  func getPorts() async throws -> Set<P>
 }
 
 extension Bridge {
   func port(name: String) async throws -> P {
-    guard let port = try await ports.first(where: { $0.name == name }) else {
+    guard let port = try await getPorts().first(where: { $0.name == name }) else {
       throw MRPError.portNotFound
     }
     return port
   }
 
   func port(id: P.ID) async throws -> P {
-    guard let port = try await ports.first(where: { $0.id == id }) else {
+    guard let port = try await getPorts().first(where: { $0.id == id }) else {
       throw MRPError.portNotFound
     }
     return port

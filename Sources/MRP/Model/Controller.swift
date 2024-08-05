@@ -50,7 +50,7 @@ actor Controller<P: Port> {
   let logger: Logger
 
   public init(bridgePort: P, bridge: some Bridge<P>) async throws {
-    ports = try await Set(bridge.ports)
+    ports = try await Set(bridge.getPorts())
     self.bridge = bridge
     var logger = Logger(label: "com.padl.SwiftMRP")
     logger.logLevel = .trace

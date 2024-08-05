@@ -22,8 +22,17 @@ import NetLink
 struct nldump {
   public static func main() async throws {
     let socket = try NLSocket(protocol: NETLINK_ROUTE)
-    for try await link in try await socket.getRtLinks() {
-      debugPrint("found link \(link)")
+    for try await link in try await socket.getLinks(family: sa_family_t(AF_BRIDGE)) {
+      debugPrint(
+        "@\(link.index) found link \(link) MTU \(link.mtu) master \(link.master) slaveOf \(link.slaveOf)"
+      )
+      if let bridge = link as? RTNLLinkBridge {
+        debugPrint(
+          " bridge flags \(bridge.bridgeFlags) pvid \(String(describing: bridge.bridgePVID)) hasVLAN \(bridge.bridgeHasVLAN) tagged \(String(describing: bridge.bridgeTaggedVLANs)) untagged \(String(describing: bridge.bridgeUntaggedVLANs))"
+        )
+      } else if let vlan = link as? RTNLLinkVLAN {
+        debugPrint(" vlan ID \(vlan.vlanID ?? 0) flags \(vlan.vlanFlags)")
+      }
     }
   }
 }
