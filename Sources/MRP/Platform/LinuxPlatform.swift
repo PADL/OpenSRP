@@ -213,19 +213,18 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
             let bridgeIndex = bridgePort!._rtnl.index
             let linkMessage = notification as! RTNLLinkMessage
             let port = try Port(rtnl: linkMessage.link)
-            switch linkMessage {
-            case .new:
-              if let bridge = port._rtnl as? RTNLLinkBridge,
-                 bridge.index == bridgeIndex
-              {
+            if port._isBridgeSelf, port._rtnl.index == bridgeIndex {
+              if case .new = linkMessage {
                 bridgePort = port
-              } else if port._rtnl.master == bridgeIndex {
-                portNotification = .added(port)
+              } else {
+                fatalError("bridge itself was deleted") // FIXME: do something sensible
               }
-            case .del:
-              if port._rtnl.master == bridgeIndex {
+            } else if port._rtnl.master == bridgeIndex {
+              if case .new = linkMessage {
+                portNotification = .added(port)
+              } else {
                 portNotification = .removed(port)
-              } // else what if the bridge is deleted?
+              }
             }
           }
           await _portNotificationChannel.send(portNotification)
