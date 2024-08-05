@@ -82,8 +82,12 @@ actor Controller<P: Port> {
   typealias MAPContextDictionary = [MAPContextIdentifier: MAPContext<P>]
 
   func context(for contextIdentifier: MAPContextIdentifier) -> MAPContext<P> {
-    ports.filter { port in
-      port.vlans.contains(VLAN(contextIdentifier: contextIdentifier))
+    if contextIdentifier == MAPBaseSpanningTreeContext {
+      ports
+    } else {
+      ports.filter { port in
+        port.vlans.contains(VLAN(contextIdentifier: contextIdentifier))
+      }
     }
   }
 
