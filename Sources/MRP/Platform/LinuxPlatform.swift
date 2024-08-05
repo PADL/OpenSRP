@@ -34,7 +34,7 @@ public struct LinuxPort: Port, Sendable {
     lhs.id == rhs.id
   }
 
-  private let _rtnl: RTNLLink
+  fileprivate let _rtnl: RTNLLink
   private let _socket: Socket
 
   private static func _makeSll(
@@ -83,8 +83,12 @@ public struct LinuxPort: Port, Sendable {
     _rtnl.flags & IFF_POINTOPOINT != 0
   }
 
-  public var isBridge: Bool {
-    false
+  public var _isBridge: Bool {
+    _rtnl is RTNLLinkBridge
+  }
+
+  public var _isVLAN: Bool {
+    _rtnl is RTNLLinkVLAN
   }
 
   public var name: String {
@@ -151,7 +155,7 @@ public struct LinuxBridge: Bridge, Sendable {
   public init(name: String) async throws {
     _socket = try NLSocket(protocol: NETLINK_ROUTE)
     try _socket.notifyRtLinks()
-    let bridgePorts = try await ports.filter { $0.name == name && $0.isBridge }
+    let bridgePorts = try await _ports.filter { $0._isBridge && $0.name == name }
     guard bridgePorts.count == 1 else {
       throw MRPError.invalidBridgeIdentity
     }
@@ -166,7 +170,11 @@ public struct LinuxBridge: Bridge, Sendable {
     []
   }
 
-  public var ports: [Port] {
+  public var name: String {
+    _bridgePort.name
+  }
+
+  private var _ports: [Port] {
     get async throws {
       try await _socket.getRtLinks().compactMap { link in
         if case let .new(link) = link {
@@ -175,6 +183,14 @@ public struct LinuxBridge: Bridge, Sendable {
           nil
         }
       }.collect()
+    }
+  }
+
+  public var ports: [Port] {
+    get async throws {
+      try await _ports.filter {
+        !$0._isBridge && $0._rtnl.master == _bridgePort._rtnl.index
+      }
     }
   }
 

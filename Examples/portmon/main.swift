@@ -23,8 +23,8 @@ import MRP
 @main
 struct portmon {
   public static func main() async throws {
-    let bridge = try await LinuxBridge(name: "br0")
-    print("Ports at startup:")
+    let bridge = try await LinuxBridge(name: CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "br0")
+    print("Ports at startup on bridge \(bridge.name):")
     for port in try await bridge.ports {
       print("\(port)")
     }
