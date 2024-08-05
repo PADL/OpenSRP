@@ -117,7 +117,7 @@ struct DeserializationContext {
   }
 
   mutating func deserialize() throws -> EUI48 {
-    let bytes = try deserialize(count: 6)
+    let bytes = try Array(deserialize(count: 6))
     return (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5])
   }
 
