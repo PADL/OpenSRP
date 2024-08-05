@@ -83,6 +83,10 @@ public struct LinuxPort: Port, Sendable {
     _rtnl.flags & IFF_POINTOPOINT != 0
   }
 
+  public var _isBridgeSelf: Bool {
+    _isBridge && _rtnl.master == _rtnl.index
+  }
+
   public var _isBridge: Bool {
     _rtnl is RTNLLinkBridge
   }
@@ -195,7 +199,7 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
     _socket = try NLSocket(protocol: NETLINK_ROUTE)
     try _socket.subscribeLinks()
     let bridgePorts = try await _getPorts(family: sa_family_t(AF_BRIDGE))
-      .filter { $0._isBridge && $0.name == name }
+      .filter { $0._isBridgeSelf && $0.name == name }
     guard bridgePorts.count == 1 else {
       throw MRPError.invalidBridgeIdentity
     }
@@ -257,7 +261,7 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
   public func getPorts() async throws -> Set<Port> {
     let bridgeIndex = _bridgeIndex
     return try await _getPorts().filter {
-      !$0._isBridge && $0._rtnl.master == bridgeIndex
+      !$0._isBridgeSelf && $0._rtnl.master == bridgeIndex
     }
   }
 
