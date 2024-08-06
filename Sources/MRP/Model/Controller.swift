@@ -69,7 +69,7 @@ actor Controller<P: Port> {
   public func shutdown() async throws {
     logger.debug("shutting down \(self)")
     for port in ports {
-      await _didRemove(port: port)
+      try _didRemove(port: port)
     }
     bridgeNotificationTask?.cancel()
     bridgeNotificationTask = nil
@@ -97,6 +97,52 @@ actor Controller<P: Port> {
     })
   }
 
+  private func _applyContextIdentifierChanges(beforeAddingOrUpdating port: P) async throws {
+    let addedContextIdentifiers: Set<MAPContextIdentifier>
+    let removedContextIdentifiers: Set<MAPContextIdentifier>
+    let updatedContextIdentifiers: Set<MAPContextIdentifier>
+
+    if let existingPort = ports.first(where: { $0.id == port.id }) {
+      addedContextIdentifiers = port.contextIdentifiers.subtracting(existingPort.contextIdentifiers)
+      removedContextIdentifiers = existingPort.contextIdentifiers
+        .subtracting(port.contextIdentifiers)
+      updatedContextIdentifiers = existingPort.contextIdentifiers
+        .intersection(port.contextIdentifiers)
+    } else {
+      addedContextIdentifiers = port.contextIdentifiers
+      removedContextIdentifiers = []
+      updatedContextIdentifiers = []
+    }
+
+    precondition(!addedContextIdentifiers.contains(MAPBaseSpanningTreeContext))
+    precondition(!removedContextIdentifiers.contains(MAPBaseSpanningTreeContext))
+
+    try _didUpdate(contextIdentifier: MAPBaseSpanningTreeContext, with: [port])
+
+    for contextIdentifier in removedContextIdentifiers {
+      try _didRemove(contextIdentifier: contextIdentifier, with: [port])
+    }
+
+    for contextIdentifier in updatedContextIdentifiers {
+      try _didUpdate(contextIdentifier: contextIdentifier, with: [port])
+    }
+
+    for contextIdentifier in addedContextIdentifiers {
+      try await _didAdd(contextIdentifier: contextIdentifier, with: [port])
+    }
+  }
+
+  private func _applyContextIdentifierChanges(beforeRemoving port: P) throws {
+    let removedContextIdentifiers: Set<MAPContextIdentifier>
+
+    guard let existingPort = ports.first(where: { $0.id == port.id }) else { return }
+    removedContextIdentifiers = existingPort.contextIdentifiers.subtracting(port.contextIdentifiers)
+
+    for contextIdentifier in [MAPBaseSpanningTreeContext] + removedContextIdentifiers {
+      try _didRemove(contextIdentifier: contextIdentifier, with: [port])
+    }
+  }
+
   private func _didAdd(port: P) async throws {
     logger.debug("added port \(port)")
 
@@ -110,11 +156,11 @@ actor Controller<P: Port> {
     _startRx(port: port)
     _startTx(port: port)
 
+    try await _applyContextIdentifierChanges(beforeAddingOrUpdating: port)
     ports.insert(port)
-    try _didUpdate(contextIdentifier: MAPBaseSpanningTreeContext, with: [port])
   }
 
-  private func _didRemove(port: P) async {
+  private func _didRemove(port: P) throws {
     logger.debug("removed port \(port)")
 
     for application in _applications {
@@ -126,15 +172,15 @@ actor Controller<P: Port> {
     _stopTx(port: port)
     _stopRx(port: port)
 
-    try? _didRemove(contextIdentifier: MAPBaseSpanningTreeContext, with: [port])
+    try _applyContextIdentifierChanges(beforeRemoving: port)
     ports.remove(port)
   }
 
   private func _didUpdate(port: P) async throws {
     logger.debug("updated port \(port)")
 
+    try await _applyContextIdentifierChanges(beforeAddingOrUpdating: port)
     ports.update(with: port)
-    try _didUpdate(contextIdentifier: MAPBaseSpanningTreeContext, with: [port])
   }
 
   private func _handleBridgeNotifications() async throws {
@@ -144,7 +190,7 @@ actor Controller<P: Port> {
         case let .added(port):
           try await ports.contains(port) ? _didUpdate(port: port) : _didAdd(port: port)
         case let .removed(port):
-          await _didRemove(port: port)
+          try _didRemove(port: port)
         case let .changed(port):
           try await _didUpdate(port: port)
         }
