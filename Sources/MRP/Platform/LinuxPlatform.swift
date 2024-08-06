@@ -121,6 +121,7 @@ public struct LinuxPort: Port, Sendable {
       sock_filter(code: 0x15, jt: 5, jf: 0, k: UInt32(etherType)),
       sock_filter(code: 0x15, jt: 2, jf: 0, k: 0x0000_8100),
       sock_filter(code: 0x15, jt: 1, jf: 0, k: 0x0000_88A8),
+
       sock_filter(code: 0x15, jt: 0, jf: 3, k: 0x0000_9100),
       sock_filter(code: 0x28, jt: 0, jf: 0, k: 0x0000_0010),
       sock_filter(code: 0x15, jt: 0, jf: 1, k: UInt32(etherType)),
