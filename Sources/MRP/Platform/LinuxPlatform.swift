@@ -116,8 +116,30 @@ public struct LinuxPort: Port, Sendable {
     return Set(vlans.map { VLAN(id: $0) })
   }
 
-  private func _makeBpfFilter(etherType: UInt16) -> [sock_filter] {
+  private func _makeBpfFilter(macAddress: EUI48, etherType: UInt16) -> [sock_filter] {
     let filter = [
+      sock_filter(code: 0x20, jt: 0, jf: 0, k: 0x0000_0008),
+      sock_filter(
+        code: 0x15,
+        jt: 0,
+        jf: 2,
+        k: UInt32(macAddress)
+          .2 << 24 | UInt32(macAddress.3) << 16 | UInt32(macAddress.4) << 8 | macAddress.5
+      ),
+      sock_filter(code: 0x28, jt: 0, jf: 0, k: 0x0000_0006),
+      sock_filter(code: 0x15, jt: 4, jf: 0, k: UInt32(macAddress).0 << 8 | UInt32(macAddress).1),
+
+      sock_filter(code: 0x20, jt: 0, jf: 0, k: 0x0000_0002),
+      sock_filter(
+        code: 0x15,
+        jt: 0,
+        jf: 10,
+        k: UInt32(macAddress)
+          .2 << 24 | UInt32(macAddress.3) << 16 | UInt32(macAddress.4) << 8 | macAddress.5
+      ),
+      sock_filter(code: 0x28, jt: 0, jf: 0, k: 0x0000_0000),
+      sock_filter(code: 0x15, jt: 4, jf: 8, k: UInt32(macAddress).0 << 8 | UInt32(macAddress).1),
+
       sock_filter(code: 0x28, jt: 0, jf: 0, k: 0x0000_000C),
       sock_filter(code: 0x15, jt: 5, jf: 0, k: UInt32(etherType)),
       sock_filter(code: 0x15, jt: 2, jf: 0, k: 0x0000_8100),
@@ -127,13 +149,14 @@ public struct LinuxPort: Port, Sendable {
       sock_filter(code: 0x28, jt: 0, jf: 0, k: 0x0000_0010),
       sock_filter(code: 0x15, jt: 0, jf: 1, k: UInt32(etherType)),
       sock_filter(code: 0x06, jt: 0, jf: 0, k: 0x0004_0000),
+
       sock_filter(code: 0x06, jt: 0, jf: 0, k: 0x0000_0000),
     ]
     return filter
   }
 
-  private func _addOrDropBpfFilter(etherType: UInt16, add: Bool) throws {
-    var filter = _makeBpfFilter(etherType: etherType)
+  private func _addOrDropBpfFilter(macAddress: EUI64, etherType: UInt16, add: Bool) throws {
+    var filter = _makeBpfFilter(macAddress: macAddress, etherType: etherType)
     try filter.withUnsafeMutableBufferPointer {
       var bpf = sock_fprog(len: UInt16($0.count), filter: $0.baseAddress!)
       let option = add ? SO_ATTACH_FILTER : SO_DETACH_FILTER
@@ -145,7 +168,7 @@ public struct LinuxPort: Port, Sendable {
     if macAddress.0 & 1 != 0 {
       let sll = Self._makeSll(macAddress: macAddress, etherType: etherType, index: id)
       try _socket.addMulticastMembership(for: sll)
-      try _addOrDropBpfFilter(etherType: etherType, add: true)
+      try _addOrDropBpfFilter(macAddress: macAddress, etherType: etherType, add: true)
     }
   }
 
