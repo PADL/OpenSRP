@@ -36,7 +36,7 @@ public struct LinuxPort: Port, Sendable {
 
   fileprivate let _rtnl: RTNLLink
   private let _socket: Socket
-  fileprivate var _bridge: LinuxBridge?
+  fileprivate weak var _bridge: LinuxBridge?
 
   private static func _makeSll(
     macAddress: EUI48,
