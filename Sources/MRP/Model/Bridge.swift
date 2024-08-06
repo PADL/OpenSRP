@@ -23,6 +23,9 @@ public protocol Bridge<P>: Sendable {
   var notifications: AnyAsyncSequence<PortNotification<P>> { get }
 
   func getPorts() async throws -> Set<P>
+
+  func add(vlans: Set<VLAN>) async throws
+  func remove(vlans: Set<VLAN>) async throws
 }
 
 extension Bridge {
