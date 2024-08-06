@@ -14,19 +14,32 @@
 // limitations under the License.
 //
 
-/*
- a) A per-Attribute Applicant state machine (10.7.7)
-
- A Full Participant implements the complete Applicant state machine (Table 10-3)
-
- The job of the Applicant is twofold:
- a) To ensure that this Participant’s declaration is correctly registered by other Participants’ Registrars.
- b) To prompt other Participants to reregister after one withdraws a declaration.
-
- The Applicant state machine distinguishes between Active Participants (that have sent a message or messages to make a declaration), Passive Participants (that require registration, but have not had to declare the attribute so far to register it, and will not have to explicitly deregister), and Observers (that do not require registration at present, but track the attribute’s registration in case they do and become Passive Participants).
-
- The Applicant for each Attribute implements states that record whether it wishes to make a new declaration, to maintain or withdraw an existing declaration, or has no declaration to make. It also records whether it has actively made a declaration, or has been passive, taking advantage of or simply observing the declarations of others. It counts the New, JoinIn, and JoinEmpty messages it has sent, and JoinIn messages sent by others, to ensure that at least two such messages have been sent since it last received a LeaveAll or Leave message, and at least one since it last received a JoinEmpty or Empty message. This ensures that each of the other Participant’s Registrars for the Attribute either have received (assuming no packet loss) two Join or New messages or have reported the Attribute as registered
- */
+// A Full Participant implements the complete Applicant state machine (Table 10-3)
+//
+// The job of the Applicant is twofold:
+// a) To ensure that this Participant’s declaration is correctly registered by
+// other Participants’ Registrars.  b) To prompt other Participants to
+// reregister after one withdraws a declaration.
+//
+// The Applicant state machine distinguishes between Active Participants (that
+// have sent a message or messages to make a declaration), Passive Participants
+// (that require registration, but have not had to declare the attribute so far
+// to register it, and will not have to explicitly deregister), and Observers
+// (that do not require registration at present, but track the attribute’s
+// registration in case they do and become Passive Participants).
+//
+// The Applicant for each Attribute implements states that record whether it
+// wishes to make a new declaration, to maintain or withdraw an existing
+// declaration, or has no declaration to make. It also records whether it has
+// actively made a declaration, or has been passive, taking advantage of or
+// simply observing the declarations of others. It counts the New, JoinIn, and
+// JoinEmpty messages it has sent, and JoinIn messages sent by others, to
+// ensure that at least two such messages have been sent since it last received
+// a LeaveAll or Leave message, and at least one since it last received a
+// JoinEmpty or Empty message. This ensures that each of the other
+// Participant’s Registrars for the Attribute either have received (assuming no
+// packet loss) two Join or New messages or have reported the Attribute as
+// registered
 
 struct Applicant: Sendable, CustomStringConvertible {
   enum State: Sendable, StateMachineHandler {

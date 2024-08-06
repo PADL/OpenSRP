@@ -14,9 +14,10 @@
 // limitations under the License.
 //
 
-/*
- The job of the Registrar is to record declarations of the attribute made by other Participants on the LAN. It does not send any protocol messages, as the Applicant looks after the interests of all would-be Participants.
- */
+// The job of the Registrar is to record declarations of the attribute made by
+// other Participants on the LAN. It does not send any protocol messages, as
+// the Applicant looks after the interests of all would-be Participants.
+
 struct Registrar: Sendable, CustomStringConvertible {
   enum State: Sendable, StateMachineHandler {
     case IN // Registered
@@ -50,13 +51,14 @@ struct Registrar: Sendable, CustomStringConvertible {
   }
 }
 
-/*
- b) A per-Attribute Registrar state machine (10.7.8)
-
- A Full Participant implements the Registrar state machine (Table 10-4) for each Attribute declared, registered, or tracked.
-
- The job of the Registrar is to record declarations of the attribute made by other Participants on the LAN. It does not send any protocol messages, as the Applicant looks after the interests of all would-be Participants.
- */
+// b) A per-Attribute Registrar state machine (10.7.8)
+//
+// A Full Participant implements the Registrar state machine (Table 10-4) for
+// each Attribute declared, registered, or tracked.
+//
+// The job of the Registrar is to record declarations of the attribute made by
+// other Participants on the LAN. It does not send any protocol messages, as
+// the Applicant looks after the interests of all would-be Participants.
 
 extension Registrar.State {
   mutating func handle(
