@@ -24,18 +24,18 @@ enum AttributeEvent: UInt8 {
 
   var protocolEvent: ProtocolEvent {
     switch self {
-    case .Mt:
-      .rMt
+    case .New:
+      .rNew
+    case .JoinIn:
+      .rJoinIn
     case .In:
       .rIn
     case .JoinMt:
       .rJoinMt
-    case .JoinIn:
-      .rJoinIn
+    case .Mt:
+      .rMt
     case .Lv:
       .rLv
-    case .New:
-      .rNew
     }
   }
 }
@@ -107,6 +107,7 @@ struct MRPFlag: OptionSet, Sendable {
 // c) The Message contains a VectorAttribute (10.8.1.2) where the range defined
 // by the FirstValue and NumberOfValues includes the attribute value associated
 // with the state machine.
+
 protocol Value: SerDes, Equatable {
   var index: Int { get }
 

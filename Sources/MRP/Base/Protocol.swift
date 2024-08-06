@@ -14,14 +14,13 @@
 // limitations under the License.
 //
 
-/*
- The following conventions are used in the abbreviations used in this subclause:
- rXXX receive PDU XXX
- sXXX send PDU XXX
- txXXX transmit opportunity
- XXX! state machine event
- !XXX “Not XXX”; i.e., logical NOT applied to the condition XXX
- */
+// The following conventions are used in the abbreviations used in this
+// subclause:
+// rXXX receive PDU XXX
+// sXXX send PDU XXX
+// txXXX transmit opportunity
+// XXX! state machine event
+// !XXX “Not XXX”; i.e., logical NOT applied to the condition XXX
 
 enum ProtocolEvent: Sendable {
   case Begin // Initialize state machine (10.7.5.1)

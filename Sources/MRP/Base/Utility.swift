@@ -30,10 +30,6 @@ extension Weak: Equatable where T: Equatable {
   }
 }
 
-func notImplemented() -> Never {
-  fatalError("Not yet implemented")
-}
-
 // https://stackoverflow.com/questions/52019449/best-way-to-loop-through-array-and-group-consecutive-numbers-in-another-array-sw
 extension BidirectionalCollection where Element: BinaryInteger, Index == Int {
   var consecutivelyGrouped: [[Element]] {

@@ -16,42 +16,50 @@
 
 import AsyncAlgorithms
 
-/*
- Timers are used in the state machine descriptions in order to cause actions to be taken after defined time periods have elapsed. The following terminology is used in the state machine descriptions to define timer states and the actions that can be performed upon them:
- a) A timer is said to be running if the most recent action to be performed upon it was a start.
- b) A running timer is said to have expired when the time period associated with the timer has elapsed
- since the most recent start action took place.
- c) A timer is said to be stopped if it has expired or if the most recent action to be performed upon it was
- a stop action.
- d) A start action sets a stopped timer to the running state, and associates a time period with the timer.
- This time period supersedes any periods that might have been associated with the timer by previous
- start events.
- e) A stop action sets a timer to the stopped state.
- */
+// Timers are used in the state machine descriptions in order to cause actions
+// to be taken after defined time periods have elapsed. The following
+// terminology is used in the state machine descriptions to define timer states
+// and the actions that can be performed upon them:
+//
+// a) A timer is said to be running if the most recent action to be performed
+// upon it was a start.
+//
+// b) A running timer is said to have expired when the time period associated
+// with the timer has elapsed since the most recent start action took place.
+//
+// c) A timer is said to be stopped if it has expired or if the most recent
+// action to be performed upon it was a stop action.
+//
+// d) A start action sets a stopped timer to the running state, and associates/
+// a time period with the timer.  This time period supersedes any periods that/
+// might have been associated with the timer by previous start events.
+//
+// e) A stop action sets a timer to the stopped state.
 
 final class Timer: Sendable {
   typealias Action = @Sendable () async throws -> ()
-  let onExpiry: Action
-  let state: ManagedCriticalState<Task<(), Error>?>
+
+  private let _onExpiry: Action
+  private let _task: ManagedCriticalState<Task<(), Error>?>
 
   init(onExpiry: @escaping Action) {
-    self.onExpiry = onExpiry
-    state = ManagedCriticalState<Task<(), Error>?>(nil)
+    _onExpiry = onExpiry
+    _task = ManagedCriticalState<Task<(), Error>?>(nil)
   }
 
   func start(interval: Duration) {
-    state.withCriticalRegion { task in
+    _task.withCriticalRegion { task in
       task?.cancel()
       task = Task<(), Error> {
         for await _ in AsyncTimerSequence(interval: interval, clock: .continuous) {
-          try await onExpiry()
+          try await _onExpiry()
         }
       }
     }
   }
 
   func stop() {
-    state.withCriticalRegion { task in
+    _task.withCriticalRegion { task in
       task?.cancel()
       task = nil
     }

@@ -25,11 +25,11 @@ struct ThreePackedEvents {
     self.value = value
   }
 
-  init(_ value: (UInt8, UInt8, UInt8)) {
-    self.value = ((value.0 * 6) + value.1) * 6 + value.2
+  init(_ tuple: (UInt8, UInt8, UInt8)) {
+    value = ((tuple.0 * 6) + tuple.1) * 6 + tuple.2
   }
 
-  var unpacked: (UInt8, UInt8, UInt8) {
+  var tuple: (UInt8, UInt8, UInt8) {
     var value = value
     var r: (UInt8, UInt8, UInt8)
     r.0 = value / (6 * 6)
@@ -55,11 +55,11 @@ struct FourPackedEvents {
     self.value = value
   }
 
-  init(_ value: (UInt8, UInt8, UInt8, UInt8)) {
-    self.value = value.0 * 64 + value.1 * 16 + value.2 * 4 + value.3
+  init(_ tuple: (UInt8, UInt8, UInt8, UInt8)) {
+    value = tuple.0 * 64 + tuple.1 * 16 + tuple.2 * 4 + tuple.3
   }
 
-  var unpacked: (UInt8, UInt8, UInt8, UInt8) {
+  var tuple: (UInt8, UInt8, UInt8, UInt8) {
     var value = value
     var r: (UInt8, UInt8, UInt8, UInt8)
     r.0 = value / 64
@@ -109,11 +109,11 @@ struct VectorHeader: Sendable, Equatable, Hashable, SerDes {
       throw MRPError.invalidEnumerationCase
     }
     self.leaveAllEvent = leaveAllEvent
-    numberOfValues = value & 0x1fff
+    numberOfValues = value & 0x1FFF
   }
 
   func serialize(into serializationContext: inout SerializationContext) throws {
-    let value = UInt16(leaveAllEvent.rawValue << 13) | UInt16(numberOfValues & 0x1fff)
+    let value = UInt16(leaveAllEvent.rawValue << 13) | UInt16(numberOfValues & 0x1FFF)
     serializationContext.serialize(uint16: value)
   }
 }
@@ -132,11 +132,12 @@ struct VectorAttribute<V: Value>: Sendable, Equatable {
   }
 
   private let vectorHeader: VectorHeader
-  /*
-   f) If the number of AttributeEvent values is zero, FirstValue is ignored and the value is skipped.
-   However, FirstValue is still present, and of the correct length, in octets, as specified by the
-   AttributeLength field (10.8.2.3) for the Attribute to which the message applies.
-   */
+
+  // f) If the number of AttributeEvent values is zero, FirstValue is ignored
+  // and the value is skipped. However, FirstValue is still present, and of
+  // the correct length, in octets, as specified by the AttributeLength field
+  // (10.8.2.3) for the Attribute to which the message applies.
+
   let firstValue: V
   let vector: [UInt8] // packed events
 
@@ -222,15 +223,15 @@ struct VectorAttribute<V: Value>: Sendable, Equatable {
 
   var threePackedEvents: [UInt8] {
     vector.flatMap {
-      let unpacked = ThreePackedEvents($0).unpacked
-      return [unpacked.0, unpacked.1, unpacked.2]
+      let tuple = ThreePackedEvents($0).tuple
+      return [tuple.0, tuple.1, tuple.2]
     }
   }
 
   var fourPackedEvents: [UInt8] {
     vector.flatMap {
-      let unpacked = FourPackedEvents($0).unpacked
-      return [unpacked.0, unpacked.1, unpacked.2, unpacked.3]
+      let tuple = FourPackedEvents($0).tuple
+      return [tuple.0, tuple.1, tuple.2, tuple.3]
     }
   }
 
