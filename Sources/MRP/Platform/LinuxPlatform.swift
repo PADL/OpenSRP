@@ -108,11 +108,12 @@ public struct LinuxPort: Port, Sendable {
   }
 
   public var pvid: UInt16? {
-    nil
+    _pvid
   }
 
   public var vlans: Set<VLAN> {
-    Set([])
+    guard let vlans = _vlans else { return [] }
+    return Set(vlans.map { VLAN(id: $0) })
   }
 
   private func _makeBpfFilter(etherType: UInt16) -> [sock_filter] {
@@ -180,11 +181,11 @@ public struct LinuxPort: Port, Sendable {
 
 private extension LinuxPort {
   var _vlans: Set<UInt16>? {
-    (_rtnl as! RTNLLinkBridge).bridgeTaggedVLANs
+    (_rtnl as? RTNLLinkBridge)?.bridgeTaggedVLANs
   }
 
   var _pvid: UInt16? {
-    (_rtnl as! RTNLLinkBridge).bridgePVID
+    (_rtnl as? RTNLLinkBridge)?.bridgePVID
   }
 
   func _add(vlans: Set<VLAN>, bridge: LinuxBridge) async throws {
