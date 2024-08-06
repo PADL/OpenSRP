@@ -16,7 +16,7 @@
 
 import AsyncExtensions
 
-public protocol Port: Hashable, Sendable, Identifiable {
+public protocol Port: Hashable, Sendable, Identifiable, VLANConfiguring {
   associatedtype ID = Int
 
   var isOperational: Bool { get }
@@ -32,9 +32,6 @@ public protocol Port: Hashable, Sendable, Identifiable {
 
   func add(filter: EUI48, etherType: UInt16) throws
   func remove(filter: EUI48, etherType: UInt16) throws
-
-  func add(vlans: Set<VLAN>, bridge: some Bridge<Self>) async throws
-  func remove(vlans: Set<VLAN>, bridge: some Bridge<Self>) async throws
 
   func tx(_ packet: IEEE802Packet) async throws
   var rxPackets: AnyAsyncSequence<IEEE802Packet> { get async throws }

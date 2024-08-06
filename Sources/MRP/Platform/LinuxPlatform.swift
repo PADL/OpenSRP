@@ -36,6 +36,7 @@ public struct LinuxPort: Port, Sendable {
 
   fileprivate let _rtnl: RTNLLink
   private let _socket: Socket
+  fileprivate var _bridge: LinuxBridge?
 
   private static func _makeSll(
     macAddress: EUI48,
@@ -60,8 +61,9 @@ public struct LinuxPort: Port, Sendable {
     Self._makeSll(macAddress: macAddress, index: 0)
   }
 
-  init(rtnl: RTNLLink) throws {
+  init(rtnl: RTNLLink, bridge: LinuxBridge) throws {
     _rtnl = rtnl
+    _bridge = bridge
     _socket = try Socket(ring: IORing.shared, domain: sa_family_t(AF_PACKET), type: SOCK_RAW)
     try _socket.bind(to: _sll)
     try _socket.bindTo(device: name)
@@ -203,25 +205,25 @@ private extension LinuxPort {
     (_rtnl as? RTNLLinkBridge)?.bridgePVID
   }
 
-  func _add(vlans: Set<VLAN>, bridge: LinuxBridge) async throws {
-    try await (_rtnl as! RTNLLinkBridge).add(vlans: Set(vlans.map(\.vid)), socket: bridge._socket)
+  func _add(vlans: Set<VLAN>) async throws {
+    try await (_rtnl as! RTNLLinkBridge).add(vlans: Set(vlans.map(\.vid)), socket: _bridge!._socket)
   }
 
-  func _remove(vlans: Set<VLAN>, bridge: LinuxBridge) async throws {
+  func _remove(vlans: Set<VLAN>) async throws {
     try await (_rtnl as! RTNLLinkBridge).remove(
       vlans: Set(vlans.map(\.vid)),
-      socket: bridge._socket
+      socket: _bridge!._socket
     )
   }
 }
 
 public extension LinuxPort {
-  func add(vlans: Set<VLAN>, bridge: some Bridge<Self>) async throws {
-    try await _add(vlans: vlans, bridge: bridge as! LinuxBridge)
+  func add(vlans: Set<VLAN>) async throws {
+    try await _add(vlans: vlans)
   }
 
-  func remove(vlans: Set<VLAN>, bridge: some Bridge<Self>) async throws {
-    try await _remove(vlans: vlans, bridge: bridge as! LinuxBridge)
+  func remove(vlans: Set<VLAN>) async throws {
+    try await _remove(vlans: vlans)
   }
 }
 
@@ -250,7 +252,7 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
           try _bridgePort.withCriticalRegion { bridgePort in
             let bridgeIndex = bridgePort!._rtnl.index
             let linkMessage = notification as! RTNLLinkMessage
-            let port = try Port(rtnl: linkMessage.link)
+            let port = try Port(rtnl: linkMessage.link, bridge: self)
             if port._isBridgeSelf, port._rtnl.index == bridgeIndex {
               if case .new = linkMessage {
                 bridgePort = port
@@ -288,7 +290,10 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
   }
 
   private func _getPorts(family: sa_family_t = sa_family_t(AF_UNSPEC)) async throws -> Set<Port> {
-    try await Set(_socket.getLinks(family: family).map { try Port(rtnl: $0) }.collect())
+    try await Set(
+      _socket.getLinks(family: family).map { try Port(rtnl: $0, bridge: self) }
+        .collect()
+    )
   }
 
   private var _bridgeIndex: Int {
@@ -307,22 +312,22 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
       let link = notification as! RTNLLinkMessage
       switch link {
       case let .new(link):
-        return try .added(Port(rtnl: link))
+        return try .added(Port(rtnl: link, bridge: self))
       case let .del(link):
-        return try .removed(Port(rtnl: link))
+        return try .removed(Port(rtnl: link, bridge: self))
       }
     }.eraseToAnyAsyncSequence()
   }
 
   public func add(vlans: Set<VLAN>) async throws {
     if let bridgePort = _bridgePort.criticalState {
-      try await bridgePort._add(vlans: vlans, bridge: self)
+      try await bridgePort._add(vlans: vlans)
     }
   }
 
   public func remove(vlans: Set<VLAN>) async throws {
     if let bridgePort = _bridgePort.criticalState {
-      try await bridgePort._remove(vlans: vlans, bridge: self)
+      try await bridgePort._remove(vlans: vlans)
     }
   }
 }
