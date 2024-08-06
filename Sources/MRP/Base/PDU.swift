@@ -109,11 +109,11 @@ struct VectorHeader: Sendable, Equatable, Hashable, SerDes {
       throw MRPError.invalidEnumerationCase
     }
     self.leaveAllEvent = leaveAllEvent
-    numberOfValues = value & ~0x2000
+    numberOfValues = value & 0x1fff
   }
 
   func serialize(into serializationContext: inout SerializationContext) throws {
-    let value = UInt16(leaveAllEvent.rawValue << 13) | UInt16(numberOfValues & ~0x2000)
+    let value = UInt16(leaveAllEvent.rawValue << 13) | UInt16(numberOfValues & 0x1fff)
     serializationContext.serialize(uint16: value)
   }
 }
