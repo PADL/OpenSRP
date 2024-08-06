@@ -16,29 +16,6 @@
 
 import AsyncExtensions
 
-public struct VLAN: Hashable, Sendable, Identifiable {
-  public typealias ID = UInt16
-
-  public var id: ID { vid }
-  var vid: UInt16
-
-  var contextIdentifier: MAPContextIdentifier {
-    MAPContextIdentifier(id: vid)
-  }
-
-  public init(id: ID) {
-    self.init(vid: id)
-  }
-
-  init(vid: UInt16) {
-    self.vid = vid
-  }
-
-  init(contextIdentifier: MAPContextIdentifier) {
-    self.init(vid: contextIdentifier.id)
-  }
-}
-
 public protocol Port: Hashable, Sendable, Identifiable {
   associatedtype ID = Int
 
