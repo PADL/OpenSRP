@@ -30,8 +30,11 @@ public protocol Port: Hashable, Sendable, Identifiable {
 
   var macAddress: EUI48 { get }
 
-  func addFilter(for macAddress: EUI48, etherType: UInt16) throws
-  func removeFilter(for macAddress: EUI48, etherType: UInt16) throws
+  func add(filter: EUI48, etherType: UInt16) throws
+  func remove(filter: EUI48, etherType: UInt16) throws
+
+  func add(vlans: Set<VLAN>, bridge: some Bridge<Self>) async throws
+  func remove(vlans: Set<VLAN>, bridge: some Bridge<Self>) async throws
 
   func tx(_ packet: IEEE802Packet) async throws
   var rxPackets: AnyAsyncSequence<IEEE802Packet> { get async throws }

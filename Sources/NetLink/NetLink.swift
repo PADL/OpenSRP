@@ -23,10 +23,6 @@ import SystemPackage
 
 public protocol NLObjectConstructible: Sendable {}
 
-protocol _NLObjectConstructible: NLObjectConstructible {
-  init(object: NLObject) throws
-}
-
 public typealias NLData = [UInt8]
 
 extension NLData {
@@ -55,6 +51,7 @@ final class NLObject: @unchecked Sendable, Equatable, Hashable, CustomStringConv
     case RTM_DELLINK:
       return try RTNLLinkMessage(object: self)
     default:
+      debugPrint("Unknown message type \(messageType) returned")
       throw Errno.invalidArgument
     }
   }
@@ -158,6 +155,16 @@ private func NLSocket_CB_FINISH(
   return CInt(NL_STOP.rawValue)
 }
 
+private func NLSocket_CB_ACK(
+  _ msg: OpaquePointer!,
+  _ arg: UnsafeMutableRawPointer!
+) -> CInt {
+  let nlSocket = Unmanaged<NLSocket>.fromOpaque(arg).takeUnretainedValue()
+  let hdr = nlmsg_hdr(msg)!.pointee
+  nlSocket.yield(sequence: hdr.nlmsg_seq)
+  return CInt(NL_OK.rawValue)
+}
+
 private func NLSocket_ErrCB(
   _ nla: UnsafeMutablePointer<sockaddr_nl>!,
   _ err: UnsafeMutablePointer<nlmsgerr>!,
@@ -172,18 +179,20 @@ private func NLSocket_ErrCB(
 public final class NLSocket: @unchecked Sendable {
   private typealias Continuation = CheckedContinuation<NLObjectConstructible, Error>
   private typealias Stream = AsyncThrowingStream<NLObjectConstructible, Error>
+  private typealias Ack = CheckedContinuation<(), Error>
   public typealias Channel = AsyncThrowingChannel<NLObjectConstructible, Error>
 
   private enum _Request {
     case continuation(Continuation)
     case stream(Stream.Continuation)
+    case ack(Ack)
 
     var hasMultipleResults: Bool {
       switch self {
-      case .continuation:
-        false
-      default:
+      case .stream:
         true
+      default:
+        false
       }
     }
   }
@@ -222,6 +231,13 @@ public final class NLSocket: @unchecked Sendable {
       NL_CB_FINISH,
       NL_CB_CUSTOM,
       NLSocket_CB_FINISH,
+      Unmanaged.passUnretained(self).toOpaque()
+    )
+    nl_socket_modify_cb(
+      sk,
+      NL_CB_ACK,
+      NL_CB_CUSTOM,
+      NLSocket_CB_ACK,
       Unmanaged.passUnretained(self).toOpaque()
     )
     nl_socket_modify_err_cb(
@@ -302,6 +318,13 @@ public final class NLSocket: @unchecked Sendable {
     continuation.finish()
   }
 
+  fileprivate func yield(sequence: UInt32) {
+    let request = _lookup(sequence: sequence, forceRemove: true)!
+    if case let .ack(continuation) = request {
+      continuation.resume()
+    }
+  }
+
   fileprivate func yield(
     sequence: UInt32,
     with result: Result<NLObject, Error>
@@ -325,8 +348,29 @@ public final class NLSocket: @unchecked Sendable {
         continuation.resume(with: result)
       case let .stream(continuation):
         continuation.yield(with: result)
+      default:
+        // shouldn't be reached
+        break
       }
     }
+  }
+
+  func ackRequest(
+    message: consuming NLMessage
+  ) async throws {
+    let sequence = message.sequence
+    return try await withTaskCancellationHandler(operation: {
+      try await withCheckedThrowingContinuation { continuation in
+        _requests.withCriticalRegion { $0[sequence] = .ack(continuation) }
+        do {
+          try message.send(on: self)
+        } catch {
+          yield(sequence: sequence, with: .failure(error))
+        }
+      }
+    }, onCancel: {
+      yield(sequence: sequence, with: .failure(CancellationError()))
+    })
   }
 
   func continuationRequest(
@@ -435,6 +479,14 @@ struct NLMessage: ~Copyable {
     }
   }
 
+  func nestStart(attr: CInt) -> NLAttribute {
+    NLAttribute(_nla: nla_nest_start(_msg, attr))
+  }
+
+  func nestEnd(attr: NLAttribute) {
+    nla_nest_end(_msg, UnsafeMutablePointer(mutating: attr._nla))
+  }
+
   func expand(to newlen: Int) throws {
     try throwingErrno { nlmsg_expand(_msg, newlen) }
   }
@@ -472,6 +524,22 @@ struct NLMessage: ~Copyable {
 
   func put(u64 value: UInt64, for attrtype: CInt) throws {
     try throwingErrno { nla_put_u64(_msg, attrtype, value) }
+  }
+
+  func put(data value: [UInt8], for attrtype: CInt) throws {
+    _ = try value.withUnsafeBufferPointer { value in
+      try throwingErrno {
+        nla_put(_msg, attrtype, Int32(value.count), value.baseAddress)
+      }
+    }
+  }
+
+  func put(opaque value: UnsafePointer<some Any>, for attrtype: CInt) throws {
+    _ = try withUnsafeBytes(of: value) { value in
+      try throwingErrno {
+        nla_put(_msg, attrtype, Int32(value.count), value.baseAddress)
+      }
+    }
   }
 
   var sequence: UInt32 {

@@ -30,7 +30,7 @@ struct portmon {
     for port in try await bridge.getPorts() {
       print("\(port)")
       do {
-        try port.addFilter(for: groupAddress, etherType: etherType)
+        try port.add(filter: groupAddress, etherType: etherType)
         print("added filter for \(groupAddress).\(etherType)")
       } catch {
         print("failed to add filter for \(groupAddress).\(etherType): \(error)")

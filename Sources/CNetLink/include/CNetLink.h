@@ -1,5 +1,8 @@
 #pragma once
 
+#include <linux/filter.h>
+#include <linux/if_bridge.h>
+
 #include <netlink/netlink.h>
 #include <netlink/socket.h>
 #include <netlink/attr.h>
@@ -18,5 +21,3 @@
 #include <netlink/route/link/inet6.h>
 #include <netlink/route/link/bridge.h>
 #include <netlink/route/link/vlan.h>
-
-#include <linux/filter.h>

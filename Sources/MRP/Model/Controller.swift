@@ -147,8 +147,8 @@ actor Controller<P: Port> {
     logger.debug("added port \(port)")
 
     for application in _applications {
-      try? port.addFilter(
-        for: application.value.groupMacAddress,
+      try? port.add(
+        filter: application.value.groupMacAddress,
         etherType: application.value.etherType
       )
     }
@@ -164,8 +164,8 @@ actor Controller<P: Port> {
     logger.debug("removed port \(port)")
 
     for application in _applications {
-      try? port.removeFilter(
-        for: application.value.groupMacAddress,
+      try? port.remove(
+        filter: application.value.groupMacAddress,
         etherType: application.value.etherType
       )
     }

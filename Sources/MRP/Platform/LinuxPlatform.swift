@@ -139,7 +139,7 @@ public struct LinuxPort: Port, Sendable {
     }
   }
 
-  public func addFilter(for macAddress: EUI48, etherType: UInt16) throws {
+  public func add(filter macAddress: EUI48, etherType: UInt16) throws {
     if macAddress.0 & 1 != 0 {
       let sll = Self._makeSll(macAddress: macAddress, etherType: etherType, index: id)
       try _socket.addMulticastMembership(for: sll)
@@ -147,7 +147,7 @@ public struct LinuxPort: Port, Sendable {
     }
   }
 
-  public func removeFilter(for macAddress: EUI48, etherType: UInt16) throws {
+  public func remove(filter macAddress: EUI48, etherType: UInt16) throws {
     try _addOrDropBpfFilter(etherType: etherType, add: false)
     if macAddress.0 & 1 != 0 {
       let sll = Self._makeSll(macAddress: macAddress, etherType: etherType, index: id)
@@ -185,12 +185,33 @@ private extension LinuxPort {
   var _pvid: UInt16? {
     (_rtnl as! RTNLLinkBridge).bridgePVID
   }
+
+  func _add(vlans: Set<VLAN>, bridge: LinuxBridge) async throws {
+    try await (_rtnl as! RTNLLinkBridge).add(vlans: Set(vlans.map(\.vid)), socket: bridge._socket)
+  }
+
+  func _remove(vlans: Set<VLAN>, bridge: LinuxBridge) async throws {
+    try await (_rtnl as! RTNLLinkBridge).remove(
+      vlans: Set(vlans.map(\.vid)),
+      socket: bridge._socket
+    )
+  }
+}
+
+public extension LinuxPort {
+  func add(vlans: Set<VLAN>, bridge: some Bridge<Self>) async throws {
+    try await _add(vlans: vlans, bridge: bridge as! LinuxBridge)
+  }
+
+  func remove(vlans: Set<VLAN>, bridge: some Bridge<Self>) async throws {
+    try await _remove(vlans: vlans, bridge: bridge as! LinuxBridge)
+  }
 }
 
 public final class LinuxBridge: Bridge, @unchecked Sendable {
   public typealias Port = LinuxPort
 
-  private let _socket: NLSocket
+  fileprivate let _socket: NLSocket
   private let _bridgePort = ManagedCriticalState<Port?>(nil)
   private var _task: Task<(), Error>!
   private let _portNotificationChannel = AsyncChannel<PortNotification<Port>>()
@@ -274,6 +295,18 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
         return try .removed(Port(rtnl: link))
       }
     }.eraseToAnyAsyncSequence()
+  }
+
+  public func add(vlans: Set<VLAN>) async throws {
+    if let bridgePort = _bridgePort.criticalState {
+      try await bridgePort._add(vlans: vlans, bridge: self)
+    }
+  }
+
+  public func remove(vlans: Set<VLAN>) async throws {
+    if let bridgePort = _bridgePort.criticalState {
+      try await bridgePort._remove(vlans: vlans, bridge: self)
+    }
   }
 }
 
