@@ -30,13 +30,6 @@ struct portmon {
     print("Ports at startup on bridge \(bridge.name):")
     for port in try await bridge.getPorts() {
       print("\(port)")
-      do {
-        try port.add(filter: groupAddress, etherType: etherType)
-        print("added filter for \(groupAddress).\(etherType)")
-      } catch {
-        print("failed to add filter for \(groupAddress).\(etherType): \(error)")
-        throw error
-      }
     }
 
     try await withThrowingTaskGroup(of: Void.self) { group in

@@ -152,12 +152,7 @@ actor Controller<P: Port> {
   private func _didAdd(port: P) async throws {
     logger.debug("added port \(port)")
 
-    for application in _applications {
-      try? port.add(
-        filter: application.value.groupMacAddress,
-        etherType: application.value.etherType
-      )
-    }
+    for application in _applications {}
 
     _startTx(port: port)
 
@@ -168,12 +163,8 @@ actor Controller<P: Port> {
   private func _didRemove(port: P) throws {
     logger.debug("removed port \(port)")
 
-    for application in _applications {
-      try? port.remove(
-        filter: application.value.groupMacAddress,
-        etherType: application.value.etherType
-      )
-    }
+    for application in _applications {}
+
     _stopTx(port: port)
 
     try _applyContextIdentifierChanges(beforeRemoving: port)

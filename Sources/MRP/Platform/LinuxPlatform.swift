@@ -67,7 +67,6 @@ public struct LinuxPort: Port, Sendable {
   }
 
   fileprivate let _rtnl: RTNLLink
-  private let _socket: Socket
   fileprivate weak var _bridge: LinuxBridge?
 
   private var _sll: sockaddr_ll {
@@ -77,9 +76,25 @@ public struct LinuxPort: Port, Sendable {
   init(rtnl: RTNLLink, bridge: LinuxBridge) throws {
     _rtnl = rtnl
     _bridge = bridge
-    _socket = try Socket(ring: IORing.shared, domain: sa_family_t(AF_PACKET), type: SOCK_RAW)
-    try _socket.bind(to: _sll)
-    try _socket.bindTo(device: name)
+  }
+
+  public func rxPackets(
+    macAddress: EUI48,
+    etherType: UInt16
+  ) async throws -> AnyAsyncSequence<IEEE802Packet> {
+    let sll = _makeSll(macAddress: macAddress, etherType: etherType, index: id)
+    let socket = try Socket(
+      ring: IORing.shared,
+      domain: sa_family_t(AF_PACKET),
+      type: __socket_type(rawValue: UInt32(etherType.bigEndian))
+    )
+    try socket.bind(to: sll)
+    try socket.addMulticastMembership(for: sll)
+
+    return try await socket.receiveMessages(count: _rtnl.mtu).compactMap { message in
+      var deserializationContext = DeserializationContext(message.buffer)
+      return try? IEEE802Packet(deserializationContext: &deserializationContext)
+    }.eraseToAnyAsyncSequence()
   }
 
   public func hash(into hasher: inout Hasher) {
@@ -130,62 +145,6 @@ public struct LinuxPort: Port, Sendable {
     guard let vlans = _vlans else { return [] }
     return Set(vlans.map { VLAN(id: $0) })
   }
-
-  private func _makeBpfFilter(macAddress: EUI48, etherType: UInt16) -> [sock_filter] {
-    let macHigh = UInt32(macAddress.0) << 8 | UInt32(macAddress.1)
-    let macLow = UInt32(macAddress.2) << 24 | UInt32(macAddress.3) << 16 | UInt32(macAddress.4) <<
-      8 | UInt32(macAddress.5)
-
-    let filter = [
-      sock_filter(code: 0x20, jt: 0, jf: 0, k: 0x0000_0008),
-      sock_filter(code: 0x15, jt: 0, jf: 2, k: macLow),
-      sock_filter(code: 0x28, jt: 0, jf: 0, k: 0x0000_0006),
-      sock_filter(code: 0x15, jt: 4, jf: 0, k: macHigh),
-
-      sock_filter(code: 0x20, jt: 0, jf: 0, k: 0x0000_0002),
-      sock_filter(code: 0x15, jt: 0, jf: 10, k: macLow),
-      sock_filter(code: 0x28, jt: 0, jf: 0, k: 0x0000_0000),
-      sock_filter(code: 0x15, jt: 4, jf: 8, k: macHigh),
-
-      sock_filter(code: 0x28, jt: 0, jf: 0, k: 0x0000_000C),
-      sock_filter(code: 0x15, jt: 5, jf: 0, k: UInt32(etherType)),
-      sock_filter(code: 0x15, jt: 2, jf: 0, k: 0x0000_8100),
-      sock_filter(code: 0x15, jt: 1, jf: 0, k: 0x0000_88A8),
-
-      sock_filter(code: 0x15, jt: 0, jf: 3, k: 0x0000_9100),
-      sock_filter(code: 0x28, jt: 0, jf: 0, k: 0x0000_0010),
-      sock_filter(code: 0x15, jt: 0, jf: 1, k: UInt32(etherType)),
-      sock_filter(code: 0x06, jt: 0, jf: 0, k: 0x0004_0000),
-
-      sock_filter(code: 0x06, jt: 0, jf: 0, k: 0x0000_0000),
-    ]
-    return filter
-  }
-
-  private func _addOrDropBpfFilter(macAddress: EUI48, etherType: UInt16, add: Bool) throws {
-    var filter = _makeBpfFilter(macAddress: macAddress, etherType: etherType)
-    try filter.withUnsafeMutableBufferPointer {
-      var bpf = sock_fprog(len: UInt16($0.count), filter: $0.baseAddress!)
-      let option = add ? SO_ATTACH_FILTER : SO_DETACH_FILTER
-      try _socket.setOpaqueOption(level: SOL_SOCKET, option: option, to: &bpf)
-    }
-  }
-
-  public func add(filter macAddress: EUI48, etherType: UInt16) throws {
-    if macAddress.0 & 1 != 0 {
-      let sll = _makeSll(macAddress: macAddress, etherType: etherType, index: id)
-      try _socket.addMulticastMembership(for: sll)
-      try _addOrDropBpfFilter(macAddress: macAddress, etherType: etherType, add: true)
-    }
-  }
-
-  public func remove(filter macAddress: EUI48, etherType: UInt16) throws {
-    try _addOrDropBpfFilter(macAddress: macAddress, etherType: etherType, add: false)
-    if macAddress.0 & 1 != 0 {
-      let sll = _makeSll(macAddress: macAddress, etherType: etherType, index: id)
-      try _socket.dropMulticastMembership(for: sll)
-    }
-  }
 }
 
 private extension LinuxPort {
@@ -231,6 +190,8 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
   private let _bridgePort = ManagedCriticalState<Port?>(nil)
   private var _task: Task<(), Error>!
   private let _portNotificationChannel = AsyncChannel<PortNotification<Port>>()
+
+  private let SOCK_RAW = __socket_type(3) // FIXME:
 
   public init(name: String, netFilterGroup group: Int) async throws {
     _socket = try Socket(ring: IORing.shared, domain: sa_family_t(AF_PACKET), type: SOCK_RAW)

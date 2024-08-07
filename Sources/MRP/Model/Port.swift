@@ -30,8 +30,8 @@ public protocol Port: Hashable, Sendable, Identifiable, VLANConfiguring
 
   var macAddress: EUI48 { get }
 
-  func add(filter: EUI48, etherType: UInt16) throws
-  func remove(filter: EUI48, etherType: UInt16) throws
+  func rxPackets(macAddress: EUI48, etherType: UInt16) async throws
+    -> AnyAsyncSequence<IEEE802Packet>
 }
 
 public enum PortNotification<P: Port>: Sendable {
