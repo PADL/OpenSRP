@@ -227,30 +227,31 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
 
     _task = Task<(), Error> { [self] in
       for try await notification in _nlLinkSocket.notifications {
-        do {
-          var portNotification: PortNotification<Port>!
-          try _bridgePort.withCriticalRegion { bridgePort in
-            let bridgeIndex = bridgePort!._rtnl.index
-            let linkMessage = notification as! RTNLLinkMessage
-            let port = try Port(rtnl: linkMessage.link, bridge: self)
-            if port._isBridgeSelf, port._rtnl.index == bridgeIndex {
-              if case .new = linkMessage {
-                bridgePort = port
-              } else {
-                fatalError("bridge itself was deleted") // FIXME: do something sensible
-              }
-            } else if port._rtnl.master == bridgeIndex {
-              if case .new = linkMessage {
-                portNotification = .added(port)
-              } else {
-                portNotification = .removed(port)
-              }
-            }
-          }
-          await _portNotificationChannel.send(portNotification)
-        } catch {}
+        try? await _handleNotification(notification as! RTNLLinkMessage)
       }
     }
+  }
+
+  private func _handleNotification(_ linkMessage: RTNLLinkMessage) async throws {
+    var portNotification: PortNotification<Port>!
+    try _bridgePort.withCriticalRegion { bridgePort in
+      let bridgeIndex = bridgePort!._rtnl.index
+      let port = try Port(rtnl: linkMessage.link, bridge: self)
+      if port._isBridgeSelf, port._rtnl.index == bridgeIndex {
+        if case .new = linkMessage {
+          bridgePort = port
+        } else {
+          fatalError("bridge itself was deleted") // FIXME: do something sensible
+        }
+      } else if port._rtnl.master == bridgeIndex {
+        if case .new = linkMessage {
+          portNotification = .added(port)
+        } else {
+          portNotification = .removed(port)
+        }
+      }
+    }
+    await _portNotificationChannel.send(portNotification)
   }
 
   public var defaultPVid: UInt16? {
