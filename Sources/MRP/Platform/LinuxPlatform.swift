@@ -202,7 +202,7 @@ public extension LinuxPort {
 public final class LinuxBridge: Bridge, @unchecked Sendable {
   public typealias Port = LinuxPort
 
-  private let _socket: Socket
+  private let _txSocket: Socket
   fileprivate let _nlLinkSocket: NLSocket
   private let _nlNfLog: NFNLLog
   private let _bridgePort = ManagedCriticalState<Port?>(nil)
@@ -210,7 +210,7 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
   private let _portNotificationChannel = AsyncChannel<PortNotification<Port>>()
 
   public init(name: String, netFilterGroup group: Int) async throws {
-    _socket = try Socket(ring: IORing.shared, domain: sa_family_t(AF_PACKET), type: SOCK_RAW)
+    _txSocket = try Socket(ring: IORing.shared, domain: sa_family_t(AF_PACKET), type: SOCK_RAW)
     _nlLinkSocket = try NLSocket(protocol: NETLINK_ROUTE)
     _nlNfLog = try NFNLLog(family: sa_family_t(AF_PACKET), group: UInt16(group))
     try _nlLinkSocket.subscribeLinks()
@@ -220,14 +220,13 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
       throw MRPError.invalidBridgeIdentity
     }
     _bridgePort.withCriticalRegion { $0 = bridgePorts.first! }
-
-    // not clear what we need to do here
-    // try _socket.bind(to: _sll)
-    // try _socket.bindTo(device: name)
-
     _task = Task<(), Error> { [self] in
       for try await notification in _nlLinkSocket.notifications {
-        try? await _handleNotification(notification as! RTNLLinkMessage)
+        do {
+          try await _handleNotification(notification as! RTNLLinkMessage)
+        } catch Errno.noSuchAddressOrDevice {
+          throw Errno.noSuchAddressOrDevice
+        } catch {}
       }
     }
   }
@@ -241,7 +240,7 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
         if case .new = linkMessage {
           bridgePort = port
         } else {
-          fatalError("bridge itself was deleted") // FIXME: do something sensible
+          throw Errno.noSuchAddressOrDevice
         }
       } else if port._rtnl.master == bridgeIndex {
         if case .new = linkMessage {
@@ -327,7 +326,7 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
       index: port.id
     )
     try packet.serialize(into: &serializationContext)
-    try await _socket.sendMessage(.init(name: address, buffer: serializationContext.bytes))
+    try await _txSocket.sendMessage(.init(name: address, buffer: serializationContext.bytes))
   }
 
   public var rxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)> {
