@@ -349,18 +349,7 @@ public final class NLSocket: @unchecked Sendable {
       Result(catching: { try result.construct() })
     }
 
-    if sequence == 0 {
-      // else it is a notification
-      Task {
-        do {
-          try await notifications.send(result.get())
-        } catch {
-          notifications.fail(error)
-        }
-      }
-    } else {
-      let request = _lookup(sequence: sequence, forceRemove: false)!
-
+    if sequence != 0, let request = _lookup(sequence: sequence, forceRemove: false)  {
       switch request {
       case let .continuation(continuation):
         continuation.resume(with: result)
@@ -369,6 +358,14 @@ public final class NLSocket: @unchecked Sendable {
       default:
         // shouldn't be reached
         break
+      }
+    } else {
+      Task {
+        do {
+          try await notifications.send(result.get())
+        } catch {
+          notifications.fail(error)
+        }
       }
     }
   }

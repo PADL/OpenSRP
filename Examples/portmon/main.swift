@@ -40,14 +40,27 @@ struct portmon {
         }
       }
       group.addTask { @Sendable in
-        print("Now monitoring for packets...")
-        for port in try await bridge.getPorts() {
+        print("Now monitoring bridge for packets...")
+        do {
+          for try await (index, packet) in try bridge.rxPackets {
+            print("@\(index) received packet \(packet)\n\(packet.data.hexEncodedString())")
+          }
+        } catch {
+          print("bridge failed to RX packet: \(error)")
+        }
+      }
+      for port in try await bridge.getPorts() {
+        group.addTask { @Sendable in
+          print("Now monitoring port \(port) for packets...")
           do {
-            for try await (index, packet) in try bridge.rxPackets {
-              print("@\(index) received packet \(packet)\n\(packet.data.hexEncodedString())")
+            for try await packet in try await port.rxPackets(
+              macAddress: groupAddress,
+              etherType: etherType
+            ) {
+              print("\(port) received packet \(packet)\n\(packet.data.hexEncodedString())")
             }
           } catch {
-            print("failed to RX packet on \(port): \(error)")
+            print("port failed to RX packet on \(port): \(error)")
           }
         }
       }
