@@ -26,16 +26,20 @@ import IORing
 import IORingUtils
 import NetLink
 import SocketAddress
+import SystemPackage
 
-private func _makeSll(
+private func _makeLinkLocalAddress(
+  family: sa_family_t = sa_family_t(AF_PACKET),
   macAddress: EUI48? = nil,
   etherType: UInt16 = UInt16(ETH_P_ALL),
+  packetType: UInt8 = UInt8(PACKET_HOST),
   index: Int? = nil
 ) -> sockaddr_ll {
   var sll = sockaddr_ll()
-  sll.sll_family = UInt16(AF_PACKET)
+  sll.sll_family = UInt16(family)
   sll.sll_protocol = etherType.bigEndian
   sll.sll_ifindex = CInt(index ?? 0)
+  sll.sll_pkttype = packetType
   sll.sll_halen = UInt8(ETH_ALEN)
   if let macAddress {
     sll.sll_addr.0 = macAddress.0
@@ -48,12 +52,19 @@ private func _makeSll(
   return sll
 }
 
-private func _makeSllBytes(
+private func _makeLinkLocalAddressBytes(
+  family: sa_family_t = sa_family_t(AF_PACKET),
   macAddress: EUI48? = nil,
   etherType: UInt16 = UInt16(ETH_P_ALL),
+  packetType: UInt8 = UInt8(PACKET_HOST),
   index: Int? = nil
 ) -> [UInt8] {
-  var sll = _makeSll(macAddress: macAddress, etherType: etherType, index: index)
+  var sll = _makeLinkLocalAddress(
+    family: family,
+    macAddress: macAddress,
+    etherType: etherType,
+    index: index
+  )
   return withUnsafeBytes(of: &sll) {
     Array($0)
   }
@@ -69,29 +80,35 @@ public struct LinuxPort: Port, Sendable {
   fileprivate let _rtnl: RTNLLink
   fileprivate weak var _bridge: LinuxBridge?
 
-  private var _sll: sockaddr_ll {
-    _makeSll(macAddress: macAddress, index: 0)
-  }
-
   init(rtnl: RTNLLink, bridge: LinuxBridge) throws {
     _rtnl = rtnl
     _bridge = bridge
   }
 
   public func rxPackets(
-    macAddress: EUI48,
+    groupAddress: EUI48,
     etherType: UInt16
   ) async throws -> AnyAsyncSequence<IEEE802Packet> {
-    let sll = _makeSll(macAddress: macAddress, etherType: etherType, index: id)
+    guard groupAddress.0 & 0x1 != 0
+    else { throw Errno.invalidArgument } // must be multicast address
     let socket = try Socket(
       ring: IORing.shared,
       domain: sa_family_t(AF_PACKET),
       type: SOCK_RAW,
       protocol: CInt(etherType.bigEndian)
     )
-    try socket.bind(to: sll)
-    try socket.addMulticastMembership(for: sll)
+    try socket.bind(to: _makeLinkLocalAddress(
+      macAddress: macAddress,
+      etherType: etherType,
+      packetType: UInt8(PACKET_MULTICAST),
+      index: id
+    ))
+    try socket.addMulticastMembership(for: _makeLinkLocalAddress(
+      macAddress: groupAddress,
+      index: id
+    ))
 
+    // TODO: caller needs to handle EINTR, make sure it does
     return try await socket.receiveMessages(count: _rtnl.mtu).compactMap { message in
       var deserializationContext = DeserializationContext(message.buffer)
       return try? IEEE802Packet(deserializationContext: &deserializationContext)
@@ -263,6 +280,11 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
     _bridgePort.criticalState!._rtnl.index
   }
 
+  @_spi(SwiftMRPPrivate)
+  public var bridgePort: Port {
+    _bridgePort.criticalState!
+  }
+
   public func getPorts() async throws -> Set<Port> {
     let bridgeIndex = _bridgeIndex
     return try await _getPorts().filter {
@@ -296,7 +318,13 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
 
   public func tx(_ packet: IEEE802Packet, on port: P) async throws {
     var serializationContext = SerializationContext()
-    let address = _makeSllBytes(macAddress: packet.destMacAddress, index: port.id)
+    let packetType = packet.destMacAddress
+      .0 & 0x1 != 0 ? UInt8(PACKET_MULTICAST) : UInt8(PACKET_HOST)
+    let address = _makeLinkLocalAddressBytes(
+      macAddress: packet.destMacAddress,
+      packetType: packetType,
+      index: port.id
+    )
     try packet.serialize(into: &serializationContext)
     try await _socket.sendMessage(.init(name: address, buffer: serializationContext.bytes))
   }

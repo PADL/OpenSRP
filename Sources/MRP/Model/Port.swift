@@ -30,7 +30,7 @@ public protocol Port: Hashable, Sendable, Identifiable, VLANConfiguring
 
   var macAddress: EUI48 { get }
 
-  func rxPackets(macAddress: EUI48, etherType: UInt16) async throws
+  func rxPackets(groupAddress: EUI48, etherType: UInt16) async throws
     -> AnyAsyncSequence<IEEE802Packet>
 }
 

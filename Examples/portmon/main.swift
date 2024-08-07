@@ -14,21 +14,46 @@
 // limitations under the License.
 //
 
+@_spi(SwiftMRPPrivate)
 import MRP
 
 let groupAddress: EUI48 = (0x01, 0x80, 0xC2, 0x00, 0x00, 0x21)
-let etherType: UInt16 = 0x88F6
+let etherType: UInt16 = 0x88F5
 
 @main
-struct portmon {
+actor PortMonitor {
+  typealias P = LinuxPort
+  typealias B = LinuxBridge
+
   public static func main() async throws {
-    let bridge = try await LinuxBridge(
+    let portmon = PortMonitor()
+    try await portmon.run()
+  }
+
+  var ports = Set<P>()
+
+  func handle(notification: PortNotification<P>) {
+    print("\(notification)")
+    switch notification {
+    case let .added(port): ports.insert(port)
+    case let .removed(port): ports.remove(port)
+    case let .changed(port): ports.update(with: port)
+    }
+  }
+
+  func findPort(id: P.ID) -> P? {
+    ports.first(where: { $0.id == id })
+  }
+
+  func run() async throws {
+    let bridge = try await B(
       name: CommandLine.arguments.count > 1 ? CommandLine
         .arguments[1] : "br0",
       netFilterGroup: 3
     )
+    ports = try await bridge.getPorts()
     print("Ports at startup on bridge \(bridge.name):")
-    for port in try await bridge.getPorts() {
+    for port in ports {
       print("\(port)")
     }
 
@@ -36,7 +61,7 @@ struct portmon {
       group.addTask { @Sendable in
         print("Now monitoring for changes...")
         for try await notification in bridge.notifications {
-          print("\(notification)")
+          await self.handle(notification: notification)
         }
       }
       group.addTask { @Sendable in
@@ -49,12 +74,14 @@ struct portmon {
           print("bridge failed to RX packet: \(error)")
         }
       }
-      for port in try await bridge.getPorts() {
+      for port in try await bridge.getPorts() + [bridge.bridgePort] {
         group.addTask { @Sendable in
-          print("Now monitoring port \(port) for packets...")
+          print(
+            "Now monitoring port \(port) for packets mac \(groupAddress) etherType \(etherType)..."
+          )
           do {
             for try await packet in try await port.rxPackets(
-              macAddress: groupAddress,
+              groupAddress: groupAddress,
               etherType: etherType
             ) {
               print("\(port) received packet \(packet)\n\(packet.data.hexEncodedString())")
