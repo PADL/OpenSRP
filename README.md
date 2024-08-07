@@ -1,12 +1,11 @@
 # SwiftMRP
 
-A Swift implementation of MMRP, MVRP and MSRP.
+A Swift implementation of MMRP, MVRP and MSRP. It is a work in progress.
 
 ## Architecture
 
-* MRP: abstract state machine
-* LinuxMRP: Linux protocol handlers
+* CNetLink: wrapper around libnl and friends
+* NetLink: Swift structured concurrency wrapper around CNetLink
+* MRP: abstract state machine, platform abstraction layer
 * MRPDaemon: MRP daemon
-* CNetLink: extra APIs for NetLink
-
 
