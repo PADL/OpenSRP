@@ -451,8 +451,13 @@ final actor Participant<A: Application>: Equatable, Hashable {
   }
 
   func tx() async throws {
-    guard let application else { throw MRPError.internalError }
-    try await port.tx(pdu: _txDequeue(), for: application, contextIdentifier: contextIdentifier)
+    guard let application, let controller else { throw MRPError.internalError }
+    try await controller.bridge.tx(
+      pdu: _txDequeue(),
+      for: application,
+      contextIdentifier: contextIdentifier,
+      on: port
+    )
   }
 
   // A Flush! event signals to the Registrar state machine that there is a

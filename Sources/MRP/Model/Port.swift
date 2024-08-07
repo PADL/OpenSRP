@@ -16,9 +16,9 @@
 
 import AsyncExtensions
 
-public protocol Port: Hashable, Sendable, Identifiable, VLANConfiguring {
-  associatedtype ID = Int
-
+public protocol Port: Hashable, Sendable, Identifiable, VLANConfiguring
+  where ID: Hashable & Sendable
+{
   var isOperational: Bool { get }
   var isEnabled: Bool { get }
   var isPointToPoint: Bool { get }
@@ -32,9 +32,6 @@ public protocol Port: Hashable, Sendable, Identifiable, VLANConfiguring {
 
   func add(filter: EUI48, etherType: UInt16) throws
   func remove(filter: EUI48, etherType: UInt16) throws
-
-  func tx(_ packet: IEEE802Packet) async throws
-  var rxPackets: AnyAsyncSequence<IEEE802Packet> { get async throws }
 }
 
 public enum PortNotification<P: Port>: Sendable {
@@ -51,23 +48,6 @@ public enum PortNotification<P: Port>: Sendable {
     case let .changed(port):
       port
     }
-  }
-}
-
-extension Port {
-  func tx(
-    pdu: MRPDU,
-    for application: some Application,
-    contextIdentifier: MAPContextIdentifier
-  ) async throws {
-    let packet = try IEEE802Packet(
-      destMacAddress: application.groupMacAddress,
-      contextIdentifier: contextIdentifier,
-      sourceMacAddress: macAddress,
-      etherType: application.etherType,
-      data: pdu.serialized()
-    )
-    try await tx(packet)
   }
 }
 

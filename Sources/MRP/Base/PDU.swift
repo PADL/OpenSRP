@@ -18,6 +18,9 @@ import Algorithms
 
 typealias ProtocolVersion = UInt8
 
+let NearestBridgeGroupAddress: EUI48 = (0x01, 0x80, 0xC2, 0x00, 0x00, 0x0e)
+let MvrpGroupAddress: EUI48 = (0x01, 0x80, 0xC2, 0x00, 0x00, 0x21)
+
 struct ThreePackedEvents {
   let value: UInt8
 

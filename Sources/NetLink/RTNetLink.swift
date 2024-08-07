@@ -37,7 +37,11 @@ public class RTNLLink: NLObjectConstructible, @unchecked Sendable, CustomStringC
     _object = object
   }
 
-  convenience init(object: NLObject) {
+  public required convenience init(object: NLObject) throws {
+    guard object.messageType == RTM_NEWLINK || object.messageType == RTM_DELLINK else {
+      debugPrint("Unknown message type \(object.messageType) returned")
+      throw Errno.invalidArgument
+    }
     if rtnl_link_is_bridge(object._obj) != 0 {
       self.init(reassigningSelfTo: RTNLLinkBridge(object) as! Self)
     } else if rtnl_link_is_vlan(object._obj) != 0 {
@@ -366,12 +370,12 @@ public enum RTNLLinkMessage: NLObjectConstructible, Sendable {
   case new(RTNLLink)
   case del(RTNLLink)
 
-  init(object: NLObject) throws {
+  public init(object: NLObject) throws {
     switch object.messageType {
     case RTM_NEWLINK:
-      self = .new(RTNLLink(object: object))
+      self = try .new(RTNLLink(object: object))
     case RTM_DELLINK:
-      self = .del(RTNLLink(object: object))
+      self = try .del(RTNLLink(object: object))
     default:
       throw Errno.invalidArgument
     }

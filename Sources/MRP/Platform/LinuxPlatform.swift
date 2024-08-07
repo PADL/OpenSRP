@@ -27,6 +27,38 @@ import IORingUtils
 import NetLink
 import SocketAddress
 
+private func _makeSll(
+  macAddress: EUI48? = nil,
+  etherType: UInt16 = UInt16(ETH_P_ALL),
+  index: Int? = nil
+) -> sockaddr_ll {
+  var sll = sockaddr_ll()
+  sll.sll_family = UInt16(AF_PACKET)
+  sll.sll_protocol = etherType.bigEndian
+  sll.sll_ifindex = CInt(index ?? 0)
+  sll.sll_halen = UInt8(ETH_ALEN)
+  if let macAddress {
+    sll.sll_addr.0 = macAddress.0
+    sll.sll_addr.1 = macAddress.1
+    sll.sll_addr.2 = macAddress.2
+    sll.sll_addr.3 = macAddress.3
+    sll.sll_addr.4 = macAddress.4
+    sll.sll_addr.5 = macAddress.5
+  }
+  return sll
+}
+
+private func _makeSllBytes(
+  macAddress: EUI48? = nil,
+  etherType: UInt16 = UInt16(ETH_P_ALL),
+  index: Int? = nil
+) -> [UInt8] {
+  var sll = _makeSll(macAddress: macAddress, etherType: etherType, index: index)
+  return withUnsafeBytes(of: &sll) {
+    Array($0)
+  }
+}
+
 public struct LinuxPort: Port, Sendable {
   public typealias ID = Int
 
@@ -38,27 +70,8 @@ public struct LinuxPort: Port, Sendable {
   private let _socket: Socket
   fileprivate weak var _bridge: LinuxBridge?
 
-  private static func _makeSll(
-    macAddress: EUI48,
-    etherType: UInt16 = UInt16(ETH_P_ALL),
-    index: Int
-  ) -> sockaddr_ll {
-    var sll = sockaddr_ll()
-    sll.sll_family = UInt16(AF_PACKET)
-    sll.sll_protocol = etherType.bigEndian
-    sll.sll_ifindex = CInt(index)
-    sll.sll_halen = UInt8(ETH_ALEN)
-    sll.sll_addr.0 = macAddress.0
-    sll.sll_addr.1 = macAddress.1
-    sll.sll_addr.2 = macAddress.2
-    sll.sll_addr.3 = macAddress.3
-    sll.sll_addr.4 = macAddress.4
-    sll.sll_addr.5 = macAddress.5
-    return sll
-  }
-
   private var _sll: sockaddr_ll {
-    Self._makeSll(macAddress: macAddress, index: 0)
+    _makeSll(macAddress: macAddress, index: 0)
   }
 
   init(rtnl: RTNLLink, bridge: LinuxBridge) throws {
@@ -160,7 +173,7 @@ public struct LinuxPort: Port, Sendable {
 
   public func add(filter macAddress: EUI48, etherType: UInt16) throws {
     if macAddress.0 & 1 != 0 {
-      let sll = Self._makeSll(macAddress: macAddress, etherType: etherType, index: id)
+      let sll = _makeSll(macAddress: macAddress, etherType: etherType, index: id)
       try _socket.addMulticastMembership(for: sll)
       try _addOrDropBpfFilter(macAddress: macAddress, etherType: etherType, add: true)
     }
@@ -169,29 +182,8 @@ public struct LinuxPort: Port, Sendable {
   public func remove(filter macAddress: EUI48, etherType: UInt16) throws {
     try _addOrDropBpfFilter(macAddress: macAddress, etherType: etherType, add: false)
     if macAddress.0 & 1 != 0 {
-      let sll = Self._makeSll(macAddress: macAddress, etherType: etherType, index: id)
+      let sll = _makeSll(macAddress: macAddress, etherType: etherType, index: id)
       try _socket.dropMulticastMembership(for: sll)
-    }
-  }
-
-  public func tx(_ packet: IEEE802Packet) async throws {
-    var serializationContext = SerializationContext()
-    try packet.serialize(into: &serializationContext)
-    // let address = Self._makeSll(macAddress: packet.destMacAddress, etherType: packet.etherType,
-    // index: id)
-    // namespace issue means we can't instantiate IORing.Message by name
-    try await _socket.sendMessage(.init(name: nil, buffer: serializationContext.bytes))
-    // try await _socket.send(serializationContext.bytes)
-  }
-
-  public var rxPackets: AnyAsyncSequence<IEEE802Packet> {
-    get async throws {
-      let rxPackets = try await _socket.receiveMessages(count: _rtnl.mtu)
-//      let rxPackets: AnyAsyncSequence<[UInt8]> = try await _socket.receive(count: _rtnl.mtu)
-      return rxPackets.compactMap { message in
-        var deserializationContext = DeserializationContext(message.buffer)
-        return try? IEEE802Packet(deserializationContext: &deserializationContext)
-      }.eraseToAnyAsyncSequence()
     }
   }
 }
@@ -206,13 +198,16 @@ private extension LinuxPort {
   }
 
   func _add(vlans: Set<VLAN>) async throws {
-    try await (_rtnl as! RTNLLinkBridge).add(vlans: Set(vlans.map(\.vid)), socket: _bridge!._socket)
+    try await (_rtnl as! RTNLLinkBridge).add(
+      vlans: Set(vlans.map(\.vid)),
+      socket: _bridge!._nlLinkSocket
+    )
   }
 
   func _remove(vlans: Set<VLAN>) async throws {
     try await (_rtnl as! RTNLLinkBridge).remove(
       vlans: Set(vlans.map(\.vid)),
-      socket: _bridge!._socket
+      socket: _bridge!._nlLinkSocket
     )
   }
 }
@@ -230,14 +225,18 @@ public extension LinuxPort {
 public final class LinuxBridge: Bridge, @unchecked Sendable {
   public typealias Port = LinuxPort
 
-  fileprivate let _socket: NLSocket
+  private let _socket: Socket
+  fileprivate let _nlLinkSocket: NLSocket
+  private let _nlNfLog: NFNLLog
   private let _bridgePort = ManagedCriticalState<Port?>(nil)
   private var _task: Task<(), Error>!
   private let _portNotificationChannel = AsyncChannel<PortNotification<Port>>()
 
-  public init(name: String) async throws {
-    _socket = try NLSocket(protocol: NETLINK_ROUTE)
-    try _socket.subscribeLinks()
+  public init(name: String, netFilterGroup group: Int) async throws {
+    _socket = try Socket(ring: IORing.shared, domain: sa_family_t(AF_PACKET), type: SOCK_RAW)
+    _nlLinkSocket = try NLSocket(protocol: NETLINK_ROUTE)
+    _nlNfLog = try NFNLLog(family: sa_family_t(AF_PACKET), group: UInt16(group))
+    try _nlLinkSocket.subscribeLinks()
     let bridgePorts = try await _getPorts(family: sa_family_t(AF_BRIDGE))
       .filter { $0._isBridgeSelf && $0.name == name }
     guard bridgePorts.count == 1 else {
@@ -245,8 +244,12 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
     }
     _bridgePort.withCriticalRegion { $0 = bridgePorts.first! }
 
+    // not clear what we need to do here
+    // try _socket.bind(to: _sll)
+    // try _socket.bindTo(device: name)
+
     _task = Task<(), Error> { [self] in
-      for try await notification in _socket.notifications {
+      for try await notification in _nlLinkSocket.notifications {
         do {
           var portNotification: PortNotification<Port>!
           try _bridgePort.withCriticalRegion { bridgePort in
@@ -291,7 +294,7 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
 
   private func _getPorts(family: sa_family_t = sa_family_t(AF_UNSPEC)) async throws -> Set<Port> {
     try await Set(
-      _socket.getLinks(family: family).map { try Port(rtnl: $0, bridge: self) }
+      _nlLinkSocket.getLinks(family: family).map { try Port(rtnl: $0, bridge: self) }
         .collect()
     )
   }
@@ -308,7 +311,7 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
   }
 
   public var notifications: AnyAsyncSequence<PortNotification<Port>> {
-    _socket.notifications.compactMap { @Sendable notification in
+    _nlLinkSocket.notifications.compactMap { @Sendable notification in
       let link = notification as! RTNLLinkMessage
       switch link {
       case let .new(link):
@@ -328,6 +331,33 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
   public func remove(vlans: Set<VLAN>) async throws {
     if let bridgePort = _bridgePort.criticalState {
       try await bridgePort._remove(vlans: vlans)
+    }
+  }
+
+  public func tx(_ packet: IEEE802Packet, on port: P) async throws {
+    var serializationContext = SerializationContext()
+    let address = _makeSllBytes(macAddress: packet.destMacAddress, index: port.id)
+    try packet.serialize(into: &serializationContext)
+    try await _socket.sendMessage(.init(name: address, buffer: serializationContext.bytes))
+  }
+
+  public var rxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)> {
+    get throws {
+      _nlNfLog.logMessages.map { logMessage in
+        let contextIdentifier: MAPContextIdentifier = if let vlanID = logMessage.vlanID {
+          MAPContextIdentifier(id: vlanID)
+        } else {
+          MAPBaseSpanningTreeContext
+        }
+        let packet = IEEE802Packet(
+          destMacAddress: logMessage.macAddress ?? (0, 0, 0, 0, 0, 0),
+          contextIdentifier: contextIdentifier,
+          sourceMacAddress: (0, 0, 0, 0, 0, 0), // FIXME: where do we get this
+          etherType: logMessage.hwProtocol ?? 0xFFFF,
+          data: logMessage.payload ?? []
+        )
+        return (logMessage.physicalInputDevice, packet)
+      }.eraseToAnyAsyncSequence()
     }
   }
 }

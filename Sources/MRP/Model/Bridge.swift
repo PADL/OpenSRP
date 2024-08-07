@@ -23,6 +23,12 @@ public protocol Bridge<P>: Sendable, VLANConfiguring {
   var notifications: AnyAsyncSequence<PortNotification<P>> { get }
 
   func getPorts() async throws -> Set<P>
+
+  // packet on a port
+  typealias Packet = (P, IEEE802Packet)
+
+  func tx(_ packet: IEEE802Packet, on: P) async throws
+  var rxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)> { get throws }
 }
 
 extension Bridge {
@@ -38,5 +44,23 @@ extension Bridge {
       throw MRPError.portNotFound
     }
     return port
+  }
+}
+
+extension Bridge {
+  func tx(
+    pdu: MRPDU,
+    for application: some Application,
+    contextIdentifier: MAPContextIdentifier,
+    on port: P
+  ) async throws {
+    let packet = try IEEE802Packet(
+      destMacAddress: application.groupMacAddress,
+      contextIdentifier: contextIdentifier,
+      sourceMacAddress: port.macAddress,
+      etherType: application.etherType,
+      data: pdu.serialized()
+    )
+    try await tx(packet, on: port)
   }
 }

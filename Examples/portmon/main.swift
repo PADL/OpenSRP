@@ -24,7 +24,8 @@ struct portmon {
   public static func main() async throws {
     let bridge = try await LinuxBridge(
       name: CommandLine.arguments.count > 1 ? CommandLine
-        .arguments[1] : "br0"
+        .arguments[1] : "br0",
+      netFilterGroup: 3
     )
     print("Ports at startup on bridge \(bridge.name):")
     for port in try await bridge.getPorts() {
@@ -49,8 +50,8 @@ struct portmon {
         print("Now monitoring for packets...")
         for port in try await bridge.getPorts() {
           do {
-            for try await packet in try await port.rxPackets {
-              print("received packet \(packet)\n\(packet.data.hexEncodedString())")
+            for try await (index, packet) in try bridge.rxPackets {
+              print("@\(index) received packet \(packet)\n\(packet.data.hexEncodedString())")
             }
           } catch {
             print("failed to RX packet on \(port): \(error)")

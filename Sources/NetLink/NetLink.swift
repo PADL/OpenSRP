@@ -21,9 +21,13 @@ import Dispatch
 import Glibc
 import SystemPackage
 
-public protocol NLObjectConstructible: Sendable {}
+public protocol NLObjectConstructible: Sendable {
+  init(object: NLObject) throws
+}
 
 public typealias NLData = [UInt8]
+
+public typealias NLObjectConstructor = (_: NLObject) throws -> NLObjectConstructible
 
 extension NLData {
   init?(data: OpaquePointer?) {
@@ -43,26 +47,20 @@ extension NLData {
   }
 }
 
-final class NLObject: @unchecked Sendable, Equatable, Hashable, CustomStringConvertible {
-  func parse() throws -> some NLObjectConstructible {
-    switch messageType {
-    case RTM_NEWLINK:
-      fallthrough
-    case RTM_DELLINK:
-      return try RTNLLinkMessage(object: self)
-    default:
-      debugPrint("Unknown message type \(messageType) returned")
-      throw Errno.invalidArgument
-    }
-  }
-
+public final class NLObject: @unchecked Sendable, Equatable, Hashable, CustomStringConvertible {
   public static func == (_ lhs: NLObject, _ rhs: NLObject) -> Bool {
     nl_object_identical(lhs._obj, rhs._obj) != 0
   }
 
   let _obj: OpaquePointer
+  let _constructFromObject: NLObjectConstructor?
 
-  convenience init(msg: OpaquePointer) throws {
+  fileprivate func construct() throws -> NLObjectConstructible {
+    guard let _constructFromObject else { throw Errno.invalidArgument }
+    return try _constructFromObject(self)
+  }
+
+  convenience init(msg: OpaquePointer, constructFromObject: NLObjectConstructor? = nil) throws {
     var obj: OpaquePointer! = nil
 
     try withUnsafeMutablePointer(to: &obj) { objRef in
@@ -80,13 +78,19 @@ final class NLObject: @unchecked Sendable, Equatable, Hashable, CustomStringConv
       }
     }
 
-    self.init(obj: obj)
+    self.init(obj: obj, constructFromObject: constructFromObject)
     nl_object_put(obj)
   }
 
-  public init(obj: OpaquePointer!) {
+  public init(obj: OpaquePointer, constructFromObject: NLObjectConstructor? = nil) {
     nl_object_get(obj)
     _obj = obj
+    _constructFromObject = constructFromObject
+  }
+
+  public init(consumingObj obj: OpaquePointer, constructFromObject: NLObjectConstructor? = nil) {
+    _obj = obj
+    _constructFromObject = constructFromObject
   }
 
   deinit {
@@ -135,8 +139,20 @@ private func NLSocket_CB_VALID(
 ) -> CInt {
   let nlSocket = Unmanaged<NLSocket>.fromOpaque(arg).takeUnretainedValue()
   let hdr = nlmsg_hdr(msg)!.pointee
+
   do {
-    let object = try NLObject(msg: msg)
+    let constructFromObject: NLObjectConstructor
+
+    switch nlmsg_get_proto(msg) {
+    case NETLINK_ROUTE:
+      constructFromObject = RTNLLinkMessage.init
+    case NETLINK_NETFILTER:
+      constructFromObject = NFNLLogMessage.init
+    default:
+      throw Errno.invalidArgument
+    }
+
+    let object = try NLObject(msg: msg, constructFromObject: constructFromObject)
     nlSocket.yield(sequence: hdr.nlmsg_seq, with: Result.success(object))
   } catch {
     nlSocket.yield(sequence: hdr.nlmsg_seq, with: Result.failure(error))
@@ -329,7 +345,9 @@ public final class NLSocket: @unchecked Sendable {
     sequence: UInt32,
     with result: Result<NLObject, Error>
   ) {
-    let result: Result<NLObjectConstructible, Error> = result.map { try! $0.parse() }
+    let result: Result<NLObjectConstructible, Error> = result.flatMap { result in
+      Result(catching: { try result.construct() })
+    }
 
     if sequence == 0 {
       // else it is a notification

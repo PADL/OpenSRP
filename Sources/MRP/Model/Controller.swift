@@ -22,7 +22,6 @@
 // relative values of protocol timers, and the protocol design is based
 // primarily on the exchange of idempotent protocol state rather than commands.
 
-@preconcurrency
 import AsyncExtensions
 import Logging
 
@@ -37,8 +36,8 @@ actor Controller<P: Port> {
   }
 
   private var _applications = [UInt16: any Application<P>]()
-  private(set) var ports = Set<P>()
-  private var _rxTasks = [P.ID: Task<(), Error>]()
+  private var _ports = [P.ID: P]()
+  var ports: Set<P> { Set(_ports.values) }
   private var _periodicTimers = [P.ID: Timer]()
   private let _administrativeControl = ManagedCriticalState(
     AdministrativeControl
@@ -46,15 +45,17 @@ actor Controller<P: Port> {
   )
 
   let bridge: any Bridge<P>
-  var bridgeNotificationTask: Task<(), Error>?
+  var _taskGroup: ThrowingTaskGroup<(), Error>?
   let logger: Logger
+  private let _rxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)>
 
   public init(bridgePort: P, bridge: some Bridge<P>) async throws {
-    ports = try await Set(bridge.getPorts())
+    _ports = try await [P.ID: P](uniqueKeysWithValues: bridge.getPorts().map { ($0.id, $0) })
     self.bridge = bridge
     var logger = Logger(label: "com.padl.SwiftMRP")
     logger.logLevel = .trace
     self.logger = logger
+    _rxPackets = try bridge.rxPackets
   }
 
   public func run() async throws {
@@ -63,7 +64,13 @@ actor Controller<P: Port> {
     for port in ports {
       try? await _didAdd(port: port)
     }
-    bridgeNotificationTask = Task { try await _handleBridgeNotifications() }
+
+    try await withThrowingTaskGroup(of: Void.self) { group in
+      _taskGroup = group
+      group.addTask { @Sendable in try await self._handleBridgeNotifications() }
+      group.addTask { @Sendable in try await self._handleRxPackets() }
+      for try await _ in group {}
+    }
   }
 
   public func shutdown() async throws {
@@ -71,8 +78,7 @@ actor Controller<P: Port> {
     for port in ports {
       try _didRemove(port: port)
     }
-    bridgeNotificationTask?.cancel()
-    bridgeNotificationTask = nil
+    _taskGroup?.cancelAll()
   }
 
   var knownContextIdentifiers: Set<MAPContextIdentifier> {
@@ -153,11 +159,10 @@ actor Controller<P: Port> {
       )
     }
 
-    _startRx(port: port)
     _startTx(port: port)
 
     try await _applyContextIdentifierChanges(beforeAddingOrUpdating: port)
-    ports.insert(port)
+    _ports[port.id] = port
   }
 
   private func _didRemove(port: P) throws {
@@ -170,17 +175,16 @@ actor Controller<P: Port> {
       )
     }
     _stopTx(port: port)
-    _stopRx(port: port)
 
     try _applyContextIdentifierChanges(beforeRemoving: port)
-    ports.remove(port)
+    _ports[port.id] = nil
   }
 
   private func _didUpdate(port: P) async throws {
     logger.debug("updated port \(port)")
 
     try await _applyContextIdentifierChanges(beforeAddingOrUpdating: port)
-    ports.update(with: port)
+    _ports[port.id] = port
   }
 
   private func _handleBridgeNotifications() async throws {
@@ -198,6 +202,17 @@ actor Controller<P: Port> {
         logger
           .info("failed to handle notification for port \(notification.port): \(error)")
       }
+    }
+  }
+
+  private func _handleRxPackets() async throws {
+    for try await (id, packet) in _rxPackets {
+      // find the application for this ethertype
+      guard let application = _applications[packet.etherType], let port = _ports[id] else {
+        logger.info("application \(packet.etherType) on port \(id) not found, skipping")
+        continue
+      }
+      try await application.rx(packet: packet, from: port)
     }
   }
 
@@ -252,7 +267,7 @@ actor Controller<P: Port> {
   }
 
   deinit {
-    bridgeNotificationTask?.cancel()
+    _taskGroup?.cancelAll()
   }
 
   func register(application: some Application<P>) throws {
@@ -296,14 +311,6 @@ actor Controller<P: Port> {
     }
   }
 
-  private func _startRx(port: P) {
-    _rxTasks[port.id] = Task { @Sendable in
-      for try await packet in try await port.rxPackets {
-        try await _applications[packet.etherType]?.rx(packet: packet, from: port)
-      }
-    }
-  }
-
   private func _startTx(port: P) {
     var periodicTimer = _periodicTimers[port.id]
     if periodicTimer == nil {
@@ -314,11 +321,6 @@ actor Controller<P: Port> {
       }
     }
     periodicTimer!.start(interval: periodicTransmissionTime)
-  }
-
-  private func _stopRx(port: P) {
-    _rxTasks[port.id]?.cancel()
-    _rxTasks[port.id] = nil
   }
 
   private func _stopTx(port: P) {

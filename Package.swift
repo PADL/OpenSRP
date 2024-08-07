@@ -25,7 +25,11 @@ if LocalLibNL {
   PlatformCSettings = [.unsafeFlags(["-I", "/usr/include/libnl3"])]
 }
 
-PlatformLinkerSettings += [.linkedLibrary("nl-3"), .linkedLibrary("nl-route-3")]
+PlatformLinkerSettings += [
+  .linkedLibrary("nl-3"),
+  .linkedLibrary("nl-route-3"),
+  .linkedLibrary("nl-nf-3"),
+]
 
 PlatformTargetDependencies = [
   "NetLink",
@@ -67,7 +71,9 @@ PlatformProducts = [
 PlatformTargets = [
   .systemLibrary(
     name: "CNetLink",
-    providers: [.apt(["libnl-3-dev"])]
+    providers: [
+      .apt(["libnl-3-dev", "libnl-route-3-dev", "libnl-nf-3"]),
+    ]
   ),
   .target(
     name: "NetLink",
