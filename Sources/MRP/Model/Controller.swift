@@ -49,7 +49,7 @@ actor Controller<P: Port> {
   let logger: Logger
   private let _rxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)>
 
-  public init(bridgePort: P, bridge: some Bridge<P>) async throws {
+  public init(bridge: some Bridge<P>) async throws {
     _ports = try await [P.ID: P](uniqueKeysWithValues: bridge.getPorts().map { ($0.id, $0) })
     self.bridge = bridge
     var logger = Logger(label: "com.padl.SwiftMRP")
