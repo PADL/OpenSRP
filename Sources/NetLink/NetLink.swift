@@ -56,7 +56,10 @@ public final class NLObject: @unchecked Sendable, Equatable, Hashable, CustomStr
   let _constructFromObject: NLObjectConstructor?
 
   fileprivate func construct() throws -> NLObjectConstructible {
-    guard let _constructFromObject else { throw Errno.invalidArgument }
+    guard let _constructFromObject else {
+      debugPrint("NLObject: no constructor registered")
+      throw Errno.invalidArgument
+    }
     return try _constructFromObject(self)
   }
 
@@ -149,6 +152,7 @@ private func NLSocket_CB_VALID(
     case NETLINK_NETFILTER:
       constructFromObject = NFNLLogMessage.init
     default:
+      debugPrint("NLSocket_CB_VALID: unknown NL message \(nlmsg_get_proto(msg))")
       throw Errno.invalidArgument
     }
 
@@ -188,8 +192,9 @@ private func NLSocket_ErrCB(
 ) -> CInt {
   let nlSocket = Unmanaged<NLSocket>.fromOpaque(arg).takeUnretainedValue()
   let hdr = err.pointee.msg
+  debugPrint("NLSocket_ErrCB: error \(err.pointee)")
   nlSocket.yield(sequence: hdr.nlmsg_seq, with: Result.failure(Errno(rawValue: -err.pointee.error)))
-  return 0
+  return CInt(NL_OK.rawValue)
 }
 
 public final class NLSocket: @unchecked Sendable {
