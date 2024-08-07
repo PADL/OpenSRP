@@ -335,8 +335,9 @@ public final class NLSocket: @unchecked Sendable {
   }
 
   fileprivate func yield(sequence: UInt32) {
-    let request = _lookup(sequence: sequence, forceRemove: true)!
-    if case let .ack(continuation) = request {
+    if let request = _lookup(sequence: sequence, forceRemove: true),
+       case let .ack(continuation) = request
+    {
       continuation.resume()
     }
   }
@@ -349,7 +350,7 @@ public final class NLSocket: @unchecked Sendable {
       Result(catching: { try result.construct() })
     }
 
-    if sequence != 0, let request = _lookup(sequence: sequence, forceRemove: false)  {
+    if sequence != 0, let request = _lookup(sequence: sequence, forceRemove: false) {
       switch request {
       case let .continuation(continuation):
         continuation.resume(with: result)

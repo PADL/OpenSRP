@@ -86,7 +86,8 @@ public struct LinuxPort: Port, Sendable {
     let socket = try Socket(
       ring: IORing.shared,
       domain: sa_family_t(AF_PACKET),
-      type: __socket_type(rawValue: UInt32(etherType.bigEndian))
+      type: SOCK_RAW,
+      protocol: CInt(etherType.bigEndian)
     )
     try socket.bind(to: sll)
     try socket.addMulticastMembership(for: sll)
@@ -190,8 +191,6 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
   private let _bridgePort = ManagedCriticalState<Port?>(nil)
   private var _task: Task<(), Error>!
   private let _portNotificationChannel = AsyncChannel<PortNotification<Port>>()
-
-  private let SOCK_RAW = __socket_type(3) // FIXME:
 
   public init(name: String, netFilterGroup group: Int) async throws {
     _socket = try Socket(ring: IORing.shared, domain: sa_family_t(AF_PACKET), type: SOCK_RAW)
