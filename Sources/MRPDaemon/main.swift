@@ -47,7 +47,7 @@ private final class MRPDaemon: AsyncParsableCommand {
   var nfGroup: Int = 100
 
   @Option(name: .shortAndLong, help: "Physical interfaces to exclude")
-  var excludeIface: [String]?
+  var excludeIface: [String] = []
 
   @Option(name: .shortAndLong, help: "Log level")
   var logLevel: Logger.Level = .trace
@@ -62,8 +62,10 @@ private final class MRPDaemon: AsyncParsableCommand {
   var enableMSRP: Bool = false
 
   enum CodingKeys: String, CodingKey {
-    case logLevel
+    case bridgeInterface
+    case nfGroup
     case excludeIface
+    case logLevel
     case enableMMRP
     case enableMVRP
     case enableMSRP
@@ -79,7 +81,7 @@ private final class MRPDaemon: AsyncParsableCommand {
     logger.logLevel = logLevel
 
     let bridge = try await B(name: bridgeInterface, netFilterGroup: nfGroup)
-    let mad = try await MAD<P>(bridge: bridge, logger: logger)
+    let mad = try await MAD<P>(bridge: bridge, logger: logger, portExclusions: Set(excludeIface))
     if enableMMRP {
       _ = try await MMRPApplication(owner: mad)
     }
