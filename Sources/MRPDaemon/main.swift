@@ -93,17 +93,17 @@ private final class MRPDaemon: AsyncParsableCommand {
     logger.logLevel = logLevel
 
     let bridge = try await B(name: bridgeInterface, netFilterGroup: nfGroup)
-    let controller = try await Controller<P>(bridge: bridge, logger: logger)
+    let mad = try await MAD<P>(bridge: bridge, logger: logger)
     if enableMMRP {
-      _ = try await MMRPApplication(owner: controller)
+      _ = try await MMRPApplication(owner: mad)
     }
     if enableMVRP {
-      _ = try await MVRPApplication(owner: controller)
+      _ = try await MVRPApplication(owner: mad)
     }
     if enableMSRP {}
 
     let serviceGroup = ServiceGroup(
-      services: [controller],
+      services: [mad],
       gracefulShutdownSignals: [.sigterm, .sigint],
       logger: logger
     )

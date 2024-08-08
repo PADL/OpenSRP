@@ -43,7 +43,7 @@ protocol BaseApplicationDelegate<P>: Sendable {
 protocol BaseApplication: Application where P == P {
   typealias MAPParticipantDictionary = [MAPContextIdentifier: Set<Participant<Self>>]
 
-  var _mad: Weak<Controller<P>> { get }
+  var _mad: Weak<MAD<P>> { get }
   var _participants: ManagedCriticalState<MAPParticipantDictionary> { get }
   var _delegate: (any BaseApplicationDelegate<P>)? { get }
 
@@ -51,7 +51,7 @@ protocol BaseApplication: Application where P == P {
 }
 
 extension BaseApplication {
-  var mad: Controller<P>? { _mad.object }
+  var mad: MAD<P>? { _mad.object }
 
   public func add(participant: Participant<Self>) throws {
     precondition(_contextsSupported || participant.contextIdentifier == MAPBaseSpanningTreeContext)
@@ -130,7 +130,7 @@ extension BaseApplication {
       }
       guard let mad else { throw MRPError.internalError }
       let participant = await Participant<Self>(
-        controller: mad,
+        mad: mad,
         application: self,
         port: port,
         contextIdentifier: contextIdentifier

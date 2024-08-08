@@ -33,7 +33,7 @@ public protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
   var etherType: UInt16 { get }
   var protocolVersion: ProtocolVersion { get }
 
-  var mad: Controller<P>? { get }
+  var mad: MAD<P>? { get }
 
   // notifications from controller when a port is added, didUpdated or removed
   // if contextIdentifier is MAPBaseSpanningTreeContext, the ports are physical
