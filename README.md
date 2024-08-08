@@ -1,6 +1,6 @@
 # SwiftMRP
 
-A Swift implementation of MMRP, MVRP and MSRP. It is a work in progress, which is to say, it does not work yet.
+A Swift implementation of MMRP, MVRP and MSRP. It is a work in progress, which is to say, it does not work yet. The current platform abstraction supports the Linux software bridge, but the plan is to also support hardware switches operating in DSA mode.
 
 ## Architecture
 
