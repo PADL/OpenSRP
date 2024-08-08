@@ -189,7 +189,7 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
   public init(name: String, netFilterGroup group: Int) async throws {
     _txSocket = try Socket(ring: IORing.shared, domain: sa_family_t(AF_PACKET), type: SOCK_RAW)
     _nlLinkSocket = try NLSocket(protocol: NETLINK_ROUTE)
-    _nlNfLog = try NFNLLog(family: sa_family_t(AF_PACKET), group: UInt16(group))
+    _nlNfLog = try NFNLLog(group: UInt16(group))
     try _nlLinkSocket.subscribeLinks()
     let bridgePorts = try await _getPorts(family: sa_family_t(AF_BRIDGE))
       .filter { $0._isBridgeSelf && $0.name == name }
@@ -408,13 +408,14 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
     _rxPacketsChannel.eraseToAnyAsyncSequence()
   }
 
-  private var _nfLogRxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)> {
+  private var _nfNlLogRxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)> {
     get throws {
       _nlNfLog.logMessages.compactMap { logMessage in
-        guard let hwHeader = logMessage.hwHeader, let payload = logMessage.payload else {
+        guard let hwHeader = logMessage.hwHeader, let payload = logMessage.payload,
+              let packet = try? IEEE802Packet(hwHeader: hwHeader, payload: payload)
+        else {
           return nil
         }
-        let packet = try IEEE802Packet(hwHeader: hwHeader, payload: payload)
         return (logMessage.physicalInputDevice, packet)
       }.eraseToAnyAsyncSequence()
     }
@@ -462,7 +463,6 @@ fileprivate final class FilterRegistration: Equatable, Hashable, Sendable, Custo
       index: port.id
     ))
 
-    // TODO: caller needs to handle EINTR, make sure it does
     return try await rxSocket.receiveMessages(count: port._rtnl.mtu).compactMap { message in
       var deserializationContext = DeserializationContext(message.buffer)
       return try? IEEE802Packet(deserializationContext: &deserializationContext)
