@@ -58,6 +58,9 @@ private final class MRPDaemon: AsyncParsableCommand {
 
   private(set) static var configuration = CommandConfiguration(commandName: "mrpd")
 
+  // TODO: exclude interfaces
+  // TODO: do not apply
+
   @Option(name: .shortAndLong, help: "Master bridge interface name")
   var bridgeInterface: String
 

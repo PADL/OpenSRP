@@ -39,6 +39,7 @@ public actor MAD<P: Port>: Service, CustomStringConvertible {
   private var _administrativeControl = AdministrativeControl.normalParticipant
   private var _taskGroup: ThrowingTaskGroup<(), Error>?
   private let _rxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)>
+  private let _portExclusions: Set<String>
 
   private var periodicTransmissionTime: Duration {
     .seconds(1)
@@ -49,12 +50,20 @@ public actor MAD<P: Port>: Service, CustomStringConvertible {
     return Duration.seconds(leaveAllTime)
   }
 
-  public init(bridge: some Bridge<P>, logger: Logger) async throws {
+  public init(
+    bridge: some Bridge<P>,
+    logger: Logger,
+    portExclusions: Set<String> = []
+  ) async throws {
     logger.debug("initializing MRP controller with bridge \(bridge)")
     self.bridge = bridge
     self.logger = logger
-    _ports = try await [P.ID: P](uniqueKeysWithValues: bridge.getPorts().map { ($0.id, $0) })
+    _ports = try await [P.ID: P](uniqueKeysWithValues: bridge.getPorts().compactMap {
+      if portExclusions.contains($0.name) { return nil }
+      return ($0.id, $0)
+    })
     _rxPackets = try bridge.rxPackets
+    _portExclusions = portExclusions
   }
 
   public nonisolated var description: String {
@@ -91,6 +100,13 @@ public actor MAD<P: Port>: Service, CustomStringConvertible {
       try await self.run()
     }
     _shutdown()
+  }
+
+  public func lookup(port name: String) throws -> some Port {
+    guard let port = ports.first(where: { $0.name == name }) else {
+      throw MRPError.portNotFound
+    }
+    return port
   }
 
   var knownContextIdentifiers: Set<MAPContextIdentifier> {
@@ -204,6 +220,7 @@ public actor MAD<P: Port>: Service, CustomStringConvertible {
   private func _handleBridgeNotifications() async throws {
     for try await notification in bridge.notifications {
       do {
+        if _portExclusions.contains(notification.port.name) { continue }
         switch notification {
         case let .added(port):
           try await ports.contains(port) ? _didUpdate(port: port) : _didAdd(port: port)
