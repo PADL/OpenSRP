@@ -68,6 +68,10 @@ func _isEqualMacAddress(_ lhs: EUI48, _ rhs: EUI48) -> Bool {
     lhs.5 == rhs.5
 }
 
+func _isMulticast(macAddress: EUI48) -> Bool {
+  macAddress.0 & 1 != 0
+}
+
 func _hashMacAddress(_ macAddress: EUI48, into hasher: inout Hasher) {
   macAddress.0.hash(into: &hasher)
   macAddress.1.hash(into: &hasher)

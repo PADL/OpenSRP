@@ -84,17 +84,13 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationDel
   }
 
   public func packedEventsType(for attributeType: AttributeType) throws -> PackedEventsType {
-    guard let _ = MMRPAttributeType(rawValue: attributeType)
-    else { throw MRPError.unknownAttributeType }
-    return .threePackedType
+    .threePackedType
   }
 
   public func administrativeControl(for attributeType: AttributeType) throws
     -> AdministrativeControl
   {
-    guard let _ = MMRPAttributeType(rawValue: attributeType)
-    else { throw MRPError.unknownAttributeType }
-    return .normalParticipant
+    .normalParticipant
   }
 
   public func register(macAddress: EUI48) async throws {
@@ -174,10 +170,9 @@ extension MMRPApplication {
     else { throw MRPError.unknownAttributeType }
     switch attributeType {
     case .macVector:
-      try await bridge.registerMulticastAddress(
-        (attributeValue as! MMRPMACVectorValue).macAddress,
-        on: ports
-      )
+      let macAddress = (attributeValue as! MMRPMACVectorValue).macAddress
+      guard _isMulticast(macAddress: macAddress) else { throw MRPError.invalidAttributeValue }
+      try await bridge.registerMulticastAddress(macAddress, on: ports)
     case .serviceRequirementVector:
       break
     }
@@ -204,10 +199,9 @@ extension MMRPApplication {
     else { throw MRPError.unknownAttributeType }
     switch attributeType {
     case .macVector:
-      try await bridge.deregisterMulticastAddress(
-        (attributeValue as! MMRPMACVectorValue).macAddress,
-        from: ports
-      )
+      let macAddress = (attributeValue as! MMRPMACVectorValue).macAddress
+      guard _isMulticast(macAddress: macAddress) else { throw MRPError.invalidAttributeValue }
+      try await bridge.deregisterMulticastAddress(macAddress, from: ports)
     case .serviceRequirementVector:
       break
     }

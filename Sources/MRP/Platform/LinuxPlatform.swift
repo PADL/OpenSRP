@@ -401,8 +401,8 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
 
   public func tx(_ packet: IEEE802Packet, on portID: P.ID) async throws {
     var serializationContext = SerializationContext()
-    let packetType = packet.destMacAddress
-      .0 & 0x1 != 0 ? UInt8(PACKET_MULTICAST) : UInt8(PACKET_HOST)
+    let packetType = _isMulticast(macAddress: packet.destMacAddress) ?
+      UInt8(PACKET_MULTICAST) : UInt8(PACKET_HOST)
     let address = _makeLinkLayerAddressBytes(
       macAddress: packet.destMacAddress,
       packetType: packetType,
