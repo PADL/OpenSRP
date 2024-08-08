@@ -24,8 +24,9 @@
 
 import AsyncExtensions
 import Logging
+import ServiceLifecycle
 
-actor Controller<P: Port> {
+public actor Controller<P: Port>: Service {
   private var periodicTransmissionTime: Duration {
     .seconds(1)
   }
@@ -53,7 +54,7 @@ actor Controller<P: Port> {
     _rxPackets = try bridge.rxPackets
   }
 
-  public func run() async throws {
+  private func _run() async throws {
     logger.debug("starting \(self)")
     try await _didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
     for port in ports {
@@ -70,7 +71,14 @@ actor Controller<P: Port> {
     }
   }
 
-  public func shutdown() {
+  public func run() async throws {
+    try await cancelWhenGracefulShutdown {
+      try await self.run()
+    }
+    _shutdown()
+  }
+
+  private func _shutdown() {
     logger.debug("shutting down \(self)")
     try? bridge.willShutdown()
     for port in ports {

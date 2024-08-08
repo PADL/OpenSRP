@@ -58,6 +58,12 @@ private final class MRPDaemon: AsyncParsableCommand {
 
   private(set) static var configuration = CommandConfiguration(commandName: "mrpd")
 
+  @Option(name: .shortAndLong, help: "Master bridge interface name")
+  var bridgeInterface: String
+
+  @Option(name: .shortAndLong, help: "NetFilter group")
+  var nfGroup: Int = 100
+
   @Option(name: .shortAndLong, help: "Log level")
   var logLevel: Logger.Level = .trace
 
@@ -80,12 +86,20 @@ private final class MRPDaemon: AsyncParsableCommand {
   var logger: Logger!
 
   func run() async throws {
-    LoggingSystem.bootstrap(StreamLogHandler.standardError)
+    LoggingSystem.bootstrap { @Sendable in
+      StreamLogHandler.standardError(label: $0)
+    }
     logger = Logger(label: "com.lukktone.mrpd")
     logger.logLevel = logLevel
 
+    let bridge = try await B(name: bridgeInterface, netFilterGroup: nfGroup)
+    let controller = try await Controller<P>(bridge: bridge, logger: logger)
+    if enableMMRP {}
+    if enableMVRP {}
+    if enableMSRP {}
+
     let serviceGroup = ServiceGroup(
-      services: [],
+      services: [controller],
       gracefulShutdownSignals: [.sigterm, .sigint],
       logger: logger
     )

@@ -43,11 +43,6 @@ PlatformTargetDependencies = [
     package: "IORingSwift",
     condition: .when(platforms: [.linux])
   ),
-  .product(
-    name: "IORingFoundation",
-    package: "IORingSwift",
-    condition: .when(platforms: [.linux])
-  ),
 ]
 
 PlatformProducts = [
@@ -92,7 +87,7 @@ PlatformTargets = [
   .executableTarget(
     name: "MRPDaemon",
     dependencies: [
-      "NetLink",
+      "MRP",
       .product(name: "ArgumentParser", package: "swift-argument-parser"),
       .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
     ]
@@ -147,8 +142,9 @@ let CommonTargets: [Target] = [
       "SocketAddress",
       .product(name: "Algorithms", package: "swift-algorithms"),
       .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
-      .product(name: "SystemPackage", package: "swift-system"),
       .product(name: "Logging", package: "swift-log"),
+      .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
+      .product(name: "SystemPackage", package: "swift-system"),
     ] + PlatformTargetDependencies,
     cSettings: PlatformCSettings,
     swiftSettings: [

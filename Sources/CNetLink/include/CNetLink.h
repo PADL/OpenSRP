@@ -1,5 +1,8 @@
 #pragma once
 
+#include <netinet/in.h>
+
+#include <linux/in6.h>
 #include <linux/filter.h>
 #include <linux/if_bridge.h>
 #include <linux/netfilter/nfnetlink_log.h>
