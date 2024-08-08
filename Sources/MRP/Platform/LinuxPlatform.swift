@@ -476,4 +476,20 @@ fileprivate final class FilterRegistration: Equatable, Hashable, Sendable, Custo
   }
 }
 
+extension LinuxBridge: MVRPAwareBridge {
+  func register(vlan: VLAN, on ports: Set<P>) async throws {
+    try await add(vlans: [vlan])
+    for port in ports {
+      try await port.add(vlans: [vlan])
+    }
+  }
+
+  func deregister(vlan: VLAN, from ports: Set<P>) async throws {
+    for port in ports {
+      try await port.remove(vlans: [vlan])
+    }
+    try await remove(vlans: [vlan])
+  }
+}
+
 #endif
