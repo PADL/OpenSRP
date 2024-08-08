@@ -79,7 +79,7 @@ public struct IEEE802Packet: Sendable, SerDes, CustomStringConvertible {
   public let sourceMacAddress: EUI48
   public let tci: TCI?
   public let etherType: UInt16
-  public let data: [UInt8]
+  public let payload: [UInt8]
 
   public var vid: UInt16? {
     tci?.vid
@@ -90,13 +90,13 @@ public struct IEEE802Packet: Sendable, SerDes, CustomStringConvertible {
     tci: TCI?,
     sourceMacAddress: EUI48,
     etherType: UInt16,
-    data: [UInt8]
+    payload: [UInt8]
   ) {
     self.destMacAddress = destMacAddress
     self.sourceMacAddress = sourceMacAddress
     self.tci = tci
     self.etherType = etherType
-    self.data = data
+    self.payload = payload
   }
 
   init(
@@ -104,14 +104,14 @@ public struct IEEE802Packet: Sendable, SerDes, CustomStringConvertible {
     contextIdentifier: MAPContextIdentifier,
     sourceMacAddress: EUI48,
     etherType: UInt16,
-    data: [UInt8]
+    payload: [UInt8]
   ) {
     self.init(
       destMacAddress: destMacAddress,
       tci: contextIdentifier.tci,
       sourceMacAddress: sourceMacAddress,
       etherType: etherType,
-      data: data
+      payload: payload
     )
   }
 
@@ -128,11 +128,11 @@ public struct IEEE802Packet: Sendable, SerDes, CustomStringConvertible {
       tci = nil
     }
     self.etherType = etherType
-    data = Array(deserializationContext.deserializeRemaining())
+    payload = Array(deserializationContext.deserializeRemaining())
   }
 
   func serialize(into serializationContext: inout SerializationContext) throws {
-    serializationContext.reserveCapacity(2 * Int(6) + 6 + 2 + data.count)
+    serializationContext.reserveCapacity(2 * Int(6) + 6 + 2 + payload.count)
     serializationContext.serialize(eui48: destMacAddress)
     serializationContext.serialize(eui48: sourceMacAddress)
     if let tci {
@@ -140,13 +140,13 @@ public struct IEEE802Packet: Sendable, SerDes, CustomStringConvertible {
       try tci.serialize(into: &serializationContext)
     }
     serializationContext.serialize(uint16: etherType)
-    serializationContext.serialize(data)
+    serializationContext.serialize(payload)
   }
 
   public var description: String {
     "IEEE802Packet(destMacAddress: \(_macAddressToString(destMacAddress)), " +
       "sourceMacAddress: \(_macAddressToString(sourceMacAddress)), " +
-      "vid: \(vid ?? 0), etherType: \(String(format: "%04x", etherType)), packetLength: \(data.count)"
+      "vid: \(vid ?? 0), etherType: \(String(format: "%04x", etherType)), packetLength: \(payload.count)"
   }
 }
 

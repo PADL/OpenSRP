@@ -331,18 +331,24 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
 
   public var rxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)> {
     get throws {
-      _nlNfLog.logMessages.map { logMessage in
+      _nlNfLog.logMessages.compactMap { logMessage in
         let contextIdentifier: MAPContextIdentifier = if let vlanID = logMessage.vlanID {
           MAPContextIdentifier(id: vlanID)
         } else {
           MAPBaseSpanningTreeContext
         }
+        guard let destMacAddress = logMessage.macAddress,
+              let etherType = logMessage.hwProtocol,
+              let payload = logMessage.payload
+        else {
+          return nil
+        }
         let packet = IEEE802Packet(
-          destMacAddress: logMessage.macAddress ?? (0, 0, 0, 0, 0, 0),
+          destMacAddress: destMacAddress,
           contextIdentifier: contextIdentifier,
           sourceMacAddress: (0, 0, 0, 0, 0, 0), // FIXME: where do we get this
-          etherType: logMessage.hwProtocol ?? 0xFFFF,
-          data: logMessage.payload ?? []
+          etherType: etherType,
+          payload: payload
         )
         return (logMessage.physicalInputDevice, packet)
       }.eraseToAnyAsyncSequence()

@@ -68,7 +68,7 @@ actor PortMonitor {
         print("Now monitoring bridge for packets...")
         do {
           for try await (index, packet) in try bridge.rxPackets {
-            print("@\(index) received packet \(packet)\n\(packet.data.hexEncodedString())")
+            print("@\(index) received packet \(packet)\n\(packet.payload.hexEncodedString())")
           }
         } catch {
           print("bridge failed to RX packet: \(error)")
@@ -84,7 +84,7 @@ actor PortMonitor {
               groupAddress: groupAddress,
               etherType: etherType
             ) {
-              print("\(port) received packet \(packet)\n\(packet.data.hexEncodedString())")
+              print("\(port) received packet \(packet)\n\(packet.payload.hexEncodedString())")
             }
           } catch {
             print("port failed to RX packet on \(port): \(error)")

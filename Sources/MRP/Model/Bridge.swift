@@ -59,7 +59,7 @@ extension Bridge {
       contextIdentifier: contextIdentifier,
       sourceMacAddress: port.macAddress,
       etherType: application.etherType,
-      data: pdu.serialized()
+      payload: pdu.serialized()
     )
     try await tx(packet, on: port)
   }

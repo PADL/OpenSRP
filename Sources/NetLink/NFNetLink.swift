@@ -125,7 +125,7 @@ public final class NFNLLog: Sendable {
   private let _socket: NLSocket
   private let _log: NLObject
 
-  public init(family: sa_family_t, group: UInt16) throws {
+  public init(family: sa_family_t = sa_family_t(AF_PACKET), group: UInt16) throws {
     _socket = try NLSocket(protocol: NETLINK_NETFILTER)
     _log = NLObject(consumingObj: nfnl_log_alloc())
     try throwingErrno {
