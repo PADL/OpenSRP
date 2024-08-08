@@ -92,10 +92,17 @@ private final class MRPDaemon: AsyncParsableCommand {
     logger = Logger(label: "com.lukktone.mrpd")
     logger.logLevel = logLevel
 
+    let mmrp: MMRPApplication?
+    let mvrp: MVRPApplication?
+
     let bridge = try await B(name: bridgeInterface, netFilterGroup: nfGroup)
     let controller = try await Controller<P>(bridge: bridge, logger: logger)
-    if enableMMRP {}
-    if enableMVRP {}
+    if enableMMRP {
+      mmrp = try await MMRPApplication(owner: controller, logger: logger)
+    }
+    if enableMVRP {
+      mvrp = try await MVRPApplication(owner: controller, logger: logger)
+    }
     if enableMSRP {}
 
     let serviceGroup = ServiceGroup(

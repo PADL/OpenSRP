@@ -38,10 +38,6 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationDel
   // for now, we only operate in the Base Spanning Tree Context
   var _contextsSupported: Bool { false }
 
-  func set(logger: Logger) {
-    _logger.withCriticalRegion { $0 = logger }
-  }
-
   public var validAttributeTypes: ClosedRange<AttributeType> {
     MMRPAttributeType.validAttributeTypes
   }
@@ -61,10 +57,12 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationDel
 
   let _participants =
     ManagedCriticalState<[MAPContextIdentifier: Set<Participant<MMRPApplication<P>>>]>([:])
-  let _logger = ManagedCriticalState<Logger?>(nil)
+  let _logger: Logger
 
-  init(owner: Controller<P>) {
+  init(owner: Controller<P>, logger: Logger) async throws {
     _mad = Weak(owner)
+    _logger = logger
+    try await owner.register(application: self)
   }
 
   public func deserialize(
