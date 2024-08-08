@@ -49,10 +49,12 @@ public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationDel
   let _participants =
     ManagedCriticalState<[MAPContextIdentifier: Set<Participant<MVRPApplication<P>>>]>([:])
   let _logger: Logger
+  let _vlanExclusions: Set<VLAN>
 
-  public init(mad: MAD<P>) async throws {
+  public init(mad: MAD<P>, vlanExclusions: Set<VLAN> = []) async throws {
     _mad = Weak(mad)
     _logger = mad.logger
+    _vlanExclusions = vlanExclusions
     try await mad.register(application: self)
   }
 
@@ -153,13 +155,13 @@ extension MVRPApplication {
   ) async throws {
     guard let mad else { throw MRPError.internalError }
     guard let bridge = mad.bridge as? any MVRPAwareBridge<P> else { return }
-    let ports = await mad.context(for: contextIdentifier)
     guard let attributeType = MVRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }
     switch attributeType {
     case .vidVector:
       let vlan = (attributeValue as! VLAN)
-      let ports = ports.filter {
+      guard !_vlanExclusions.contains(vlan) else { throw MRPError.doNotPropagateAttribute }
+      let ports = await mad.context(for: contextIdentifier).filter {
         if flags.contains(.sourceIsLocal), $0 == port {
           false
         } else {
@@ -187,13 +189,13 @@ extension MVRPApplication {
   ) async throws {
     guard let mad else { throw MRPError.internalError }
     guard let bridge = mad.bridge as? any MVRPAwareBridge<P> else { return }
-    let ports = await mad.context(for: contextIdentifier)
     guard let attributeType = MVRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }
     switch attributeType {
     case .vidVector:
       let vlan = (attributeValue as! VLAN)
-      let ports = ports.filter {
+      guard !_vlanExclusions.contains(vlan) else { throw MRPError.doNotPropagateAttribute }
+      let ports = await mad.context(for: contextIdentifier).filter {
         if flags.contains(.sourceIsLocal), $0 == port {
           true // FIXME: is this logic correct?
         } else {

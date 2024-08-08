@@ -46,8 +46,11 @@ private final class MRPDaemon: AsyncParsableCommand {
   @Option(name: .shortAndLong, help: "NetFilter group")
   var nfGroup: Int = 100
 
-  @Option(name: .shortAndLong, help: "Physical interfaces to exclude")
+  @Option(name: .long, help: "Exclude physical interface (may be specified multiple times)")
   var excludeIface: [String] = []
+
+  @Option(name: .long, help: "Exclude VLAN From MVRP (may be specified multiple times)")
+  var excludeVlan: [UInt16] = []
 
   @Option(name: .shortAndLong, help: "Log level")
   var logLevel: Logger.Level = .trace
@@ -65,6 +68,7 @@ private final class MRPDaemon: AsyncParsableCommand {
     case bridgeInterface
     case nfGroup
     case excludeIface
+    case excludeVlan
     case logLevel
     case enableMMRP
     case enableMVRP
@@ -86,7 +90,7 @@ private final class MRPDaemon: AsyncParsableCommand {
       _ = try await MMRPApplication(mad: mad)
     }
     if enableMVRP {
-      _ = try await MVRPApplication(mad: mad)
+      _ = try await MVRPApplication(mad: mad, vlanExclusions: Set(excludeVlan.map { VLAN(id: $0) }))
     }
     if enableMSRP {}
 
