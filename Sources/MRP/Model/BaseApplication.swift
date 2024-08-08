@@ -22,6 +22,18 @@ protocol BaseApplicationDelegate<P>: Sendable {
   func onContextAdded(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
   func onContextUpdated(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
   func onContextRemoved(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
+
+  func onJoinIndication(
+    contextIdentifier: MAPContextIdentifier,
+    attributeType: AttributeType,
+    attributeValue: some Value,
+    isNew: Bool
+  ) async throws
+  func onLeaveIndication(
+    contextIdentifier: MAPContextIdentifier,
+    attributeType: AttributeType,
+    attributeValue: some Value
+  ) async throws
 }
 
 protocol BaseApplication: Application where P == P {
@@ -37,7 +49,7 @@ protocol BaseApplication: Application where P == P {
 extension BaseApplication {
   var mad: Controller<P>? { _mad.object }
 
-  func add(participant: Participant<Self>) throws {
+  public func add(participant: Participant<Self>) throws {
     precondition(_contextsSupported || participant.contextIdentifier == MAPBaseSpanningTreeContext)
     _participants.withCriticalRegion {
       if let index = $0.index(forKey: participant.contextIdentifier) {
@@ -48,7 +60,7 @@ extension BaseApplication {
     }
   }
 
-  func remove(
+  public func remove(
     participant: Participant<Self>
   ) throws {
     precondition(_contextsSupported || participant.contextIdentifier == MAPBaseSpanningTreeContext)
@@ -58,7 +70,7 @@ extension BaseApplication {
   }
 
   @discardableResult
-  func apply<T>(
+  public func apply<T>(
     for contextIdentifier: MAPContextIdentifier? = nil,
     _ block: AsyncApplyFunction<T>
   ) async rethrows -> [T] {
@@ -80,7 +92,7 @@ extension BaseApplication {
   }
 
   @discardableResult
-  func apply<T>(
+  public func apply<T>(
     for contextIdentifier: MAPContextIdentifier? = nil,
     _ block: ApplyFunction<T>
   ) rethrows -> [T] {
@@ -101,8 +113,12 @@ extension BaseApplication {
     return ret
   }
 
-  func didAdd(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) async throws {
+  public func didAdd(
+    contextIdentifier: MAPContextIdentifier,
+    with context: MAPContext<P>
+  ) async throws {
     guard _contextsSupported || contextIdentifier == MAPBaseSpanningTreeContext else { return }
+    try _delegate?.onContextAdded(contextIdentifier: contextIdentifier, with: context)
     for port in context {
       guard (try? findParticipant(for: contextIdentifier, port: port)) == nil
       else {
@@ -117,11 +133,14 @@ extension BaseApplication {
       )
       try add(participant: participant)
     }
-    try _delegate?.onContextAdded(contextIdentifier: contextIdentifier, with: context)
   }
 
-  func didUpdate(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws {
+  public func didUpdate(
+    contextIdentifier: MAPContextIdentifier,
+    with context: MAPContext<P>
+  ) throws {
     guard _contextsSupported || contextIdentifier == MAPBaseSpanningTreeContext else { return }
+    try _delegate?.onContextUpdated(contextIdentifier: contextIdentifier, with: context)
     for port in context {
       let participant = try findParticipant(
         for: contextIdentifier,
@@ -129,11 +148,14 @@ extension BaseApplication {
       )
       Task { try await participant.redeclare() }
     }
-    try _delegate?.onContextUpdated(contextIdentifier: contextIdentifier, with: context)
   }
 
-  func didRemove(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws {
+  public func didRemove(
+    contextIdentifier: MAPContextIdentifier,
+    with context: MAPContext<P>
+  ) throws {
     guard _contextsSupported || contextIdentifier == MAPBaseSpanningTreeContext else { return }
+    try _delegate?.onContextRemoved(contextIdentifier: contextIdentifier, with: context)
     for port in context {
       let participant = try findParticipant(
         for: contextIdentifier,
@@ -142,16 +164,21 @@ extension BaseApplication {
       Task { try await participant.flush() }
       try remove(participant: participant)
     }
-    try _delegate?.onContextRemoved(contextIdentifier: contextIdentifier, with: context)
   }
 
-  func joinIndicated(
+  public func joinIndicated(
     contextIdentifier: MAPContextIdentifier,
     port: P,
     attributeType: AttributeType,
     attributeValue: some Value,
     isNew: Bool
   ) async throws {
+    try await _delegate?.onJoinIndication(
+      contextIdentifier: contextIdentifier,
+      attributeType: attributeType,
+      attributeValue: attributeValue,
+      isNew: isNew
+    )
     try await apply(for: contextIdentifier) { participant in
       guard participant.port != port else { return }
       try await participant.join(
@@ -162,12 +189,17 @@ extension BaseApplication {
     }
   }
 
-  func leaveIndicated(
+  public func leaveIndicated(
     contextIdentifier: MAPContextIdentifier,
     port: P,
     attributeType: AttributeType,
     attributeValue: some Value
   ) async throws {
+    try await _delegate?.onLeaveIndication(
+      contextIdentifier: contextIdentifier,
+      attributeType: attributeType,
+      attributeValue: attributeValue
+    )
     try await apply(for: contextIdentifier) { participant in
       guard participant.port != port else { return }
       try await participant.leave(

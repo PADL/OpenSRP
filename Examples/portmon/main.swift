@@ -52,7 +52,7 @@ actor PortMonitor {
     // now we need to register to ensure RX task is created
     // we can do this for every application we wish to monitor
     try bridge.register(groupAddress: IndividualLANScopeGroupAddress, etherType: 0x22EA) // MSRP
-    try bridge.register(groupAddress: CustomerBridgeMVRPGroupAddress, etherType: 0x88F5) // MVRP
+    try bridge.register(groupAddress: CustomerBridgeMRPGroupAddress, etherType: 0x88F5) // MVRP
 
     ports = try await bridge.getPorts()
     print("Ports at startup on bridge \(bridge.name):")

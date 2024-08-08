@@ -44,13 +44,13 @@ enum ParticipantType {
   case applicantOnly
 }
 
-final actor Participant<A: Application>: Equatable, Hashable {
-  static func == (lhs: Participant<A>, rhs: Participant<A>) -> Bool {
+public final actor Participant<A: Application>: Equatable, Hashable {
+  public static func == (lhs: Participant<A>, rhs: Participant<A>) -> Bool {
     lhs.application == rhs.application && lhs.port == rhs.port && lhs.contextIdentifier == rhs
       .contextIdentifier
   }
 
-  nonisolated func hash(into hasher: inout Hasher) {
+  public nonisolated func hash(into hasher: inout Hasher) {
     application?.hash(into: &hasher)
     port.hash(into: &hasher)
     contextIdentifier.hash(into: &hasher)
@@ -368,7 +368,7 @@ final actor Participant<A: Application>: Equatable, Hashable {
     index: Int,
     isNew: Bool
   ) throws -> _AttributeValueState<A> {
-    let absoluteValue = firstValue.makeValue(relativeTo: index)
+    let absoluteValue = try firstValue.makeValue(relativeTo: index)
 
     if let attributeValue = _attributes[attributeType]?.first(where: {
       ($0.value.value as? V) == absoluteValue
@@ -387,7 +387,7 @@ final actor Participant<A: Application>: Equatable, Hashable {
       }
       return attributeValue
     } else {
-      throw MRPError.attributeNotFound
+      throw MRPError.unknownAttributeType
     }
   }
 

@@ -16,7 +16,7 @@
 
 import Algorithms
 
-typealias ProtocolVersion = UInt8
+public typealias ProtocolVersion = UInt8
 
 struct ThreePackedEvents {
   let value: UInt8
@@ -84,7 +84,7 @@ typealias NumberOfValues = UInt16 // Number of events encoded in the vector
 
 let EndMark: UInt16 = 0
 
-enum PackedEventsType {
+public enum PackedEventsType {
   case threePackedType
   case fourPackedType
 }
@@ -106,7 +106,7 @@ struct VectorHeader: Sendable, Equatable, Hashable, SerDes {
   init(deserializationContext: inout DeserializationContext) throws {
     let value: UInt16 = try deserializationContext.deserialize()
     guard let leaveAllEvent = LeaveAllEvent(rawValue: UInt8(value >> 13)) else {
-      throw MRPError.invalidEnumerationCase
+      throw MRPError.invalidLeaveAllEvent
     }
     self.leaveAllEvent = leaveAllEvent
     numberOfValues = value & 0x1FFF
@@ -118,7 +118,7 @@ struct VectorHeader: Sendable, Equatable, Hashable, SerDes {
   }
 }
 
-typealias AttributeType = UInt8
+public typealias AttributeType = UInt8
 typealias AttributeLength = UInt8
 typealias AttributeListLength = UInt16
 

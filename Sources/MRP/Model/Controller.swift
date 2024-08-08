@@ -26,7 +26,20 @@ import AsyncExtensions
 import Logging
 import ServiceLifecycle
 
-public actor Controller<P: Port>: Service {
+public actor Controller<P: Port>: Service, CustomStringConvertible {
+  typealias MAPContextDictionary = [MAPContextIdentifier: MAPContext<P>]
+
+  let bridge: any Bridge<P>
+  let logger: Logger
+  var ports: Set<P> { Set(_ports.values) }
+
+  private var _applications = [UInt16: any Application<P>]()
+  private var _ports = [P.ID: P]()
+  private var _periodicTimers = [P.ID: Timer]()
+  private var _administrativeControl = AdministrativeControl.normalParticipant
+  private var _taskGroup: ThrowingTaskGroup<(), Error>?
+  private let _rxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)>
+
   private var periodicTransmissionTime: Duration {
     .seconds(1)
   }
@@ -36,27 +49,20 @@ public actor Controller<P: Port>: Service {
     return Duration.seconds(leaveAllTime)
   }
 
-  private var _applications = [UInt16: any Application<P>]()
-  private var _ports = [P.ID: P]()
-  var ports: Set<P> { Set(_ports.values) }
-  private var _periodicTimers = [P.ID: Timer]()
-  private var _administrativeControl = AdministrativeControl.normalParticipant
-
-  let bridge: any Bridge<P>
-  var _taskGroup: ThrowingTaskGroup<(), Error>?
-  let logger: Logger
-  private let _rxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)>
-
   public init(bridge: some Bridge<P>, logger: Logger) async throws {
-    _ports = try await [P.ID: P](uniqueKeysWithValues: bridge.getPorts().map { ($0.id, $0) })
+    logger.debug("initializing MRP controller with bridge \(bridge)")
     self.bridge = bridge
     self.logger = logger
+    _ports = try await [P.ID: P](uniqueKeysWithValues: bridge.getPorts().map { ($0.id, $0) })
     _rxPackets = try bridge.rxPackets
   }
 
+  public nonisolated var description: String {
+    "Controller(bridge: \(bridge))"
+  }
+
   private func _run() async throws {
-    logger.debug("starting \(self)")
-    try await _didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
+    logger.info("starting \(self)")
     for port in ports {
       try? await _didAdd(port: port)
     }
@@ -71,15 +77,8 @@ public actor Controller<P: Port>: Service {
     }
   }
 
-  public func run() async throws {
-    try await cancelWhenGracefulShutdown {
-      try await self.run()
-    }
-    _shutdown()
-  }
-
   private func _shutdown() {
-    logger.debug("shutting down \(self)")
+    logger.info("shutting down \(self)")
     try? bridge.willShutdown()
     for port in ports {
       try? _didRemove(port: port)
@@ -87,11 +86,16 @@ public actor Controller<P: Port>: Service {
     _taskGroup?.cancelAll()
   }
 
+  public func run() async throws {
+    try await cancelWhenGracefulShutdown {
+      try await self.run()
+    }
+    _shutdown()
+  }
+
   var knownContextIdentifiers: Set<MAPContextIdentifier> {
     Set([MAPBaseSpanningTreeContext] + bridge.vlans.map { MAPContextIdentifier(vlan: $0) })
   }
-
-  typealias MAPContextDictionary = [MAPContextIdentifier: MAPContext<P>]
 
   func context(for contextIdentifier: MAPContextIdentifier) -> MAPContext<P> {
     if contextIdentifier == MAPBaseSpanningTreeContext {
@@ -109,7 +113,10 @@ public actor Controller<P: Port>: Service {
     })
   }
 
-  private func _applyContextIdentifierChanges(beforeAddingOrUpdating port: P) async throws {
+  private func _applyContextIdentifierChanges(
+    beforeAddingOrUpdating port: P,
+    isNewPort: Bool
+  ) async throws {
     let addedContextIdentifiers: Set<MAPContextIdentifier>
     let removedContextIdentifiers: Set<MAPContextIdentifier>
     let updatedContextIdentifiers: Set<MAPContextIdentifier>
@@ -129,17 +136,26 @@ public actor Controller<P: Port>: Service {
     precondition(!addedContextIdentifiers.contains(MAPBaseSpanningTreeContext))
     precondition(!removedContextIdentifiers.contains(MAPBaseSpanningTreeContext))
 
-    try _didUpdate(contextIdentifier: MAPBaseSpanningTreeContext, with: [port])
+    logger.trace("""
+    applying context identifier changes prior to \(isNewPort ? "adding" : "updating") port \(port):
+    removed \(removedContextIdentifiers) updated \(updatedContextIdentifiers) added \(
+      addedContextIdentifiers
+    )
+    """)
 
     for contextIdentifier in removedContextIdentifiers {
       try _didRemove(contextIdentifier: contextIdentifier, with: [port])
     }
 
-    for contextIdentifier in updatedContextIdentifiers {
+    for contextIdentifier in updatedContextIdentifiers
+      .union(isNewPort ? [] : [MAPBaseSpanningTreeContext])
+    {
       try _didUpdate(contextIdentifier: contextIdentifier, with: [port])
     }
 
-    for contextIdentifier in addedContextIdentifiers {
+    for contextIdentifier in addedContextIdentifiers
+      .union(isNewPort ? [MAPBaseSpanningTreeContext] : [])
+    {
       try await _didAdd(contextIdentifier: contextIdentifier, with: [port])
     }
   }
@@ -149,6 +165,11 @@ public actor Controller<P: Port>: Service {
 
     guard let existingPort = ports.first(where: { $0.id == port.id }) else { return }
     removedContextIdentifiers = existingPort.contextIdentifiers.subtracting(port.contextIdentifiers)
+
+    logger
+      .trace(
+        "applying context identifier changes prior to removing port \(port): \(removedContextIdentifiers)"
+      )
 
     for contextIdentifier in [MAPBaseSpanningTreeContext] + removedContextIdentifiers {
       try _didRemove(contextIdentifier: contextIdentifier, with: [port])
@@ -160,7 +181,7 @@ public actor Controller<P: Port>: Service {
 
     _startTx(port: port)
 
-    try await _applyContextIdentifierChanges(beforeAddingOrUpdating: port)
+    try await _applyContextIdentifierChanges(beforeAddingOrUpdating: port, isNewPort: true)
     _ports[port.id] = port
   }
 
@@ -176,7 +197,7 @@ public actor Controller<P: Port>: Service {
   private func _didUpdate(port: P) async throws {
     logger.debug("updated port \(port)")
 
-    try await _applyContextIdentifierChanges(beforeAddingOrUpdating: port)
+    try await _applyContextIdentifierChanges(beforeAddingOrUpdating: port, isNewPort: false)
     _ports[port.id] = port
   }
 
@@ -193,7 +214,7 @@ public actor Controller<P: Port>: Service {
         }
       } catch {
         logger
-          .info("failed to handle notification for port \(notification.port): \(error)")
+          .info("failed to handle bridge notification on \(notification.port): \(error)")
       }
     }
   }
@@ -273,7 +294,7 @@ public actor Controller<P: Port>: Service {
 
   func deregister(application: some Application<P>) throws {
     guard _applications[application.etherType] == nil
-    else { throw MRPError.applicationNotFound }
+    else { throw MRPError.unknownApplication }
     _applications.removeValue(forKey: application.etherType)
     try? bridge.deregister(
       groupAddress: application.groupAddress,
@@ -287,6 +308,8 @@ public actor Controller<P: Port>: Service {
     with context: MAPContext<P>
   ) async throws {
     for application in _applications.values {
+      logger
+        .trace("added MAP context \(contextIdentifier):\(context) for application \(application)")
       try await application.didAdd(contextIdentifier: contextIdentifier, with: context)
     }
   }
@@ -296,6 +319,8 @@ public actor Controller<P: Port>: Service {
     with context: MAPContext<P>
   ) throws {
     for application in _applications.values {
+      logger
+        .trace("added MAP context  \(contextIdentifier):\(context) for application \(application)")
       try application.didUpdate(contextIdentifier: contextIdentifier, with: context)
     }
   }
@@ -305,11 +330,16 @@ public actor Controller<P: Port>: Service {
     with context: MAPContext<P>
   ) throws {
     for application in _applications.values {
+      logger
+        .trace(
+          "removed MAP context  \(contextIdentifier):\(context) for application \(application)"
+        )
       try application.didRemove(contextIdentifier: contextIdentifier, with: context)
     }
   }
 
   private func _startTx(port: P) {
+    logger.debug("controller starting TX on port \(port)")
     var periodicTimer = _periodicTimers[port.id]
     if periodicTimer == nil {
       periodicTimer = Timer {
@@ -322,6 +352,7 @@ public actor Controller<P: Port>: Service {
   }
 
   private func _stopTx(port: P) {
+    logger.debug("controller stopping TX on port \(port)")
     _periodicTimers[port.id]?.stop()
   }
 }

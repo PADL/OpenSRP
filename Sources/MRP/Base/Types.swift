@@ -46,11 +46,11 @@ struct OperationalStatistics {
 
 public typealias EUI48 = (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8)
 
-// used by MSRP (not forwarded by bridges)
-@_spi(SwiftMRPPrivate)
-public let CustomerBridgeMVRPGroupAddress: EUI48 = (0x01, 0x80, 0xC2, 0x00, 0x00, 0x21)
-
 // used by MVRP and MMRP (forwarded by bridges that do not support application protocol)
+@_spi(SwiftMRPPrivate)
+public let CustomerBridgeMRPGroupAddress: EUI48 = (0x01, 0x80, 0xC2, 0x00, 0x00, 0x21)
+
+// used by MSRP (not forwarded by bridges)
 @_spi(SwiftMRPPrivate)
 public let IndividualLANScopeGroupAddress: EUI48 = (0x01, 0x80, 0xC2, 0x00, 0x00, 0x0E)
 
@@ -77,19 +77,19 @@ func _hashMacAddress(_ macAddress: EUI48, into hasher: inout Hasher) {
   macAddress.5.hash(into: &hasher)
 }
 
-struct MAPContextIdentifier: Identifiable, Sendable, Hashable, Equatable,
+public struct MAPContextIdentifier: Identifiable, Sendable, Hashable, Equatable,
   ExpressibleByIntegerLiteral
 {
-  typealias ID = UInt16
-  typealias IntegerLiteralType = ID
+  public typealias ID = UInt16
+  public typealias IntegerLiteralType = ID
 
-  let id: UInt16
+  public let id: UInt16
 
   init(id: UInt16) {
     self.id = id
   }
 
-  init(integerLiteral value: ID) {
+  public init(integerLiteral value: ID) {
     self.init(id: value)
   }
 
@@ -118,7 +118,7 @@ struct MAPContextIdentifier: Identifiable, Sendable, Hashable, Equatable,
   }
 }
 
-typealias MAPContext<P: Port> = Set<P>
+public typealias MAPContext<P: Port> = Set<P>
 
 let MAPBaseSpanningTreeContext = MAPContextIdentifier(0)
 
@@ -139,15 +139,15 @@ struct MRPFlag: OptionSet, Sendable {
 // by the FirstValue and NumberOfValues includes the attribute value associated
 // with the state machine.
 
-protocol Value: SerDes, Equatable {
+public protocol Value: SerDes, Equatable {
   var index: Int { get }
 
-  init(firstValue: Self?, index: Int)
+  init(firstValue: Self?, index: Int) throws
 }
 
 extension Value {
-  init(index: Int) {
-    self.init(firstValue: nil, index: index)
+  init(index: Int) throws {
+    try self.init(firstValue: nil, index: index)
   }
 }
 
@@ -201,7 +201,7 @@ extension Value {
     }
   }
 
-  func makeValue(relativeTo index: Int) -> Self {
-    Self(index: index)
+  func makeValue(relativeTo index: Int) throws -> Self {
+    try Self(index: index)
   }
 }

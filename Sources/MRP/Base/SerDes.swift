@@ -14,7 +14,7 @@
 // limitations under the License.
 //
 
-protocol Serializable: Sendable {
+public protocol Serializable: Sendable {
   func serialize(into: inout SerializationContext) throws
 }
 
@@ -26,13 +26,13 @@ extension Serializable {
   }
 }
 
-protocol Deserializble: Sendable {
+public protocol Deserializble: Sendable {
   init(deserializationContext: inout DeserializationContext) throws
 }
 
-protocol SerDes: Serializable, Deserializble {}
+public protocol SerDes: Serializable, Deserializble {}
 
-struct SerializationContext {
+public struct SerializationContext {
   private(set) var bytes = [UInt8]()
 
   mutating func reserveCapacity(_ capacity: Int) {
@@ -72,7 +72,7 @@ struct SerializationContext {
   var position: Int { bytes.count }
 }
 
-struct DeserializationContext {
+public struct DeserializationContext {
   private let bytes: [UInt8]
   private(set) var position: Int
 

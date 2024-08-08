@@ -66,11 +66,11 @@ public struct IEEE802Packet: Sendable, SerDes, CustomStringConvertible {
       self.tci = tci
     }
 
-    func serialize(into serializationContext: inout SerializationContext) throws {
+    public func serialize(into serializationContext: inout SerializationContext) throws {
       serializationContext.serialize(uint16: tci)
     }
 
-    init(deserializationContext: inout DeserializationContext) throws {
+    public init(deserializationContext: inout DeserializationContext) throws {
       tci = try deserializationContext.deserialize()
     }
   }
@@ -123,7 +123,7 @@ public struct IEEE802Packet: Sendable, SerDes, CustomStringConvertible {
     try self.init(deserializationContext: &deserializationContext)
   }
 
-  init(
+  public init(
     deserializationContext: inout DeserializationContext
   ) throws {
     destMacAddress = try deserializationContext.deserialize()
@@ -139,7 +139,7 @@ public struct IEEE802Packet: Sendable, SerDes, CustomStringConvertible {
     payload = Array(deserializationContext.deserializeRemaining())
   }
 
-  func serialize(into serializationContext: inout SerializationContext) throws {
+  public func serialize(into serializationContext: inout SerializationContext) throws {
     serializationContext.reserveCapacity(2 * Int(6) + 6 + 2 + payload.count)
     serializationContext.serialize(eui48: destMacAddress)
     serializationContext.serialize(eui48: sourceMacAddress)

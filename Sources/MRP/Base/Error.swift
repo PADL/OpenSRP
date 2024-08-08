@@ -16,18 +16,19 @@
 
 enum MRPError: Error {
   case applicationAlreadyRegistered
-  case applicationNotFound
   case attributeAlreadyRegistered
-  case attributeNotFound
   case badVectorAttribute
   case badProtocolVersion
   case badPduLength
+  case invalidAttributeValue
   case invalidBridgeIdentity
-  case invalidEnumerationCase
   case invalidContextIdentifier
+  case invalidLeaveAllEvent
   case invalidParticipantIdentifier
   case internalError
   case participantNotFound
   case portAlreadyExists
   case portNotFound
+  case unknownApplication
+  case unknownAttributeType
 }

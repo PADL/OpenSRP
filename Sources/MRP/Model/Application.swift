@@ -16,13 +16,13 @@
 
 import Logging
 
-enum AdministrativeControl {
+public enum AdministrativeControl {
   case normalParticipant // the state machine participates normally in MRP exchanges
   case newOnlyParticipant // the state machine sends only New MRP messages
   case nonParticipant // the state machine does not send any MRP messages
 }
 
-protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
+public protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
   associatedtype P: Port
 
   typealias ApplyFunction<T> = (Participant<Self>) throws -> T
@@ -81,7 +81,7 @@ protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
   ) async throws
 }
 
-extension Application {
+public extension Application {
   func hash(into hasher: inout Hasher) {
     etherType.hash(into: &hasher)
   }
@@ -89,13 +89,13 @@ extension Application {
   static func == (lhs: Self, rhs: Self) -> Bool {
     lhs.etherType == rhs.etherType
   }
-
-  var logger: Logger? {
-    mad?.logger
-  }
 }
 
 extension Application {
+  var logger: Logger? {
+    mad?.logger
+  }
+
   typealias ParticipantSpecificApplyFunction<T> = (Participant<Self>) -> (T) throws -> ()
   typealias AsyncParticipantSpecificApplyFunction<T> = (Participant<Self>) -> (T) async throws -> ()
 
