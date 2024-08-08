@@ -178,14 +178,20 @@ extension BaseApplication {
     isNew: Bool,
     flags: ParticipantEventFlags
   ) async throws {
-    try await _delegate?.onJoinIndication(
-      contextIdentifier: contextIdentifier,
-      port: port,
-      attributeType: attributeType,
-      attributeValue: attributeValue,
-      isNew: isNew,
-      flags: flags
-    )
+    do {
+      try await _delegate?.onJoinIndication(
+        contextIdentifier: contextIdentifier,
+        port: port,
+        attributeType: attributeType,
+        attributeValue: attributeValue,
+        isNew: isNew,
+        flags: flags
+      )
+    } catch MRPError.doNotPropagateAttribute {
+      return
+    } catch {
+      throw error
+    }
     try await apply(for: contextIdentifier) { participant in
       guard participant.port != port else { return }
       try await participant.join(
@@ -203,13 +209,19 @@ extension BaseApplication {
     attributeValue: some Value,
     flags: ParticipantEventFlags
   ) async throws {
-    try await _delegate?.onLeaveIndication(
-      contextIdentifier: contextIdentifier,
-      port: port,
-      attributeType: attributeType,
-      attributeValue: attributeValue,
-      flags: flags
-    )
+    do {
+      try await _delegate?.onLeaveIndication(
+        contextIdentifier: contextIdentifier,
+        port: port,
+        attributeType: attributeType,
+        attributeValue: attributeValue,
+        flags: flags
+      )
+    } catch MRPError.doNotPropagateAttribute {
+      return
+    } catch {
+      throw error
+    }
     try await apply(for: contextIdentifier) { participant in
       guard participant.port != port else { return }
       try await participant.leave(

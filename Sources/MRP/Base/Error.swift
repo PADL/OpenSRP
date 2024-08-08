@@ -20,6 +20,7 @@ enum MRPError: Error {
   case badVectorAttribute
   case badProtocolVersion
   case badPduLength
+  case doNotPropagateAttribute
   case invalidAttributeValue
   case invalidBridgeIdentity
   case invalidContextIdentifier
