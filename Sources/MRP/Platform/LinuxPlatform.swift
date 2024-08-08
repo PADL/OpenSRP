@@ -28,7 +28,7 @@ import NetLink
 import SocketAddress
 import SystemPackage
 
-private func _makeLinkLocalAddress(
+private func _makeLinkLayerAddress(
   family: sa_family_t = sa_family_t(AF_PACKET),
   macAddress: EUI48? = nil,
   etherType: UInt16 = UInt16(ETH_P_ALL),
@@ -52,14 +52,14 @@ private func _makeLinkLocalAddress(
   return sll
 }
 
-private func _makeLinkLocalAddressBytes(
+private func _makeLinkLayerAddressBytes(
   family: sa_family_t = sa_family_t(AF_PACKET),
   macAddress: EUI48? = nil,
   etherType: UInt16 = UInt16(ETH_P_ALL),
   packetType: UInt8 = UInt8(PACKET_HOST),
   index: Int? = nil
 ) -> [UInt8] {
-  var sll = _makeLinkLocalAddress(
+  var sll = _makeLinkLayerAddress(
     family: family,
     macAddress: macAddress,
     etherType: etherType,
@@ -83,36 +83,6 @@ public struct LinuxPort: Port, Sendable {
   init(rtnl: RTNLLink, bridge: LinuxBridge) throws {
     _rtnl = rtnl
     _bridge = bridge
-  }
-
-  func rxPackets(
-    groupAddress: EUI48,
-    etherType: UInt16
-  ) async throws -> AnyAsyncSequence<IEEE802Packet> {
-    guard _isLinkLocal(macAddress: groupAddress)
-    else { throw Errno.invalidArgument } // must be multicast address
-    let socket = try Socket(
-      ring: IORing.shared,
-      domain: sa_family_t(AF_PACKET),
-      type: SOCK_RAW,
-      protocol: CInt(etherType.bigEndian)
-    )
-    try socket.bind(to: _makeLinkLocalAddress(
-      macAddress: macAddress,
-      etherType: etherType,
-      packetType: UInt8(PACKET_MULTICAST),
-      index: id
-    ))
-    try socket.addMulticastMembership(for: _makeLinkLocalAddress(
-      macAddress: groupAddress,
-      index: id
-    ))
-
-    // TODO: caller needs to handle EINTR, make sure it does
-    return try await socket.receiveMessages(count: _rtnl.mtu).compactMap { message in
-      var deserializationContext = DeserializationContext(message.buffer)
-      return try? IEEE802Packet(deserializationContext: &deserializationContext)
-    }.eraseToAnyAsyncSequence()
   }
 
   public func hash(into hasher: inout Hasher) {
@@ -208,6 +178,9 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
   private let _bridgePort = ManagedCriticalState<Port?>(nil)
   private var _task: Task<(), Error>!
   private let _portNotificationChannel = AsyncChannel<PortNotification<Port>>()
+  private let _rxPacketsChannel = AsyncThrowingChannel<(Port.ID, IEEE802Packet), Error>()
+  private let _linkLocalRegistrations = ManagedCriticalState<Set<FilterRegistration>>([])
+  private let _linkLocalRxTasks = ManagedCriticalState<[LinkLocalRXTaskKey: Task<(), Error>]>([:])
 
   public init(name: String, netFilterGroup group: Int) async throws {
     _txSocket = try Socket(ring: IORing.shared, domain: sa_family_t(AF_PACKET), type: SOCK_RAW)
@@ -223,7 +196,7 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
     _task = Task<(), Error> { [self] in
       for try await notification in _nlLinkSocket.notifications {
         do {
-          try await _handleNotification(notification as! RTNLLinkMessage)
+          try await _handleLinkNotification(notification as! RTNLLinkMessage)
         } catch Errno.noSuchAddressOrDevice {
           throw Errno.noSuchAddressOrDevice
         } catch {}
@@ -231,8 +204,8 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
     }
   }
 
-  private func _handleNotification(_ linkMessage: RTNLLinkMessage) async throws {
-    var portNotification: PortNotification<Port>!
+  private func _handleLinkNotification(_ linkMessage: RTNLLinkMessage) async throws {
+    var portNotification: PortNotification<Port>?
     try _bridgePort.withCriticalRegion { bridgePort in
       let bridgeIndex = bridgePort!._rtnl.index
       let port = try Port(rtnl: linkMessage.link, bridge: self)
@@ -240,17 +213,24 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
         if case .new = linkMessage {
           bridgePort = port
         } else {
+          debugPrint("LinuxBridge: bridge device itself removed")
           throw Errno.noSuchAddressOrDevice
         }
       } else if port._rtnl.master == bridgeIndex {
         if case .new = linkMessage {
           portNotification = .added(port)
+          try _addLinkLocalRxTask(port: port)
         } else {
+          try _cancelLinkLocalRxTask(port: port)
           portNotification = .removed(port)
         }
+      } else {
+        debugPrint("LinuxBridge: ignoring port \(port), not a member or us")
       }
     }
-    await _portNotificationChannel.send(portNotification)
+    if let portNotification {
+      await _portNotificationChannel.send(portNotification)
+    }
   }
 
   public var defaultPVid: UInt16? {
@@ -285,9 +265,67 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
     _bridgePort.criticalState!
   }
 
-  public func register(groupAddress: EUI48, etherType: UInt16) throws {}
+  private struct LinkLocalRXTaskKey: Hashable {
+    let portID: Port.ID
+    let filterRegistration: FilterRegistration
+  }
 
-  public func deregister(groupAddress: EUI48, etherType: UInt16) throws {}
+  private func _allocateLinkLocalRxTask(
+    port: Port,
+    filterRegistration: FilterRegistration
+  ) -> Task<(), Error> {
+    Task {
+      for try await packet in try await filterRegistration._rxPackets(port: port) {
+        await _rxPacketsChannel.send((port.id, packet))
+      }
+    }
+  }
+
+  private func _addLinkLocalRxTask(port: Port) throws {
+    let filterRegistrations = _linkLocalRegistrations.criticalState
+    _linkLocalRxTasks.withCriticalRegion { linkLocalRxTasks in
+      for filterRegistration in filterRegistrations {
+        let key = LinkLocalRXTaskKey(portID: port.id, filterRegistration: filterRegistration)
+        linkLocalRxTasks[key] = _allocateLinkLocalRxTask(
+          port: port,
+          filterRegistration: filterRegistration
+        )
+        debugPrint(
+          "LinuxBridge: started link-local RX task for \(port) filter registration \(filterRegistration)"
+        )
+      }
+    }
+  }
+
+  private func _cancelLinkLocalRxTask(port: Port) throws {
+    let filterRegistrations = _linkLocalRegistrations.criticalState
+    _linkLocalRxTasks.withCriticalRegion { linkLocalRxTasks in
+      for filterRegistration in filterRegistrations {
+        let key = LinkLocalRXTaskKey(portID: port.id, filterRegistration: filterRegistration)
+        guard let index = linkLocalRxTasks.index(forKey: key) else { continue }
+        let task = linkLocalRxTasks[index].value
+        linkLocalRxTasks.remove(at: index)
+        task.cancel()
+        debugPrint(
+          "LinuxBridge: removed link-local RX task for \(port) filter registration \(filterRegistration)"
+        )
+      }
+    }
+  }
+
+  public func register(groupAddress: EUI48, etherType: UInt16) throws {
+    guard _isLinkLocal(macAddress: groupAddress) else { return }
+    _linkLocalRegistrations.withCriticalRegion {
+      $0.insert(FilterRegistration(groupAddress: groupAddress, etherType: etherType))
+    }
+  }
+
+  public func deregister(groupAddress: EUI48, etherType: UInt16) throws {
+    guard _isLinkLocal(macAddress: groupAddress) else { return }
+    _linkLocalRegistrations.withCriticalRegion {
+      $0.remove(FilterRegistration(groupAddress: groupAddress, etherType: etherType))
+    }
+  }
 
   public func getPorts() async throws -> Set<Port> {
     let bridgeIndex = _bridgeIndex
@@ -324,7 +362,7 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
     var serializationContext = SerializationContext()
     let packetType = packet.destMacAddress
       .0 & 0x1 != 0 ? UInt8(PACKET_MULTICAST) : UInt8(PACKET_HOST)
-    let address = _makeLinkLocalAddressBytes(
+    let address = _makeLinkLayerAddressBytes(
       macAddress: packet.destMacAddress,
       packetType: packetType,
       index: portID
@@ -334,30 +372,67 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
   }
 
   public var rxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)> {
+    _rxPacketsChannel.eraseToAnyAsyncSequence()
+  }
+
+  private var _nfLogRxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)> {
     get throws {
       _nlNfLog.logMessages.compactMap { logMessage in
-        let contextIdentifier: MAPContextIdentifier = if let vlanID = logMessage.vlanID {
-          MAPContextIdentifier(id: vlanID)
-        } else {
-          MAPBaseSpanningTreeContext
-        }
-        guard let destMacAddress = logMessage.macAddress,
-              let etherType = logMessage.hwProtocol,
-              let payload = logMessage.payload
-        else {
+        guard let hwHeader = logMessage.hwHeader, let payload = logMessage.payload else {
           return nil
         }
-        let packet = IEEE802Packet(
-          destMacAddress: destMacAddress,
-          contextIdentifier: contextIdentifier,
-          sourceMacAddress: (0, 0, 0, 0, 0, 0), // FIXME: where do we get this
-          etherType: etherType,
-          payload: payload
-        )
+        let packet = try IEEE802Packet(hwHeader: hwHeader, payload: payload)
         return (logMessage.physicalInputDevice, packet)
       }.eraseToAnyAsyncSequence()
     }
   }
+}
+
+fileprivate final class FilterRegistration: Equatable, Hashable, Sendable {
+  static func == (_ lhs: FilterRegistration, _ rhs: FilterRegistration) -> Bool {
+    _isEqualMacAddress(lhs._groupAddress, rhs._groupAddress) && lhs._etherType == rhs._etherType
+  }
+
+  let _groupAddress: EUI48
+  let _etherType: UInt16
+
+  init(groupAddress: EUI48, etherType: UInt16) {
+    _groupAddress = groupAddress
+    _etherType = etherType
+  }
+
+  func hash(into hasher: inout Hasher) {
+    _hashMacAddress(_groupAddress, into: &hasher)
+    _etherType.hash(into: &hasher)
+  }
+
+  func _rxPackets(port: LinuxPort) async throws -> AnyAsyncSequence<IEEE802Packet> {
+    precondition(_isLinkLocal(macAddress: _groupAddress))
+    let socket = try Socket(
+      ring: IORing.shared,
+      domain: sa_family_t(AF_PACKET),
+      type: SOCK_RAW,
+      protocol: CInt(_etherType.bigEndian)
+    )
+    try socket.bind(to: _makeLinkLayerAddress(
+      macAddress: port.macAddress,
+      etherType: _etherType,
+      packetType: UInt8(PACKET_MULTICAST),
+      index: port.id
+    ))
+    try socket.addMulticastMembership(for: _makeLinkLayerAddress(
+      macAddress: _groupAddress,
+      index: port.id
+    ))
+
+    // TODO: caller needs to handle EINTR, make sure it does
+    return try await socket.receiveMessages(count: port._rtnl.mtu).compactMap { message in
+      var deserializationContext = DeserializationContext(message.buffer)
+      return try? IEEE802Packet(deserializationContext: &deserializationContext)
+    }.eraseToAnyAsyncSequence()
+  }
+
+  deinit {}
 }
 
 #endif

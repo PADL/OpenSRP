@@ -116,6 +116,14 @@ public struct IEEE802Packet: Sendable, SerDes, CustomStringConvertible {
   }
 
   init(
+    hwHeader: [UInt8],
+    payload: [UInt8]
+  ) throws {
+    var deserializationContext = DeserializationContext(hwHeader + payload)
+    try self.init(deserializationContext: &deserializationContext)
+  }
+
+  init(
     deserializationContext: inout DeserializationContext
   ) throws {
     destMacAddress = try deserializationContext.deserialize()

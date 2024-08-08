@@ -107,6 +107,15 @@ public struct NFNLLogMessage: NLObjectConstructible, Sendable {
     return (hwAddress[0], hwAddress[1], hwAddress[2], hwAddress[3], hwAddress[4], hwAddress[5])
   }
 
+  public var hwHeader: [UInt8]? {
+    var length: CInt = 0
+    guard nfnl_log_msg_test_hwheader(_obj) != 0,
+          let hwHeader = nfnl_log_msg_get_hwheader(_obj, &length) else { return nil }
+    return hwHeader.withMemoryRebound(to: UInt8.self, capacity: Int(length)) { hwHeader in
+      Array(UnsafeBufferPointer(start: hwHeader, count: Int(length)))
+    }
+  }
+
   public var payload: [UInt8]? {
     var length: CInt = 0
     guard let payload = nfnl_log_msg_get_payload(_obj, &length) else { return nil }
@@ -125,7 +134,7 @@ public final class NFNLLog: Sendable {
   private let _socket: NLSocket
   private let _log: NLObject
 
-  public init(family: sa_family_t = sa_family_t(AF_PACKET), group: UInt16) throws {
+  public init(family: sa_family_t = sa_family_t(AF_BRIDGE), group: UInt16) throws {
     _socket = try NLSocket(protocol: NETLINK_NETFILTER)
     _log = NLObject(consumingObj: nfnl_log_alloc())
     try throwingErrno {

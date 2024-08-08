@@ -29,7 +29,7 @@ protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
   typealias AsyncApplyFunction<T> = (Participant<Self>) async throws -> T
 
   var validAttributeTypes: ClosedRange<AttributeType> { get }
-  var groupMacAddress: EUI48 { get }
+  var groupAddress: EUI48 { get }
   var etherType: UInt16 { get }
   var protocolVersion: ProtocolVersion { get }
 

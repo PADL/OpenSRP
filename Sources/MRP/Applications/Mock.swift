@@ -47,7 +47,7 @@ final class MockApplication<P: Port>: BaseApplication, BaseApplicationDelegate,
   }
 
   var validAttributeTypes: ClosedRange<AttributeType> { 0...0 }
-  var groupMacAddress: EUI48 { EUI48(0, 0, 0, 0, 0, 0) }
+  var groupAddress: EUI48 { EUI48(0, 0, 0, 0, 0, 0) }
   var etherType: UInt16 { 0xFFFF }
   var protocolVersion: ProtocolVersion { 1 }
 

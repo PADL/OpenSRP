@@ -17,8 +17,8 @@
 @_spi(SwiftMRPPrivate)
 import MRP
 
-let groupAddress: EUI48 = (0x01, 0x80, 0xC2, 0x00, 0x00, 0x21)
-let etherType: UInt16 = 0x88F5
+let groupAddress: EUI48 = IndividualLANScopeGroupAddress
+let etherType: UInt16 = 0x88F5 // MVRP
 
 @main
 actor PortMonitor {
@@ -49,8 +49,13 @@ actor PortMonitor {
     let bridge = try await B(
       name: CommandLine.arguments.count > 1 ? CommandLine
         .arguments[1] : "br0",
-      netFilterGroup: 3
+      netFilterGroup: 10
     )
+
+    // now we need to register to ensure RX task is created
+    // we can do this for every application we wish to monitor
+    try bridge.register(groupAddress: groupAddress, etherType: etherType)
+
     ports = try await bridge.getPorts()
     print("Ports at startup on bridge \(bridge.name):")
     for port in ports {
@@ -59,36 +64,19 @@ actor PortMonitor {
 
     try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { @Sendable in
-        print("Now monitoring for changes...")
+        print("Monitoring for bridge notifications...")
         for try await notification in bridge.notifications {
           await self.handle(notification: notification)
         }
       }
       group.addTask { @Sendable in
-        print("Now monitoring bridge for packets...")
+        print("Monitoring bridge RX packets...")
         do {
-          for try await (index, packet) in try bridge.rxPackets {
+          for try await (index, packet) in bridge.rxPackets {
             print("@\(index) received packet \(packet)\n\(packet.payload.hexEncodedString())")
           }
         } catch {
           print("bridge failed to RX packet: \(error)")
-        }
-      }
-      for port in try await bridge.getPorts() + [bridge.bridgePort] {
-        group.addTask { @Sendable in
-          print(
-            "Now monitoring port \(port) for packets mac \(groupAddress) etherType \(etherType)..."
-          )
-          do {
-            for try await packet in try await port.rxPackets(
-              groupAddress: groupAddress,
-              etherType: etherType
-            ) {
-              print("\(port) received packet \(packet)\n\(packet.payload.hexEncodedString())")
-            }
-          } catch {
-            print("port failed to RX packet on \(port): \(error)")
-          }
         }
       }
       for try await _ in group {}

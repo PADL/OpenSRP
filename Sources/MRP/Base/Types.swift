@@ -47,14 +47,34 @@ struct OperationalStatistics {
 public typealias EUI48 = (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8)
 
 // used by MSRP (not forwarded by bridges)
-let CustomerBridgeMVRPGroupAddress: EUI48 = (0x01, 0x80, 0xC2, 0x00, 0x00, 0x0E)
+@_spi(SwiftMRPPrivate)
+public let CustomerBridgeMVRPGroupAddress: EUI48 = (0x01, 0x80, 0xC2, 0x00, 0x00, 0x0E)
 
 // used by MVRP and MMRP (forwarded by bridges that do not support application protocol)
-let IndividualLANScopeGroupAddress: EUI48 = (0x01, 0x80, 0xC2, 0x00, 0x00, 0x21)
+@_spi(SwiftMRPPrivate)
+public let IndividualLANScopeGroupAddress: EUI48 = (0x01, 0x80, 0xC2, 0x00, 0x00, 0x21)
 
 func _isLinkLocal(macAddress: EUI48) -> Bool {
   macAddress.0 == 0x01 && macAddress.1 == 0x80 && macAddress.2 == 0xC2 && macAddress
     .3 == 0x00 && macAddress.4 == 0x00 && macAddress.5 & 0xF0 == 0
+}
+
+func _isEqualMacAddress(_ lhs: EUI48, _ rhs: EUI48) -> Bool {
+  lhs.0 == rhs.0 &&
+    lhs.1 == rhs.1 &&
+    lhs.2 == rhs.2 &&
+    lhs.3 == rhs.3 &&
+    lhs.4 == rhs.4 &&
+    lhs.5 == rhs.5
+}
+
+func _hashMacAddress(_ macAddress: EUI48, into hasher: inout Hasher) {
+  macAddress.0.hash(into: &hasher)
+  macAddress.1.hash(into: &hasher)
+  macAddress.2.hash(into: &hasher)
+  macAddress.3.hash(into: &hasher)
+  macAddress.4.hash(into: &hasher)
+  macAddress.5.hash(into: &hasher)
 }
 
 struct MAPContextIdentifier: Identifiable, Sendable, Hashable, Equatable,

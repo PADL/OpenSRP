@@ -260,7 +260,7 @@ actor Controller<P: Port> {
   func register(application: some Application<P>) throws {
     guard _applications[application.etherType] == nil
     else { throw MRPError.applicationAlreadyRegistered }
-    try bridge.register(groupAddress: application.groupMacAddress, etherType: application.etherType)
+    try bridge.register(groupAddress: application.groupAddress, etherType: application.etherType)
     _applications[application.etherType] = application
     logger.info("registered application \(application)")
   }
@@ -270,7 +270,7 @@ actor Controller<P: Port> {
     else { throw MRPError.applicationNotFound }
     _applications.removeValue(forKey: application.etherType)
     try? bridge.deregister(
-      groupAddress: application.groupMacAddress,
+      groupAddress: application.groupAddress,
       etherType: application.etherType
     )
     logger.info("deregistered application \(application)")

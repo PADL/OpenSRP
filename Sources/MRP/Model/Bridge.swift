@@ -59,7 +59,7 @@ extension Bridge {
     on port: P
   ) async throws {
     let packet = try IEEE802Packet(
-      destMacAddress: application.groupMacAddress,
+      destMacAddress: application.groupAddress,
       contextIdentifier: contextIdentifier,
       sourceMacAddress: port.macAddress,
       etherType: application.etherType,
