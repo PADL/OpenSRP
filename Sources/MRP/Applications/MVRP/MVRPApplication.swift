@@ -50,7 +50,7 @@ public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     ManagedCriticalState<[MAPContextIdentifier: Set<Participant<MVRPApplication<P>>>]>([:])
   let _logger: Logger
 
-  init(owner: Controller<P>) async throws {
+  public init(owner: Controller<P>) async throws {
     _mad = Weak(owner)
     _logger = owner.logger
     try await owner.register(application: self)
