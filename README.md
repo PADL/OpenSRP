@@ -1,6 +1,6 @@
 # SwiftMRP
 
-A Swift implementation of MMRP, MVRP and MSRP. It is a work in progress.
+A Swift implementation of MMRP, MVRP and MSRP. It is a work in progress, which is to say, it does not work yet.
 
 ## Architecture
 
@@ -9,3 +9,4 @@ A Swift implementation of MMRP, MVRP and MSRP. It is a work in progress.
 * MRP: abstract state machine, platform abstraction layer
 * MRPDaemon: MRP daemon
 
+The use of `nflog` to capture and drop MVRP packets is inspired by Michael Braun's [mvrpd](https://github.com/michael-dev/mvrpd).
