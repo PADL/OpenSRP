@@ -18,12 +18,6 @@ import Algorithms
 
 typealias ProtocolVersion = UInt8
 
-// used by MSRP (not forwarded by bridges)
-let CustomerBridgeMVRPGroupAddress: EUI48 = (0x01, 0x80, 0xC2, 0x00, 0x00, 0x0E)
-
-// used by MVRP and MMRP (forwarded by bridges that do not support application protocol)
-let IndividualLANScopeGroupAddress: EUI48 = (0x01, 0x80, 0xC2, 0x00, 0x00, 0x21)
-
 struct ThreePackedEvents {
   let value: UInt8
 

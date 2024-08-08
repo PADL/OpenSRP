@@ -22,12 +22,16 @@ public protocol Bridge<P>: Sendable, VLANConfiguring {
   var vlans: Set<VLAN> { get }
   var notifications: AnyAsyncSequence<PortNotification<P>> { get }
 
+  func register(groupAddress: EUI48, etherType: UInt16) throws
+  func deregister(groupAddress: EUI48, etherType: UInt16) throws
+
   func getPorts() async throws -> Set<P>
 
-  // packet on a port
-  typealias Packet = (P, IEEE802Packet)
+  // Bridge provies a unified interface for sending and receiving packets, even
+  // though the actual implementation may need separate paths for handling link-
+  // local and non-link-local packets
 
-  func tx(_ packet: IEEE802Packet, on: P) async throws
+  func tx(_ packet: IEEE802Packet, on: P.ID) async throws
   var rxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)> { get throws }
 }
 
@@ -61,6 +65,6 @@ extension Bridge {
       etherType: application.etherType,
       payload: pdu.serialized()
     )
-    try await tx(packet, on: port)
+    try await tx(packet, on: port.id)
   }
 }

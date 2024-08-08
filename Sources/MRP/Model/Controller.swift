@@ -152,8 +152,6 @@ actor Controller<P: Port> {
   private func _didAdd(port: P) async throws {
     logger.debug("added port \(port)")
 
-    for application in _applications {}
-
     _startTx(port: port)
 
     try await _applyContextIdentifierChanges(beforeAddingOrUpdating: port)
@@ -162,8 +160,6 @@ actor Controller<P: Port> {
 
   private func _didRemove(port: P) throws {
     logger.debug("removed port \(port)")
-
-    for application in _applications {}
 
     _stopTx(port: port)
 
@@ -264,6 +260,7 @@ actor Controller<P: Port> {
   func register(application: some Application<P>) throws {
     guard _applications[application.etherType] == nil
     else { throw MRPError.applicationAlreadyRegistered }
+    try bridge.register(groupAddress: application.groupMacAddress, etherType: application.etherType)
     _applications[application.etherType] = application
     logger.info("registered application \(application)")
   }
@@ -272,6 +269,10 @@ actor Controller<P: Port> {
     guard _applications[application.etherType] == nil
     else { throw MRPError.applicationNotFound }
     _applications.removeValue(forKey: application.etherType)
+    try? bridge.deregister(
+      groupAddress: application.groupMacAddress,
+      etherType: application.etherType
+    )
     logger.info("deregistered application \(application)")
   }
 

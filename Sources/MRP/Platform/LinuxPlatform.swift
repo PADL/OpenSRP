@@ -85,11 +85,11 @@ public struct LinuxPort: Port, Sendable {
     _bridge = bridge
   }
 
-  public func rxPackets(
+  func rxPackets(
     groupAddress: EUI48,
     etherType: UInt16
   ) async throws -> AnyAsyncSequence<IEEE802Packet> {
-    guard groupAddress.0 & 0x1 != 0
+    guard _isLinkLocal(macAddress: groupAddress)
     else { throw Errno.invalidArgument } // must be multicast address
     let socket = try Socket(
       ring: IORing.shared,
@@ -285,6 +285,10 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
     _bridgePort.criticalState!
   }
 
+  public func register(groupAddress: EUI48, etherType: UInt16) throws {}
+
+  public func deregister(groupAddress: EUI48, etherType: UInt16) throws {}
+
   public func getPorts() async throws -> Set<Port> {
     let bridgeIndex = _bridgeIndex
     return try await _getPorts().filter {
@@ -316,14 +320,14 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
     }
   }
 
-  public func tx(_ packet: IEEE802Packet, on port: P) async throws {
+  public func tx(_ packet: IEEE802Packet, on portID: P.ID) async throws {
     var serializationContext = SerializationContext()
     let packetType = packet.destMacAddress
       .0 & 0x1 != 0 ? UInt8(PACKET_MULTICAST) : UInt8(PACKET_HOST)
     let address = _makeLinkLocalAddressBytes(
       macAddress: packet.destMacAddress,
       packetType: packetType,
-      index: port.id
+      index: portID
     )
     try packet.serialize(into: &serializationContext)
     try await _txSocket.sendMessage(.init(name: address, buffer: serializationContext.bytes))
