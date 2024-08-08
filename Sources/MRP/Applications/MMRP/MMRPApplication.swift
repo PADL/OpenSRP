@@ -59,10 +59,10 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     ManagedCriticalState<[MAPContextIdentifier: Set<Participant<MMRPApplication<P>>>]>([:])
   let _logger: Logger
 
-  public init(owner: MAD<P>) async throws {
-    _mad = Weak(owner)
-    _logger = owner.logger
-    try await owner.register(application: self)
+  public init(mad: MAD<P>) async throws {
+    _mad = Weak(mad)
+    _logger = mad.logger
+    try await mad.register(application: self)
   }
 
   public func deserialize(

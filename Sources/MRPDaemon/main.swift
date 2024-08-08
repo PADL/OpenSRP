@@ -83,10 +83,10 @@ private final class MRPDaemon: AsyncParsableCommand {
     let bridge = try await B(name: bridgeInterface, netFilterGroup: nfGroup)
     let mad = try await MAD<P>(bridge: bridge, logger: logger, portExclusions: Set(excludeIface))
     if enableMMRP {
-      _ = try await MMRPApplication(owner: mad)
+      _ = try await MMRPApplication(mad: mad)
     }
     if enableMVRP {
-      _ = try await MVRPApplication(owner: mad)
+      _ = try await MVRPApplication(mad: mad)
     }
     if enableMSRP {}
 
