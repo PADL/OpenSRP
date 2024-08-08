@@ -28,13 +28,15 @@ protocol BaseApplicationDelegate<P>: Sendable {
     port: P,
     attributeType: AttributeType,
     attributeValue: some Value,
-    isNew: Bool
+    isNew: Bool,
+    flags: ParticipantEventFlags
   ) async throws
   func onLeaveIndication(
     contextIdentifier: MAPContextIdentifier,
     port: P,
     attributeType: AttributeType,
-    attributeValue: some Value
+    attributeValue: some Value,
+    flags: ParticipantEventFlags
   ) async throws
 }
 
@@ -173,14 +175,16 @@ extension BaseApplication {
     port: P,
     attributeType: AttributeType,
     attributeValue: some Value,
-    isNew: Bool
+    isNew: Bool,
+    flags: ParticipantEventFlags
   ) async throws {
     try await _delegate?.onJoinIndication(
       contextIdentifier: contextIdentifier,
       port: port,
       attributeType: attributeType,
       attributeValue: attributeValue,
-      isNew: isNew
+      isNew: isNew,
+      flags: flags
     )
     try await apply(for: contextIdentifier) { participant in
       guard participant.port != port else { return }
@@ -196,13 +200,15 @@ extension BaseApplication {
     contextIdentifier: MAPContextIdentifier,
     port: P,
     attributeType: AttributeType,
-    attributeValue: some Value
+    attributeValue: some Value,
+    flags: ParticipantEventFlags
   ) async throws {
     try await _delegate?.onLeaveIndication(
       contextIdentifier: contextIdentifier,
       port: port,
       attributeType: attributeType,
-      attributeValue: attributeValue
+      attributeValue: attributeValue,
+      flags: flags
     )
     try await apply(for: contextIdentifier) { participant in
       guard participant.port != port else { return }

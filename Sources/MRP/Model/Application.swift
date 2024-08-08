@@ -70,14 +70,16 @@ public protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
     port: P,
     attributeType: AttributeType,
     attributeValue: V,
-    isNew: Bool
+    isNew: Bool,
+    flags: ParticipantEventFlags
   ) async throws
 
   func leaveIndicated<V: Value>(
     contextIdentifier: MAPContextIdentifier,
     port: P,
     attributeType: AttributeType,
-    attributeValue: V
+    attributeValue: V,
+    flags: ParticipantEventFlags
   ) async throws
 }
 
@@ -178,14 +180,24 @@ extension Application {
   func rx(packet: IEEE802Packet, from port: P) async throws {
     var deserializationContext = DeserializationContext(packet.payload)
     let pdu = try MRPDU(deserializationContext: &deserializationContext, application: self)
-    try await rx(pdu: pdu, for: MAPContextIdentifier(packet: packet), from: port)
+    try await rx(
+      pdu: pdu,
+      for: MAPContextIdentifier(packet: packet),
+      from: port,
+      sourceMacAddress: packet.sourceMacAddress
+    )
   }
 
-  func rx(pdu: MRPDU, for contextIdentifier: MAPContextIdentifier, from port: P) async throws {
+  func rx(
+    pdu: MRPDU,
+    for contextIdentifier: MAPContextIdentifier,
+    from port: P,
+    sourceMacAddress: EUI48
+  ) async throws {
     guard pdu.protocolVersion <= protocolVersion else { throw MRPError.badProtocolVersion }
     let participant = try findParticipant(for: contextIdentifier, port: port)
     for message in pdu.messages {
-      try await participant.rx(message: message)
+      try await participant.rx(message: message, sourceMacAddress: sourceMacAddress)
     }
   }
 

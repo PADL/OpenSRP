@@ -44,6 +44,25 @@ enum ParticipantType {
   case applicantOnly
 }
 
+public struct ParticipantEventFlags: OptionSet, Sendable {
+  public typealias RawValue = UInt32
+
+  public let rawValue: RawValue
+
+  public init(rawValue: UInt32) {
+    self.rawValue = rawValue
+  }
+
+  // fired from a timer
+  public static let firedFromTimer = ParticipantEventFlags(rawValue: 1 << 0)
+
+  // source is local MAC address, e.g. from kernel MVRP stack
+  public static let sourceIsLocal = ParticipantEventFlags(rawValue: 1 << 1)
+
+  // locally initiated from mvrpd
+  public static let locallyInitiated = ParticipantEventFlags(rawValue: 1 << 2)
+}
+
 public final actor Participant<A: Application>: Equatable, Hashable {
   public static func == (lhs: Participant<A>, rhs: Participant<A>) -> Bool {
     lhs.application == rhs.application && lhs.port == rhs.port && lhs.contextIdentifier == rhs
@@ -197,16 +216,19 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     // of a vector
     switch _leaveAllState {
     case .Active:
-      try await _handleLeaveAll(event: .tx) // sets LeaveAll to passive and emits sLA action
-      try await _apply(event: .txLA)
+      try await _handleLeaveAll(
+        event: .tx,
+        flags: .firedFromTimer
+      ) // sets LeaveAll to passive and emits sLA action
+      try await _apply(event: .txLA, flags: .firedFromTimer)
     case .Passive:
-      try await _apply(event: .tx)
+      try await _apply(event: .tx, flags: .firedFromTimer)
     }
   }
 
   @Sendable
   private func _onLeaveAllTimerExpired() async throws {
-    try await _handleLeaveAll(event: .leavealltimer)
+    try await _handleLeaveAll(event: .leavealltimer, flags: .firedFromTimer)
   }
 
   private func _makeVector(
@@ -293,7 +315,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
   }
 
   // handle an event in the LeaveAll state machine
-  private func _handleLeaveAll(event: ProtocolEvent) async throws {
+  private func _handleLeaveAll(event: ProtocolEvent, flags: ParticipantEventFlags) async throws {
     let action = _leaveAllState.handle(event: event).first!
 
     switch action {
@@ -308,17 +330,17 @@ public final actor Participant<A: Application>: Equatable, Hashable {
       // a) The LeaveAll state machine associated with that instance of the
       // Applicant or Registrar state machine performs the sLA action
       // (10.7.6.6); or a MRPDU is received with a LeaveAll
-      try await _apply(event: .rLA)
+      try await _apply(event: .rLA, flags: flags)
       try _txEnqueueLeaveAllEvents()
-      try await _handleLeaveAll(event: .rLA)
+    // try await _handleLeaveAll(event: .rLA)
     default:
       fatalError("invalid LeaveAll state")
     }
   }
 
-  private func _apply(event: ProtocolEvent) async throws {
+  private func _apply(event: ProtocolEvent, flags: ParticipantEventFlags) async throws {
     try await _apply { attribute in
-      try await attribute.handle(event: event)
+      try await attribute.handle(event: event, flags: flags)
     }
   }
 
@@ -355,10 +377,11 @@ public final actor Participant<A: Application>: Equatable, Hashable {
 
   fileprivate func _handle(
     attributeEvent: AttributeEvent,
-    with a: _AttributeValueState<A>
+    with a: _AttributeValueState<A>,
+    flags: ParticipantEventFlags
   ) async throws {
     let protocolEvent = attributeEvent.protocolEvent
-    try await a.handle(event: protocolEvent)
+    try await a.handle(event: protocolEvent, flags: flags)
   }
 
   // TODO: use a more efficient representation such as a bitmask
@@ -406,7 +429,11 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     }
   }
 
-  func rx(message: Message) async throws {
+  func rx(message: Message, sourceMacAddress: EUI48) async throws {
+    var flags = ParticipantEventFlags()
+    if _isEqualMacAddress(sourceMacAddress, port.macAddress) {
+      flags.insert(.sourceIsLocal)
+    }
     for vectorAttribute in message.attributeList {
       let packedEvents = try _getAttributeEvents(
         attributeType: message.attributeType,
@@ -423,11 +450,15 @@ public final actor Participant<A: Application>: Equatable, Hashable {
           index: i,
           isNew: packedEvents[i] == .New
         ) else { continue }
-        try await _handle(attributeEvent: packedEvents[i], with: attribute)
+        try await _handle(
+          attributeEvent: packedEvents[i],
+          with: attribute,
+          flags: flags
+        )
       }
 
       if vectorAttribute.leaveAllEvent == .LeaveAll {
-        try await _handleLeaveAll(event: .rLA)
+        try await _handleLeaveAll(event: .rLA, flags: flags)
       }
     }
   }
@@ -470,8 +501,8 @@ public final actor Participant<A: Application>: Equatable, Hashable {
   // generated when the Port Role changes from either Root Port or Alternate
   // Port to Designated Port.
   func flush() async throws {
-    try await _apply(event: .Flush)
-    try await _handleLeaveAll(event: .Flush)
+    try await _apply(event: .Flush, flags: .locallyInitiated)
+    try await _handleLeaveAll(event: .Flush, flags: .locallyInitiated)
   }
 
   // A Re-declare! event signals to the Applicant and Registrar state machines
@@ -484,7 +515,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
   // instance, this event is generated when the Port Role changes from
   // Designated Port to either Root Port or Alternate Port.
   func redeclare() async throws {
-    try await _apply(event: .ReDeclare)
+    try await _apply(event: .ReDeclare, flags: .locallyInitiated)
   }
 
   func join(
@@ -498,7 +529,11 @@ public final actor Participant<A: Application>: Equatable, Hashable {
       index: 0,
       isNew: isNew
     )
-    try await _handle(attributeEvent: isNew ? .New : .JoinMt, with: attribute)
+    try await _handle(
+      attributeEvent: isNew ? .New : .JoinMt,
+      with: attribute,
+      flags: .locallyInitiated
+    )
   }
 
   func leave(
@@ -511,7 +546,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
       index: 0,
       isNew: false
     )
-    try await _handle(attributeEvent: .Lv, with: attribute)
+    try await _handle(attributeEvent: .Lv, with: attribute, flags: .locallyInitiated)
   }
 }
 
@@ -541,7 +576,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
     self.value = AnyValue(value)
     if participant._type != .applicantOnly {
       registrar = Registrar(onLeaveTimerExpired: {
-        try await self.handle(event: .leavetimer)
+        try await self.handle(event: .leavetimer, flags: .firedFromTimer)
       })
     }
   }
@@ -553,7 +588,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
     }
   }
 
-  func handle(event: ProtocolEvent) async throws {
+  func handle(event: ProtocolEvent, flags: ParticipantEventFlags) async throws {
     guard let participant else { throw MRPError.internalError }
     let smFlags = try await participant._getSmFlags(for: attributeType)
     var logString: String!
@@ -568,11 +603,11 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
       participant._logger.trace("\(logString!) -- actions \(applicantActions + registrarActions)")
     }
     for action in applicantActions + registrarActions {
-      try await handle(action: action)
+      try await handle(action: action, flags: flags)
     }
   }
 
-  func handle(action: ProtocolAction) async throws {
+  func handle(action: ProtocolAction, flags: ParticipantEventFlags) async throws {
     guard let participant else { throw MRPError.internalError }
     participant._logger.trace("handling protocol action \(action)")
     switch action {
@@ -582,7 +617,8 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
         port: participant.port,
         attributeType: attributeType,
         attributeValue: value,
-        isNew: true
+        isNew: true,
+        flags: flags
       )
     case .Join:
       try await participant.application?.joinIndicated(
@@ -590,14 +626,16 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
         port: participant.port,
         attributeType: attributeType,
         attributeValue: value,
-        isNew: false
+        isNew: false,
+        flags: flags
       )
     case .Lv:
       try await participant.application?.leaveIndicated(
         contextIdentifier: participant.contextIdentifier,
         port: participant.port,
         attributeType: attributeType,
-        attributeValue: value
+        attributeValue: value,
+        flags: flags
       )
     case .sN:
       // The AttributeEvent value New is encoded in the Vector as specified in

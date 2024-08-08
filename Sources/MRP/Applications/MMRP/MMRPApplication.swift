@@ -171,7 +171,8 @@ extension MMRPApplication {
     port: P,
     attributeType: AttributeType,
     attributeValue: some Value,
-    isNew: Bool
+    isNew: Bool,
+    flags: ParticipantEventFlags
   ) async throws {
     guard let mad else { throw MRPError.internalError }
     guard let bridge = mad.bridge as? any MMRPAwareBridge<P> else { return }
@@ -204,7 +205,8 @@ extension MMRPApplication {
     contextIdentifier: MAPContextIdentifier,
     port: P,
     attributeType: AttributeType,
-    attributeValue: some Value
+    attributeValue: some Value,
+    flags: ParticipantEventFlags
   ) async throws {
     guard let mad else { throw MRPError.internalError }
     guard let bridge = mad.bridge as? any MMRPAwareBridge<P> else { return }
