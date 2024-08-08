@@ -168,6 +168,7 @@ extension MMRPApplication {
   // created.
   func onJoinIndication(
     contextIdentifier: MAPContextIdentifier,
+    port: P,
     attributeType: AttributeType,
     attributeValue: some Value,
     isNew: Bool
@@ -201,6 +202,7 @@ extension MMRPApplication {
   // Address Registration Entry is removed from the FDB.
   func onLeaveIndication(
     contextIdentifier: MAPContextIdentifier,
+    port: P,
     attributeType: AttributeType,
     attributeValue: some Value
   ) async throws {

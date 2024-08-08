@@ -25,12 +25,14 @@ protocol BaseApplicationDelegate<P>: Sendable {
 
   func onJoinIndication(
     contextIdentifier: MAPContextIdentifier,
+    port: P,
     attributeType: AttributeType,
     attributeValue: some Value,
     isNew: Bool
   ) async throws
   func onLeaveIndication(
     contextIdentifier: MAPContextIdentifier,
+    port: P,
     attributeType: AttributeType,
     attributeValue: some Value
   ) async throws
@@ -175,6 +177,7 @@ extension BaseApplication {
   ) async throws {
     try await _delegate?.onJoinIndication(
       contextIdentifier: contextIdentifier,
+      port: port,
       attributeType: attributeType,
       attributeValue: attributeValue,
       isNew: isNew
@@ -197,6 +200,7 @@ extension BaseApplication {
   ) async throws {
     try await _delegate?.onLeaveIndication(
       contextIdentifier: contextIdentifier,
+      port: port,
       attributeType: attributeType,
       attributeValue: attributeValue
     )
