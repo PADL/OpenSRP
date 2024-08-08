@@ -204,6 +204,10 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
     }
   }
 
+  deinit {
+    try? willShutdown()
+  }
+
   private func _handleLinkNotification(_ linkMessage: RTNLLinkMessage) async throws {
     var portNotification: PortNotification<Port>?
     try _bridgePort.withCriticalRegion { bridgePort in
@@ -275,13 +279,18 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
     filterRegistration: FilterRegistration
   ) -> Task<(), Error> {
     Task {
-      for try await packet in try await filterRegistration._rxPackets(port: port) {
-        await _rxPacketsChannel.send((port.id, packet))
-      }
+      repeat {
+        do {
+          for try await packet in try await filterRegistration._rxPackets(port: port) {
+            await _rxPacketsChannel.send((port.id, packet))
+          }
+        } catch Errno.interrupted {} // restart on interrupted system call
+      } while !Task.isCancelled
     }
   }
 
   private func _addLinkLocalRxTask(port: Port) throws {
+    precondition(!port._isBridgeSelf)
     let filterRegistrations = _linkLocalRegistrations.criticalState
     _linkLocalRxTasks.withCriticalRegion { linkLocalRxTasks in
       for filterRegistration in filterRegistrations {
@@ -298,16 +307,21 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
   }
 
   private func _cancelLinkLocalRxTask(port: Port) throws {
+    precondition(!port._isBridgeSelf)
+    try _cancelLinkLocalRxTask(portID: port.id)
+  }
+
+  private func _cancelLinkLocalRxTask(portID: Port.ID) throws {
     let filterRegistrations = _linkLocalRegistrations.criticalState
     _linkLocalRxTasks.withCriticalRegion { linkLocalRxTasks in
       for filterRegistration in filterRegistrations {
-        let key = LinkLocalRXTaskKey(portID: port.id, filterRegistration: filterRegistration)
+        let key = LinkLocalRXTaskKey(portID: portID, filterRegistration: filterRegistration)
         guard let index = linkLocalRxTasks.index(forKey: key) else { continue }
         let task = linkLocalRxTasks[index].value
         linkLocalRxTasks.remove(at: index)
         task.cancel()
         debugPrint(
-          "LinuxBridge: removed link-local RX task for \(port) filter registration \(filterRegistration)"
+          "LinuxBridge: removed link-local RX task for \(portID) filter registration \(filterRegistration)"
         )
       }
     }
@@ -331,6 +345,21 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
     let bridgeIndex = _bridgeIndex
     return try await _getPorts().filter {
       !$0._isBridgeSelf && $0._rtnl.master == bridgeIndex
+    }
+  }
+
+  public func willRun(ports: Set<Port>) throws {
+    debugPrint("LinuxBridge: willRun")
+    for port in ports {
+      try _addLinkLocalRxTask(port: port)
+    }
+  }
+
+  public func willShutdown() throws {
+    debugPrint("LinuxBridge: willShutdown")
+    let portIDs = _linkLocalRxTasks.criticalState.keys.map(\.portID)
+    for portID in portIDs {
+      try _cancelLinkLocalRxTask(portID: portID)
     }
   }
 
@@ -388,7 +417,7 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
   }
 }
 
-fileprivate final class FilterRegistration: Equatable, Hashable, Sendable {
+fileprivate final class FilterRegistration: Equatable, Hashable, Sendable, CustomStringConvertible {
   static func == (_ lhs: FilterRegistration, _ rhs: FilterRegistration) -> Bool {
     _isEqualMacAddress(lhs._groupAddress, rhs._groupAddress) && lhs._etherType == rhs._etherType
   }
@@ -406,33 +435,35 @@ fileprivate final class FilterRegistration: Equatable, Hashable, Sendable {
     _etherType.hash(into: &hasher)
   }
 
+  var description: String {
+    "FilterRegistration(_groupAddress: \(_macAddressToString(_groupAddress)), _etherType: \(String(format: "0x%04x", _etherType)))"
+  }
+
   func _rxPackets(port: LinuxPort) async throws -> AnyAsyncSequence<IEEE802Packet> {
     precondition(_isLinkLocal(macAddress: _groupAddress))
-    let socket = try Socket(
+    let rxSocket = try Socket(
       ring: IORing.shared,
       domain: sa_family_t(AF_PACKET),
       type: SOCK_RAW,
       protocol: CInt(_etherType.bigEndian)
     )
-    try socket.bind(to: _makeLinkLayerAddress(
+    try rxSocket.bind(to: _makeLinkLayerAddress(
       macAddress: port.macAddress,
       etherType: _etherType,
       packetType: UInt8(PACKET_MULTICAST),
       index: port.id
     ))
-    try socket.addMulticastMembership(for: _makeLinkLayerAddress(
+    try rxSocket.addMulticastMembership(for: _makeLinkLayerAddress(
       macAddress: _groupAddress,
       index: port.id
     ))
 
     // TODO: caller needs to handle EINTR, make sure it does
-    return try await socket.receiveMessages(count: port._rtnl.mtu).compactMap { message in
+    return try await rxSocket.receiveMessages(count: port._rtnl.mtu).compactMap { message in
       var deserializationContext = DeserializationContext(message.buffer)
       return try? IEEE802Packet(deserializationContext: &deserializationContext)
     }.eraseToAnyAsyncSequence()
   }
-
-  deinit {}
 }
 
 #endif

@@ -17,9 +17,6 @@
 @_spi(SwiftMRPPrivate)
 import MRP
 
-let groupAddress: EUI48 = IndividualLANScopeGroupAddress
-let etherType: UInt16 = 0x88F5 // MVRP
-
 @main
 actor PortMonitor {
   typealias P = LinuxPort
@@ -54,13 +51,16 @@ actor PortMonitor {
 
     // now we need to register to ensure RX task is created
     // we can do this for every application we wish to monitor
-    try bridge.register(groupAddress: groupAddress, etherType: etherType)
+    try bridge.register(groupAddress: IndividualLANScopeGroupAddress, etherType: 0x22EA) // MSRP
+    try bridge.register(groupAddress: CustomerBridgeMVRPGroupAddress, etherType: 0x88F5) // MVRP
 
     ports = try await bridge.getPorts()
     print("Ports at startup on bridge \(bridge.name):")
     for port in ports {
       print("\(port)")
     }
+
+    try bridge.willRun(ports: ports)
 
     try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { @Sendable in

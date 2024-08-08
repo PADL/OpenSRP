@@ -27,6 +27,9 @@ public protocol Bridge<P>: Sendable, VLANConfiguring {
 
   func getPorts() async throws -> Set<P>
 
+  func willRun(ports: Set<P>) throws
+  func willShutdown() throws
+
   // Bridge provies a unified interface for sending and receiving packets, even
   // though the actual implementation may need separate paths for handling link-
   // local and non-link-local packets
@@ -36,6 +39,10 @@ public protocol Bridge<P>: Sendable, VLANConfiguring {
 }
 
 extension Bridge {
+  func willRun() async throws {
+    try await willRun(ports: getPorts())
+  }
+
   func port(name: String) async throws -> P {
     guard let port = try await getPorts().first(where: { $0.name == name }) else {
       throw MRPError.portNotFound

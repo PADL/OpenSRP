@@ -65,6 +65,8 @@ actor Controller<P: Port> {
       try? await _didAdd(port: port)
     }
 
+    try bridge.willRun(ports: ports)
+
     try await withThrowingTaskGroup(of: Void.self) { group in
       _taskGroup = group
       group.addTask { @Sendable in try await self._handleBridgeNotifications() }
@@ -73,10 +75,11 @@ actor Controller<P: Port> {
     }
   }
 
-  public func shutdown() async throws {
+  public func shutdown() {
     logger.debug("shutting down \(self)")
+    try? bridge.willShutdown()
     for port in ports {
-      try _didRemove(port: port)
+      try? _didRemove(port: port)
     }
     _taskGroup?.cancelAll()
   }
