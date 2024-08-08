@@ -50,9 +50,9 @@ public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     ManagedCriticalState<[MAPContextIdentifier: Set<Participant<MVRPApplication<P>>>]>([:])
   let _logger: Logger
 
-  init(owner: Controller<P>, logger: Logger) async throws {
+  init(owner: Controller<P>) async throws {
     _mad = Weak(owner)
-    _logger = logger
+    _logger = owner.logger
     try await owner.register(application: self)
   }
 
@@ -161,6 +161,8 @@ extension MVRPApplication {
       let vlan = (attributeValue as! VLAN)
       var ports = ports // account for MVRP requests initiated by local kernel
       if flags.contains(.sourceIsLocal) { ports.remove(port) }
+      _logger
+        .info("MVRP join indication from port \(port) VID \(vlan) isNew \(isNew) flags \(flags)")
       try await bridge.register(vlan: vlan, on: ports)
     }
   }
@@ -188,6 +190,7 @@ extension MVRPApplication {
       let vlan = (attributeValue as! VLAN)
       var ports = ports // account for MVRP requests initiated by local kernel
       if flags.contains(.sourceIsLocal) { ports.remove(port) }
+      _logger.info("MVRP leave indication from port \(port) VID \(vlan) flags \(flags)")
       try await bridge.deregister(vlan: vlan, from: ports)
     }
   }

@@ -94,10 +94,6 @@ public extension Application {
 }
 
 extension Application {
-  var logger: Logger? {
-    mad?.logger
-  }
-
   typealias ParticipantSpecificApplyFunction<T> = (Participant<Self>) -> (T) throws -> ()
   typealias AsyncParticipantSpecificApplyFunction<T> = (Participant<Self>) -> (T) async throws -> ()
 

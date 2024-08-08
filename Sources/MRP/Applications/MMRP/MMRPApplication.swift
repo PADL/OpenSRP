@@ -59,9 +59,9 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     ManagedCriticalState<[MAPContextIdentifier: Set<Participant<MMRPApplication<P>>>]>([:])
   let _logger: Logger
 
-  init(owner: Controller<P>, logger: Logger) async throws {
+  init(owner: Controller<P>) async throws {
     _mad = Weak(owner)
-    _logger = logger
+    _logger = owner.logger
     try await owner.register(application: self)
   }
 
@@ -181,6 +181,10 @@ extension MMRPApplication {
     case .macVector:
       let macAddress = (attributeValue as! MMRPMACVectorValue).macAddress
       guard _isMulticast(macAddress: macAddress) else { throw MRPError.invalidAttributeValue }
+      _logger
+        .info(
+          "MMRP join indication from port \(port) address \(_macAddressToString(macAddress)) isNew \(isNew) flags \(flags)"
+        )
       try await bridge.register(groupAddress: macAddress, on: ports)
     case .serviceRequirementVector:
       try await bridge.register(
@@ -215,6 +219,10 @@ extension MMRPApplication {
     case .macVector:
       let macAddress = (attributeValue as! MMRPMACVectorValue).macAddress
       guard _isMulticast(macAddress: macAddress) else { throw MRPError.invalidAttributeValue }
+      _logger
+        .info(
+          "MMRP leave indication from port \(port) address \(_macAddressToString(macAddress)) flags \(flags)"
+        )
       try await bridge.deregister(groupAddress: macAddress, from: ports)
     case .serviceRequirementVector:
       try await bridge.deregister(
