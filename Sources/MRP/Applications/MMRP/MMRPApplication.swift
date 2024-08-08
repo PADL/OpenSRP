@@ -30,11 +30,6 @@ protocol MMRPAwareBridge<P>: Bridge where P: Port {
   ) async throws
 }
 
-/*
- case allGroups = 0
- case allUnregisteredGroups = 1
-
- */
 public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationDelegate,
   Sendable where P == P
 {
