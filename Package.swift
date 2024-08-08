@@ -52,8 +52,12 @@ PlatformTargetDependencies = [
 
 PlatformProducts = [
   .library(
-    name: "CNetLink",
-    targets: ["CNetLink"]
+    name: "NetLink",
+    targets: ["NetLink"]
+  ),
+  .executable(
+    name: "mrpd",
+    targets: ["MRPDaemon"]
   ),
   .executable(
     name: "nldump",
@@ -86,6 +90,14 @@ PlatformTargets = [
     linkerSettings: PlatformLinkerSettings
   ),
   .executableTarget(
+    name: "MRPDaemon",
+    dependencies: [
+      "NetLink",
+      .product(name: "ArgumentParser", package: "swift-argument-parser"),
+      .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
+    ]
+  ),
+  .executableTarget(
     name: "nldump",
     dependencies: ["NetLink"],
     path: "Examples/nldump"
@@ -114,8 +126,10 @@ let CommonPackageDependencies: [Package.Dependency] = [
   .package(url: "https://github.com/apple/swift-log", from: "1.5.4"),
   .package(url: "https://github.com/apple/swift-algorithms", from: "1.2.0"),
   .package(url: "https://github.com/apple/swift-system", from: "1.2.1"),
+  .package(url: "https://github.com/apple/swift-argument-parser", from: "1.2.0"),
   .package(url: "https://github.com/PADL/SocketAddress", from: "0.0.1"),
   .package(url: "https://github.com/lhoward/AsyncExtensions", branch: "linux"),
+  .package(url: "https://github.com/swift-server/swift-service-lifecycle.git", from: "2.3.0"),
 ]
 
 let CommonProducts: [Product] = [
