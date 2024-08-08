@@ -30,27 +30,6 @@ extension Logger.Level: ExpressibleByArgument {
   }
 }
 
-extension [UInt8] {
-  struct HexEncodingOptions: OptionSet {
-    let rawValue: Int
-    static let upperCase = HexEncodingOptions(rawValue: 1 << 0)
-  }
-
-  func hexEncodedString(options: HexEncodingOptions = []) -> String {
-    let hexDigits = options.contains(.upperCase) ? "0123456789ABCDEF" : "0123456789abcdef"
-    let utf8Digits = Array(hexDigits.utf8)
-    return String(unsafeUninitializedCapacity: 2 * count) { ptr -> Int in
-      var p = ptr.baseAddress!
-      for byte in self {
-        p[0] = utf8Digits[Int(byte / 16)]
-        p[1] = utf8Digits[Int(byte % 16)]
-        p += 2
-      }
-      return 2 * self.count
-    }
-  }
-}
-
 @main
 private final class MRPDaemon: AsyncParsableCommand {
   typealias P = LinuxPort
@@ -67,6 +46,9 @@ private final class MRPDaemon: AsyncParsableCommand {
   @Option(name: .shortAndLong, help: "NetFilter group")
   var nfGroup: Int = 100
 
+  @Option(name: .shortAndLong, help: "Physical interfaces to exclude")
+  var excludeIface: [String]?
+
   @Option(name: .shortAndLong, help: "Log level")
   var logLevel: Logger.Level = .trace
 
@@ -81,6 +63,7 @@ private final class MRPDaemon: AsyncParsableCommand {
 
   enum CodingKeys: String, CodingKey {
     case logLevel
+    case excludeIface
     case enableMMRP
     case enableMVRP
     case enableMSRP
@@ -92,7 +75,7 @@ private final class MRPDaemon: AsyncParsableCommand {
     LoggingSystem.bootstrap { @Sendable in
       StreamLogHandler.standardError(label: $0)
     }
-    logger = Logger(label: "com.lukktone.mrpd")
+    logger = Logger(label: "com.padl.mrpd")
     logger.logLevel = logLevel
 
     let bridge = try await B(name: bridgeInterface, netFilterGroup: nfGroup)
