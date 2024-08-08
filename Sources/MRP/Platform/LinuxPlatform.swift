@@ -178,9 +178,10 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
 
   private let _txSocket: Socket
   fileprivate let _nlLinkSocket: NLSocket
+  private var _nlLinkMonitorTask: Task<(), Error>?
   private let _nlNfLog: NFNLLog
+  private var _nlNfLogMonitorTask: Task<(), Error>?
   private let _bridgePort = ManagedCriticalState<Port?>(nil)
-  private var _task: Task<(), Error>!
   private let _portNotificationChannel = AsyncChannel<PortNotification<Port>>()
   private let _rxPacketsChannel = AsyncThrowingChannel<(Port.ID, IEEE802Packet), Error>()
   private let _linkLocalRegistrations = ManagedCriticalState<Set<FilterRegistration>>([])
@@ -197,7 +198,7 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
       throw MRPError.invalidBridgeIdentity
     }
     _bridgePort.withCriticalRegion { $0 = bridgePorts.first! }
-    _task = Task<(), Error> { [self] in
+    _nlLinkMonitorTask = Task<(), Error> { [self] in
       for try await notification in _nlLinkSocket.notifications {
         do {
           try await _handleLinkNotification(notification as! RTNLLinkMessage)
@@ -206,9 +207,16 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
         } catch {}
       }
     }
+    _nlNfLogMonitorTask = Task<(), Error> { [self] in
+      for try await packet in _nfNlLogRxPackets {
+        await _rxPacketsChannel.send(packet)
+      }
+    }
   }
 
   deinit {
+    _nlLinkMonitorTask?.cancel()
+    _nlNfLogMonitorTask?.cancel()
     try? willShutdown()
   }
 
@@ -409,16 +417,14 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
   }
 
   private var _nfNlLogRxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)> {
-    get throws {
-      _nlNfLog.logMessages.compactMap { logMessage in
-        guard let hwHeader = logMessage.hwHeader, let payload = logMessage.payload,
-              let packet = try? IEEE802Packet(hwHeader: hwHeader, payload: payload)
-        else {
-          return nil
-        }
-        return (logMessage.physicalInputDevice, packet)
-      }.eraseToAnyAsyncSequence()
-    }
+    _nlNfLog.logMessages.compactMap { logMessage in
+      guard let hwHeader = logMessage.hwHeader, let payload = logMessage.payload,
+            let packet = try? IEEE802Packet(hwHeader: hwHeader, payload: payload)
+      else {
+        return nil
+      }
+      return (logMessage.physicalInputDevice, packet)
+    }.eraseToAnyAsyncSequence()
   }
 }
 
