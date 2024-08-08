@@ -16,9 +16,7 @@
 
 import AsyncExtensions
 
-public protocol Port: Hashable, Sendable, Identifiable, VLANConfiguring
-  where ID: Hashable & Sendable
-{
+public protocol Port: Hashable, Sendable, Identifiable where ID: Hashable & Sendable {
   var isOperational: Bool { get }
   var isEnabled: Bool { get }
   var isPointToPoint: Bool { get }

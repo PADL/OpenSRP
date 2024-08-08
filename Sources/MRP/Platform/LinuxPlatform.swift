@@ -161,15 +161,24 @@ private extension LinuxPort {
       socket: _bridge!._nlLinkSocket
     )
   }
-}
 
-public extension LinuxPort {
-  func add(vlans: Set<VLAN>) async throws {
-    try await _add(vlans: vlans)
-  }
-
-  func remove(vlans: Set<VLAN>) async throws {
-    try await _remove(vlans: vlans)
+  func _addOrDelMulti(groupAddress: EUI48, isAdd: Bool) throws {
+    let socket = try Socket(
+      ring: IORing.shared,
+      domain: sa_family_t(AF_PACKET),
+      type: SOCK_RAW
+    )
+    if isAdd {
+      try socket.addMulticastMembership(for: _makeLinkLayerAddress(
+        macAddress: groupAddress,
+        index: id
+      ))
+    } else {
+      try socket.dropMulticastMembership(for: _makeLinkLayerAddress(
+        macAddress: groupAddress,
+        index: id
+      ))
+    }
   }
 }
 
@@ -387,13 +396,13 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
     }.eraseToAnyAsyncSequence()
   }
 
-  public func add(vlans: Set<VLAN>) async throws {
+  private func _add(vlans: Set<VLAN>) async throws {
     if let bridgePort = _bridgePort.criticalState {
       try await bridgePort._add(vlans: vlans)
     }
   }
 
-  public func remove(vlans: Set<VLAN>) async throws {
+  private func _remove(vlans: Set<VLAN>) async throws {
     if let bridgePort = _bridgePort.criticalState {
       try await bridgePort._remove(vlans: vlans)
     }
@@ -476,19 +485,48 @@ fileprivate final class FilterRegistration: Equatable, Hashable, Sendable, Custo
   }
 }
 
+extension LinuxBridge: MMRPAwareBridge {
+  func register(groupAddress: EUI48, on ports: Set<P>) async throws {
+    try _bridgePort.withCriticalRegion { bridgePort in
+      try bridgePort!._addOrDelMulti(groupAddress: groupAddress, isAdd: true)
+    }
+    for port in ports {
+      try port._addOrDelMulti(groupAddress: groupAddress, isAdd: true)
+    }
+  }
+
+  func deregister(groupAddress: EUI48, from ports: Set<P>) async throws {
+    for port in ports {
+      try port._addOrDelMulti(groupAddress: groupAddress, isAdd: false)
+    }
+    try _bridgePort.withCriticalRegion { bridgePort in
+      try bridgePort!._addOrDelMulti(groupAddress: groupAddress, isAdd: false)
+    }
+  }
+
+  func register(
+    serviceRequirement requirementSpecification: MMRPServiceRequirementValue,
+    on ports: Set<P>
+  ) async throws {}
+  func deregister(
+    serviceRequirement requirementSpecification: MMRPServiceRequirementValue,
+    from ports: Set<P>
+  ) async throws {}
+}
+
 extension LinuxBridge: MVRPAwareBridge {
   func register(vlan: VLAN, on ports: Set<P>) async throws {
-    try await add(vlans: [vlan])
+    try await _add(vlans: [vlan])
     for port in ports {
-      try await port.add(vlans: [vlan])
+      try await port._add(vlans: [vlan])
     }
   }
 
   func deregister(vlan: VLAN, from ports: Set<P>) async throws {
     for port in ports {
-      try await port.remove(vlans: [vlan])
+      try await port._remove(vlans: [vlan])
     }
-    try await remove(vlans: [vlan])
+    try await _remove(vlans: [vlan])
   }
 }
 

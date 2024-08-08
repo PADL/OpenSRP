@@ -7,6 +7,8 @@
 #include <linux/if_bridge.h>
 #include <linux/netfilter/nfnetlink_log.h>
 
+#include <net/if.h>
+
 #include <netlink/netlink.h>
 #include <netlink/socket.h>
 #include <netlink/attr.h>

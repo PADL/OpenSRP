@@ -16,7 +16,7 @@
 
 import AsyncExtensions
 
-public protocol Bridge<P>: Sendable, VLANConfiguring {
+public protocol Bridge<P>: Sendable {
   associatedtype P: Port
 
   var vlans: Set<VLAN> { get }

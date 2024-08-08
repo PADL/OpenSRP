@@ -36,8 +36,3 @@ public struct VLAN: Hashable, Sendable, Identifiable {
     self.init(vid: contextIdentifier.id)
   }
 }
-
-public protocol VLANConfiguring: Sendable {
-  func add(vlans: Set<VLAN>) async throws
-  func remove(vlans: Set<VLAN>) async throws
-}
