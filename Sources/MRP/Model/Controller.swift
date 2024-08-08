@@ -39,10 +39,7 @@ actor Controller<P: Port> {
   private var _ports = [P.ID: P]()
   var ports: Set<P> { Set(_ports.values) }
   private var _periodicTimers = [P.ID: Timer]()
-  private let _administrativeControl = ManagedCriticalState(
-    AdministrativeControl
-      .normalParticipant
-  )
+  private var _administrativeControl = AdministrativeControl.normalParticipant
 
   let bridge: any Bridge<P>
   var _taskGroup: ThrowingTaskGroup<(), Error>?
