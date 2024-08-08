@@ -17,10 +17,24 @@
 import Logging
 
 protocol MMRPAwareBridge<P>: Bridge where P: Port {
-  func registerMulticastAddress(_ macAddress: EUI48, on ports: Set<P>) async throws
-  func deregisterMulticastAddress(_ macAddress: EUI48, from ports: Set<P>) async throws
+  func register(groupAddress: EUI48, on ports: Set<P>) async throws
+  func deregister(groupAddress: EUI48, from ports: Set<P>) async throws
+
+  func register(
+    serviceRequirement requirementSpecification: MMRPServiceRequirementValue,
+    on ports: Set<P>
+  ) async throws
+  func deregister(
+    serviceRequirement requirementSpecification: MMRPServiceRequirementValue,
+    from ports: Set<P>
+  ) async throws
 }
 
+/*
+ case allGroups = 0
+ case allUnregisteredGroups = 1
+
+ */
 public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationDelegate,
   Sendable where P == P
 {
@@ -97,7 +111,7 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     try await join(
       attributeType: MMRPAttributeType.macVector.rawValue,
       attributeValue: MMRPMACVectorValue(macAddress: macAddress),
-      isNew: true,
+      isNew: false,
       for: MAPBaseSpanningTreeContext
     )
   }
@@ -116,7 +130,7 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     try await join(
       attributeType: MMRPAttributeType.serviceRequirementVector.rawValue,
       attributeValue: requirementSpecification,
-      isNew: true,
+      isNew: false,
       for: MAPBaseSpanningTreeContext
     )
   }
@@ -172,9 +186,12 @@ extension MMRPApplication {
     case .macVector:
       let macAddress = (attributeValue as! MMRPMACVectorValue).macAddress
       guard _isMulticast(macAddress: macAddress) else { throw MRPError.invalidAttributeValue }
-      try await bridge.registerMulticastAddress(macAddress, on: ports)
+      try await bridge.register(groupAddress: macAddress, on: ports)
     case .serviceRequirementVector:
-      break
+      try await bridge.register(
+        serviceRequirement: (attributeValue as! MMRPServiceRequirementValue),
+        on: ports
+      )
     }
   }
 
@@ -201,9 +218,12 @@ extension MMRPApplication {
     case .macVector:
       let macAddress = (attributeValue as! MMRPMACVectorValue).macAddress
       guard _isMulticast(macAddress: macAddress) else { throw MRPError.invalidAttributeValue }
-      try await bridge.deregisterMulticastAddress(macAddress, from: ports)
+      try await bridge.deregister(groupAddress: macAddress, from: ports)
     case .serviceRequirementVector:
-      break
+      try await bridge.deregister(
+        serviceRequirement: (attributeValue as! MMRPServiceRequirementValue),
+        from: ports
+      )
     }
   }
 }
