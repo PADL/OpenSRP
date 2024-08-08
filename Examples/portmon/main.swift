@@ -38,7 +38,7 @@ actor PortMonitor {
     }
   }
 
-  func findPort(id: P.ID) -> P? {
+  func findPort(_ id: P.ID) -> P? {
     ports.first(where: { $0.id == id })
   }
 
@@ -73,7 +73,9 @@ actor PortMonitor {
         print("Monitoring bridge RX packets...")
         do {
           for try await (index, packet) in bridge.rxPackets {
-            print("@\(index) received packet \(packet)\n\(packet.payload.hexEncodedString())")
+            await print(
+              "\(self.findPort(index)!): received packet \(packet)\n\(packet.payload.hexEncodedString())"
+            )
           }
         } catch {
           print("bridge failed to RX packet: \(error)")

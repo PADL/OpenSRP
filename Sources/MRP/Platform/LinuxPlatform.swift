@@ -70,7 +70,7 @@ private func _makeLinkLayerAddressBytes(
   }
 }
 
-public struct LinuxPort: Port, Sendable {
+public struct LinuxPort: Port, Sendable, CustomStringConvertible {
   public typealias ID = Int
 
   public static func == (_ lhs: LinuxPort, _ rhs: LinuxPort) -> Bool {
@@ -83,6 +83,10 @@ public struct LinuxPort: Port, Sendable {
   init(rtnl: RTNLLink, bridge: LinuxBridge) throws {
     _rtnl = rtnl
     _bridge = bridge
+  }
+
+  public var description: String {
+    "LinuxPort(name: \(name), id: \(id))"
   }
 
   public func hash(into hasher: inout Hasher) {

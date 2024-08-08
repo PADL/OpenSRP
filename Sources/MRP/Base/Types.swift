@@ -48,11 +48,11 @@ public typealias EUI48 = (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8)
 
 // used by MSRP (not forwarded by bridges)
 @_spi(SwiftMRPPrivate)
-public let CustomerBridgeMVRPGroupAddress: EUI48 = (0x01, 0x80, 0xC2, 0x00, 0x00, 0x0E)
+public let CustomerBridgeMVRPGroupAddress: EUI48 = (0x01, 0x80, 0xC2, 0x00, 0x00, 0x21)
 
 // used by MVRP and MMRP (forwarded by bridges that do not support application protocol)
 @_spi(SwiftMRPPrivate)
-public let IndividualLANScopeGroupAddress: EUI48 = (0x01, 0x80, 0xC2, 0x00, 0x00, 0x21)
+public let IndividualLANScopeGroupAddress: EUI48 = (0x01, 0x80, 0xC2, 0x00, 0x00, 0x0E)
 
 func _isLinkLocal(macAddress: EUI48) -> Bool {
   macAddress.0 == 0x01 && macAddress.1 == 0x80 && macAddress.2 == 0xC2 && macAddress
