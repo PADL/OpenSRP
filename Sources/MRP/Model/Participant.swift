@@ -215,18 +215,14 @@ public final actor Participant<A: Application>: Equatable, Hashable {
 
       var vectorAttributes: [VectorAttribute<AnyValue>] = try valueIndexGroups
         .map { valueIndexGroup in
-          let firstIndex = valueIndexGroup.first!
-          let lastIndex = valueIndexGroup.last!
-          let firstValue = attributeEvents
-            .first(where: { $0.attributeValue.index == firstIndex })!
-            .attributeValue.value
-          let attributeEventsSlice = attributeEvents[firstIndex...lastIndex]
-          precondition(attributeEventsSlice.count == valueIndexGroup.count)
+          let firstIndex = attributeEvents
+            .firstIndex(where: { $0.attributeValue.index == valueIndexGroup[0] })!
+          let attributeEvents = attributeEvents[firstIndex..<(firstIndex + valueIndexGroups.count)]
 
           return try VectorAttribute<AnyValue>(
             leaveAllEvent: leaveAll ? .LeaveAll : .NullLeaveAllEvent,
-            firstValue: firstValue,
-            attributeEvents: Array(attributeEventsSlice.map(\.attributeEvent)),
+            firstValue: attributeEvents[firstIndex].attributeValue.value,
+            attributeEvents: Array(attributeEvents.map(\.attributeEvent)),
             attributeType: event.key,
             application: application
           )
