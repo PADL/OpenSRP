@@ -160,6 +160,15 @@ final class MRPTests: XCTestCase {
         XCTAssertEqual(firstAttribute.leaveAllEvent, .NullLeaveAllEvent)
         XCTAssertEqual(firstAttribute.vector, [114])
         XCTAssertEqual(firstAttribute.threePackedEvents, [3, 1, 0])
+
+        let v = try VectorAttribute(
+          leaveAllEvent: .NullLeaveAllEvent,
+          firstValue: AnyValue(VLAN(vid: 1)),
+          attributeEvents: [.JoinMt, .JoinIn],
+          attributeType: 1,
+          application: mvrp
+        )
+        XCTAssertEqual(v, firstAttribute)
       }
     }
 
