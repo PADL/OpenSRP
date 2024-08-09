@@ -195,7 +195,7 @@ extension MMRPApplication {
       try await bridge.register(groupAddress: macAddress, on: ports)
     case .serviceRequirementVector:
       try await bridge.register(
-        serviceRequirement: (attributeValue as! MMRPServiceRequirementValue),
+        serviceRequirement: attributeValue as! MMRPServiceRequirementValue,
         on: ports
       )
     }
@@ -233,7 +233,7 @@ extension MMRPApplication {
       try await bridge.deregister(groupAddress: macAddress, from: ports)
     case .serviceRequirementVector:
       try await bridge.deregister(
-        serviceRequirement: (attributeValue as! MMRPServiceRequirementValue),
+        serviceRequirement: attributeValue as! MMRPServiceRequirementValue,
         from: ports
       )
     }

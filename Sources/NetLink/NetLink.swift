@@ -47,7 +47,8 @@ extension NLData {
   }
 }
 
-public final class NLObject: @unchecked Sendable, Equatable, Hashable, CustomStringConvertible {
+public final class NLObject: @unchecked
+Sendable, Equatable, Hashable, CustomStringConvertible {
   public static func == (_ lhs: NLObject, _ rhs: NLObject) -> Bool {
     nl_object_identical(lhs._obj, rhs._obj) != 0
   }
@@ -64,7 +65,7 @@ public final class NLObject: @unchecked Sendable, Equatable, Hashable, CustomStr
   }
 
   convenience init(msg: OpaquePointer, constructFromObject: NLObjectConstructor? = nil) throws {
-    var obj: OpaquePointer! = nil
+    var obj: OpaquePointer!
 
     try withUnsafeMutablePointer(to: &obj) { objRef in
       _ = try throwingErrno {

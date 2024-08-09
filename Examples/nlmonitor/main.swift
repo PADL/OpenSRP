@@ -19,7 +19,7 @@ import Dispatch
 import NetLink
 
 @main
-struct nlmonitor {
+enum nlmonitor {
   public static func main() async throws {
     let socket = try NLSocket(protocol: NETLINK_ROUTE)
     try socket.subscribeLinks()

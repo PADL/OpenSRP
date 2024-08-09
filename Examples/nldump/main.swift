@@ -19,7 +19,7 @@ import Dispatch
 import NetLink
 
 @main
-struct nldump {
+enum nldump {
   public static func main() async throws {
     let socket = try NLSocket(protocol: NETLINK_ROUTE)
     for try await link in try await socket.getLinks(family: sa_family_t(AF_BRIDGE)) {

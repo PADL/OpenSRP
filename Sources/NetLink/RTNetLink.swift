@@ -28,7 +28,8 @@ extension RTNLLinkFactory {
   }
 }
 
-public class RTNLLink: NLObjectConstructible, @unchecked Sendable, CustomStringConvertible,
+public class RTNLLink: NLObjectConstructible, @unchecked
+Sendable, CustomStringConvertible,
   RTNLLinkFactory
 {
   private let _object: NLObject

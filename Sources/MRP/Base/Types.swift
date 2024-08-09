@@ -164,7 +164,8 @@ struct AnyValue: Value, Equatable, CustomStringConvertible {
   }
 
   private let _value: any Value
-  private let _isEqual: @Sendable (_: any Value, _: AnyValue) -> Bool
+  private let _isEqual: @Sendable (_: any Value, _: AnyValue)
+    -> Bool
 
   init<V: Value>(_ value: V) {
     _value = value
