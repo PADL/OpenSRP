@@ -136,11 +136,15 @@ private extension Applicant.State {
       default:
         break
       }
+    case .rNew:
+      break
     case .rJoinIn:
       switch self {
       case .VO:
+        // Ignored (no transition) if operPointToPointMAC is TRUE
         if !flags.contains(.operPointToPointMAC) { self = .AO }
       case .VP:
+        // Ignored (no transition) if operPointToPointMAC is TRUE
         if !flags.contains(.operPointToPointMAC) { self = .AP }
       case .AA:
         self = .QA
@@ -152,7 +156,8 @@ private extension Applicant.State {
         break
       }
     case .rIn:
-      if self == .QA { self = .AA }
+      // Ignored (no transition) if operPointToPointMAC is FALSE
+      if self == .QA, flags.contains(.operPointToPointMAC) { self = .AA }
     case .rJoinMt:
       fallthrough
     case .rMt:
@@ -194,7 +199,14 @@ private extension Applicant.State {
         break
       }
     case .periodic:
-      if self == .QA { self = .AA }
+      switch self {
+      case .QA:
+        self = .AA
+      case .QP:
+        self = .AP
+      default:
+        break
+      }
     case .tx:
       fallthrough
     case .txLA:
