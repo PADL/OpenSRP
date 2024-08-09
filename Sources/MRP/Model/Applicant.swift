@@ -79,8 +79,6 @@ struct Applicant: Sendable, CustomStringConvertible {
   private let _state = ManagedCriticalState(State.VO)
   private(set) var counters = Counters()
 
-  init() {}
-
   func handle(event: ProtocolEvent, flags: StateMachineHandlerFlags) -> Action? {
     _state.withCriticalRegion { $0.handle(event: event, flags: flags) }
   }
