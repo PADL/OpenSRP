@@ -21,7 +21,8 @@ protocol MVRPAwareBridge<P>: Bridge where P: Port {
   func deregister(vlan: VLAN, from ports: Set<P>) async throws
 }
 
-public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationDelegate, CustomStringConvertible,
+public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationDelegate,
+  CustomStringConvertible,
   Sendable where P == P
 {
   var _delegate: (any BaseApplicationDelegate<P>)? { self }
@@ -42,27 +43,27 @@ public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationDel
   // 10.12.1.5 MVRP ProtocolVersion
   public var protocolVersion: ProtocolVersion { 0 }
 
-  let _mad: Weak<MAD<P>>
+  let _controller: Weak<MRPController<P>>
 
-  public var mad: MAD<P>? { _mad.object }
+  public var controller: MRPController<P>? { _controller.object }
 
   let _participants =
     ManagedCriticalState<[MAPContextIdentifier: Set<Participant<MVRPApplication<P>>>]>([:])
   let _logger: Logger
   let _vlanExclusions: Set<VLAN>
 
-  public init(mad: MAD<P>, vlanExclusions: Set<VLAN> = []) async throws {
-    _mad = Weak(mad)
-    _logger = mad.logger
+  public init(controller: MRPController<P>, vlanExclusions: Set<VLAN> = []) async throws {
+    _controller = Weak(controller)
+    _logger = controller.logger
     _vlanExclusions = vlanExclusions
-    try await mad.register(application: self)
+    try await controller.register(application: self)
   }
 
   public var description: String {
-    "MVRPApplication(mad: \(mad!), vlanExclusions: \(_vlanExclusions), participants: \(_participants.criticalState))"
+    "MVRPApplication(controller: \(controller!), vlanExclusions: \(_vlanExclusions), participants: \(_participants.criticalState))"
   }
 
-public func deserialize(
+  public func deserialize(
     attributeOfType attributeType: AttributeType,
     from deserializationContext: inout DeserializationContext
   ) throws -> any Value {
@@ -157,15 +158,15 @@ extension MVRPApplication {
     isNew: Bool,
     flags: ParticipantEventFlags
   ) async throws {
-    guard let mad else { throw MRPError.internalError }
-    guard let bridge = mad.bridge as? any MVRPAwareBridge<P> else { return }
+    guard let controller else { throw MRPError.internalError }
+    guard let bridge = controller.bridge as? any MVRPAwareBridge<P> else { return }
     guard let attributeType = MVRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }
     switch attributeType {
     case .vidVector:
       let vlan = (attributeValue as! VLAN)
       guard !_vlanExclusions.contains(vlan) else { throw MRPError.doNotPropagateAttribute }
-      let ports = await mad.context(for: contextIdentifier).filter {
+      let ports = await controller.context(for: contextIdentifier).filter {
         if flags.contains(.sourceIsLocal), $0 == port {
           false
         } else {
@@ -191,15 +192,15 @@ extension MVRPApplication {
     attributeValue: some Value,
     flags: ParticipantEventFlags
   ) async throws {
-    guard let mad else { throw MRPError.internalError }
-    guard let bridge = mad.bridge as? any MVRPAwareBridge<P> else { return }
+    guard let controller else { throw MRPError.internalError }
+    guard let bridge = controller.bridge as? any MVRPAwareBridge<P> else { return }
     guard let attributeType = MVRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }
     switch attributeType {
     case .vidVector:
       let vlan = (attributeValue as! VLAN)
       guard !_vlanExclusions.contains(vlan) else { throw MRPError.doNotPropagateAttribute }
-      let ports = await mad.context(for: contextIdentifier).filter {
+      let ports = await controller.context(for: contextIdentifier).filter {
         if flags.contains(.sourceIsLocal), $0 == port {
           true // FIXME: is this logic correct?
         } else {

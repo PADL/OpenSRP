@@ -26,7 +26,7 @@ import AsyncExtensions
 import Logging
 import ServiceLifecycle
 
-public actor MAD<P: Port>: Service, CustomStringConvertible {
+public actor MRPController<P: Port>: Service, CustomStringConvertible {
   typealias MAPContextDictionary = [MAPContextIdentifier: MAPContext<P>]
 
   let bridge: any Bridge<P>

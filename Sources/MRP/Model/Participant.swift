@@ -118,25 +118,25 @@ public final actor Participant<A: Application>: Equatable, Hashable {
   private var _enqueuedEvents = EnqueuedEvents()
   private var _leaveAll: LeaveAll!
   private var _jointimer: Timer!
-  private nonisolated let _mad: Weak<MAD<A.P>>
+  private nonisolated let _controller: Weak<MRPController<A.P>>
   private nonisolated let _application: Weak<A>
 
   fileprivate let _logger: Logger
   fileprivate let _type: ParticipantType
-  fileprivate nonisolated var mad: MAD<A.P>? { _mad.object }
+  fileprivate nonisolated var controller: MRPController<A.P>? { _controller.object }
   fileprivate nonisolated var application: A? { _application.object }
 
   nonisolated let port: A.P
   nonisolated let contextIdentifier: MAPContextIdentifier
 
   init(
-    mad: MAD<A.P>,
+    controller: MRPController<A.P>,
     application: A,
     port: A.P,
     contextIdentifier: MAPContextIdentifier,
     type: ParticipantType? = nil
   ) async {
-    _mad = Weak(mad)
+    _controller = Weak(controller)
     _application = Weak(application)
     self.contextIdentifier = contextIdentifier
 
@@ -150,7 +150,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
       _type = .full
     }
 
-    _logger = mad.logger
+    _logger = controller.logger
 
     // The Join Period Timer, jointimer, controls the interval between transmit
     // opportunities that are applied to the Applicant state machine. An
@@ -168,7 +168,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     // < T < 1.5 × LeaveAllTime when it is started. LeaveAllTime is defined in
     // Table 10-7.
     _leaveAll = await LeaveAll(
-      interval: mad.leaveAllTime,
+      interval: controller.leaveAllTime,
       onLeaveAllTimerExpired: _onLeaveAllTimerExpired
     )
   }
@@ -444,8 +444,8 @@ public final actor Participant<A: Application>: Equatable, Hashable {
   }
 
   func tx() async throws {
-    guard let application, let mad else { throw MRPError.internalError }
-    try await mad.bridge.tx(
+    guard let application, let controller else { throw MRPError.internalError }
+    try await controller.bridge.tx(
       pdu: _txDequeue(),
       for: application,
       contextIdentifier: contextIdentifier,

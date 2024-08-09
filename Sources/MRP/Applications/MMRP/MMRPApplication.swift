@@ -30,7 +30,8 @@ protocol MMRPAwareBridge<P>: Bridge where P: Port {
   ) async throws
 }
 
-public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationDelegate, CustomStringConvertible,
+public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationDelegate,
+  CustomStringConvertible,
   Sendable where P == P
 {
   var _delegate: (any BaseApplicationDelegate<P>)? { self }
@@ -51,22 +52,22 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationDel
   // 10.12.1.5 MMRP ProtocolVersion
   public var protocolVersion: ProtocolVersion { 0 }
 
-  let _mad: Weak<MAD<P>>
+  let _controller: Weak<MRPController<P>>
 
-  public var mad: MAD<P>? { _mad.object }
+  public var controller: MRPController<P>? { _controller.object }
 
   let _participants =
     ManagedCriticalState<[MAPContextIdentifier: Set<Participant<MMRPApplication<P>>>]>([:])
   let _logger: Logger
 
-  public init(mad: MAD<P>) async throws {
-    _mad = Weak(mad)
-    _logger = mad.logger
-    try await mad.register(application: self)
+  public init(controller: MRPController<P>) async throws {
+    _controller = Weak(controller)
+    _logger = controller.logger
+    try await controller.register(application: self)
   }
 
   public var description: String {
-    "MMRPApplication(mad: \(mad!), participants: \(_participants.criticalState))"
+    "MMRPApplication(controller: \(controller!), participants: \(_participants.criticalState))"
   }
 
   public func deserialize(
@@ -176,9 +177,9 @@ extension MMRPApplication {
     isNew: Bool,
     flags: ParticipantEventFlags
   ) async throws {
-    guard let mad else { throw MRPError.internalError }
-    guard let bridge = mad.bridge as? any MMRPAwareBridge<P> else { return }
-    let ports = await mad.context(for: contextIdentifier)
+    guard let controller else { throw MRPError.internalError }
+    guard let bridge = controller.bridge as? any MMRPAwareBridge<P> else { return }
+    let ports = await controller.context(for: contextIdentifier)
     guard let attributeType = MMRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }
     switch attributeType {
@@ -214,9 +215,9 @@ extension MMRPApplication {
     attributeValue: some Value,
     flags: ParticipantEventFlags
   ) async throws {
-    guard let mad else { throw MRPError.internalError }
-    guard let bridge = mad.bridge as? any MMRPAwareBridge<P> else { return }
-    let ports = await mad.context(for: contextIdentifier)
+    guard let controller else { throw MRPError.internalError }
+    guard let bridge = controller.bridge as? any MMRPAwareBridge<P> else { return }
+    let ports = await controller.context(for: contextIdentifier)
     guard let attributeType = MMRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }
     switch attributeType {
