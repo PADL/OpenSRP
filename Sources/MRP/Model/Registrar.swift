@@ -14,6 +14,8 @@
 // limitations under the License.
 //
 
+import Locking
+
 // The job of the Registrar is to record declarations of the attribute made by
 // other Participants on the LAN. It does not send any protocol messages, as
 // the Applicant looks after the interests of all would-be Participants.

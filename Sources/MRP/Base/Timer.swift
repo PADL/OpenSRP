@@ -15,6 +15,7 @@
 //
 
 import AsyncAlgorithms
+import Locking
 
 // Timers are used in the state machine descriptions in order to cause actions
 // to be taken after defined time periods have elapsed. The following

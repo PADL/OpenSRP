@@ -14,6 +14,7 @@
 // limitations under the License.
 //
 
+import Locking
 import Logging
 
 protocol MMRPAwareBridge<P>: Bridge where P: Port {

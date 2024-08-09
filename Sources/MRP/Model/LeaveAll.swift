@@ -14,6 +14,8 @@
 // limitations under the License.
 //
 
+import Locking
+
 struct LeaveAll: Sendable, CustomStringConvertible {
   enum State {
     case Active

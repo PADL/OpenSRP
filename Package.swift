@@ -77,6 +77,7 @@ PlatformTargets = [
   .target(
     name: "NetLink",
     dependencies: ["CNetLink",
+                   "Locking",
                    .product(name: "CLinuxSockAddr", package: "SocketAddress"),
                    .product(name: "SystemPackage", package: "swift-system"),
                    .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
@@ -129,6 +130,10 @@ let CommonPackageDependencies: [Package.Dependency] = [
 
 let CommonProducts: [Product] = [
   .library(
+    name: "Locking",
+    targets: ["Locking"]
+  ),
+  .library(
     name: "MRP",
     targets: ["MRP"]
   ),
@@ -136,8 +141,12 @@ let CommonProducts: [Product] = [
 
 let CommonTargets: [Target] = [
   .target(
+    name: "Locking"
+  ),
+  .target(
     name: "MRP",
     dependencies: [
+      "Locking",
       "AsyncExtensions",
       "SocketAddress",
       .product(name: "Algorithms", package: "swift-algorithms"),

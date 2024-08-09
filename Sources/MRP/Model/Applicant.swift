@@ -14,6 +14,8 @@
 // limitations under the License.
 //
 
+import Locking
+
 // A Full Participant implements the complete Applicant state machine (Table 10-3)
 //
 // The job of the Applicant is twofold:
