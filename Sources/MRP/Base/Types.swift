@@ -155,7 +155,7 @@ extension Value {
   }
 }
 
-struct AnyValue: Value, Equatable {
+struct AnyValue: Value, Equatable, CustomStringConvertible {
   static func == (lhs: AnyValue, rhs: AnyValue) -> Bool {
     guard let lhs = try? lhs.serialized(), let rhs = try? rhs.serialized() else {
       return false
@@ -193,6 +193,10 @@ struct AnyValue: Value, Equatable {
 
   init(firstValue _: Self?, index _: Int) {
     fatalError("cannot init type-erased value")
+  }
+
+  var description: String {
+    String(describing: _value)
   }
 }
 
