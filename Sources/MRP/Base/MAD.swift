@@ -55,7 +55,7 @@ public actor MAD<P: Port>: Service, CustomStringConvertible {
     logger: Logger,
     portExclusions: Set<String> = []
   ) async throws {
-    logger.debug("initializing MRP controller with bridge \(bridge)")
+    logger.debug("initializing MRP with bridge \(bridge), port exclusions \(portExclusions)")
     self.bridge = bridge
     self.logger = logger
     _ports = try await [P.ID: P](uniqueKeysWithValues: bridge.getPorts().compactMap {
@@ -67,11 +67,11 @@ public actor MAD<P: Port>: Service, CustomStringConvertible {
   }
 
   public nonisolated var description: String {
-    "Controller(bridge: \(bridge))"
+    "MAD(bridge: \(bridge))"
   }
 
   private func _run() async throws {
-    logger.info("starting \(self)")
+    logger.info("starting MRP for bridge \(bridge)")
     for port in ports {
       try? await _didAdd(port: port)
     }
@@ -87,7 +87,7 @@ public actor MAD<P: Port>: Service, CustomStringConvertible {
   }
 
   private func _shutdown() {
-    logger.info("shutting down \(self)")
+    logger.info("stopping MRP for bridge \(bridge)")
     try? bridge.willShutdown()
     for port in ports {
       try? _didRemove(port: port)
@@ -97,7 +97,7 @@ public actor MAD<P: Port>: Service, CustomStringConvertible {
 
   public func run() async throws {
     try await cancelWhenGracefulShutdown {
-      try await self.run()
+      try await self._run()
     }
     _shutdown()
   }
@@ -152,13 +152,10 @@ public actor MAD<P: Port>: Service, CustomStringConvertible {
     precondition(!addedContextIdentifiers.contains(MAPBaseSpanningTreeContext))
     precondition(!removedContextIdentifiers.contains(MAPBaseSpanningTreeContext))
 
-    logger.trace("""
-    applying context identifier changes prior to \(isNewPort ? "adding" : "updating") port \(port):
-    removed \(removedContextIdentifiers) updated \(updatedContextIdentifiers) added \(
-      addedContextIdentifiers
-    )
-    """)
-
+    logger
+      .trace(
+        "applying context identifier changes prior to \(isNewPort ? "adding" : "updating") port \(port): removed \(removedContextIdentifiers) updated \(updatedContextIdentifiers) added \(addedContextIdentifiers)"
+      )
     for contextIdentifier in removedContextIdentifiers {
       try _didRemove(contextIdentifier: contextIdentifier, with: [port])
     }

@@ -21,7 +21,7 @@ protocol MVRPAwareBridge<P>: Bridge where P: Port {
   func deregister(vlan: VLAN, from ports: Set<P>) async throws
 }
 
-public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationDelegate,
+public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationDelegate, CustomStringConvertible,
   Sendable where P == P
 {
   var _delegate: (any BaseApplicationDelegate<P>)? { self }
@@ -58,7 +58,11 @@ public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     try await mad.register(application: self)
   }
 
-  public func deserialize(
+  public var description: String {
+    "MVRPApplication(mad: \(mad!), vlanExclusions: \(_vlanExclusions), participants: \(_participants.criticalState))"
+  }
+
+public func deserialize(
     attributeOfType attributeType: AttributeType,
     from deserializationContext: inout DeserializationContext
   ) throws -> any Value {

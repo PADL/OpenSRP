@@ -182,7 +182,7 @@ private extension LinuxPort {
   }
 }
 
-public final class LinuxBridge: Bridge, @unchecked Sendable {
+public final class LinuxBridge: Bridge, @unchecked Sendable, CustomStringConvertible {
   public typealias Port = LinuxPort
 
   private let _txSocket: Socket
@@ -227,6 +227,10 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
     _nlLinkMonitorTask?.cancel()
     _nlNfLogMonitorTask?.cancel()
     try? willShutdown()
+  }
+
+  public nonisolated var description: String {
+    "LinuxBridge(name: \(bridgePort.name))"
   }
 
   private func _handleLinkNotification(_ linkMessage: RTNLLinkMessage) async throws {
@@ -370,14 +374,12 @@ public final class LinuxBridge: Bridge, @unchecked Sendable {
   }
 
   public func willRun(ports: Set<Port>) throws {
-    debugPrint("LinuxBridge: willRun")
     for port in ports {
       try _addLinkLocalRxTask(port: port)
     }
   }
 
   public func willShutdown() throws {
-    debugPrint("LinuxBridge: willShutdown")
     let portIDs = _linkLocalRxTasks.criticalState.keys.map(\.portID)
     for portID in portIDs {
       try _cancelLinkLocalRxTask(portID: portID)

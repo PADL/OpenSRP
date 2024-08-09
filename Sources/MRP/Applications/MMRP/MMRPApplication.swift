@@ -30,7 +30,7 @@ protocol MMRPAwareBridge<P>: Bridge where P: Port {
   ) async throws
 }
 
-public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationDelegate,
+public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationDelegate, CustomStringConvertible,
   Sendable where P == P
 {
   var _delegate: (any BaseApplicationDelegate<P>)? { self }
@@ -63,6 +63,10 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     _mad = Weak(mad)
     _logger = mad.logger
     try await mad.register(application: self)
+  }
+
+  public var description: String {
+    "MMRPApplication(mad: \(mad!), participants: \(_participants.criticalState))"
   }
 
   public func deserialize(
