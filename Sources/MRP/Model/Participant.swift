@@ -547,7 +547,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
 
     participant._logger
       .trace(
-        "handling protocol event \(event) flags \(smFlags) state A \(applicant) R \(registrar?.description ?? "-")"
+        "handling protocol event \(event) for attribute \(attributeType) value \(value) flags \(smFlags) state A \(applicant) R \(registrar?.description ?? "-")"
       )
 
     let applicantAction = applicant.action(for: event, flags: smFlags)
