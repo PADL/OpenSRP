@@ -19,6 +19,7 @@ import AsyncExtensions
 import CNetLink
 import Dispatch
 import Glibc
+import Locking
 import SystemPackage
 
 public protocol NLObjectConstructible: Sendable {
