@@ -67,7 +67,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
   }
 
   public nonisolated var description: String {
-    "MAD(bridge: \(bridge))"
+    "MRPController(bridge: \(bridge))"
   }
 
   private func _run() async throws {
