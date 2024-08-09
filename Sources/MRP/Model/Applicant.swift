@@ -79,8 +79,8 @@ struct Applicant: Sendable, CustomStringConvertible {
   private let _state = ManagedCriticalState(State.VO)
   private(set) var counters = Counters()
 
-  func handle(event: ProtocolEvent, flags: StateMachineHandlerFlags) -> Action? {
-    _state.withCriticalRegion { $0.handle(event: event, flags: flags) }
+  func action(for event: ProtocolEvent, flags: StateMachineHandlerFlags) -> Action? {
+    _state.withCriticalRegion { $0.action(for: event, flags: flags) }
   }
 
   var description: String {
@@ -88,9 +88,9 @@ struct Applicant: Sendable, CustomStringConvertible {
   }
 }
 
-extension Applicant.State {
-  mutating func handle(
-    event: ProtocolEvent,
+private extension Applicant.State {
+  mutating func action(
+    for event: ProtocolEvent,
     flags: StateMachineHandlerFlags
   ) -> Applicant.Action? {
     var action: Applicant.Action?

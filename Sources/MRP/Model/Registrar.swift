@@ -39,7 +39,7 @@ struct Registrar: Sendable, CustomStringConvertible {
   }
 
   // note: this function has side effects, it will start/stop leavetimer
-  func handle(event: ProtocolEvent, flags: StateMachineHandlerFlags) -> Action? {
+  func action(for event: ProtocolEvent, flags: StateMachineHandlerFlags) -> Action? {
     _state.withCriticalRegion { state in
       if state == .LV, event == .rNew || event == .rJoinIn || event == .rJoinMt {
         stopLeaveTimer()
@@ -48,7 +48,7 @@ struct Registrar: Sendable, CustomStringConvertible {
       {
         startLeaveTimer()
       }
-      return _state.withCriticalRegion { $0.handle(event: event, flags: flags) }
+      return _state.withCriticalRegion { $0.action(for: event, flags: flags) }
     }
   }
 
@@ -76,9 +76,9 @@ struct Registrar: Sendable, CustomStringConvertible {
 // other Participants on the LAN. It does not send any protocol messages, as
 // the Applicant looks after the interests of all would-be Participants.
 
-extension Registrar.State {
-  mutating func handle(
-    event: ProtocolEvent,
+private extension Registrar.State {
+  mutating func action(
+    for event: ProtocolEvent,
     flags: StateMachineHandlerFlags
   ) -> Registrar.Action? {
     if flags.contains(.registrationForbidden) {

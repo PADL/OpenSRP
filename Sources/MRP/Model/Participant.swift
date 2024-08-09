@@ -114,45 +114,9 @@ public final actor Participant<A: Application>: Equatable, Hashable {
 
   private typealias EnqueuedEvents = [AttributeType: [EnqueuedEvent]]
 
-  private enum LeaveAllState {
-    case Active
-    case Passive
-
-    mutating func handle(
-      event: ProtocolEvent,
-      flags _: StateMachineHandlerFlags = []
-    ) -> [ProtocolAction] {
-      let action: ProtocolAction
-
-      switch event {
-      case .Begin:
-        action = .leavealltimer
-        self = .Passive
-      case .Flush:
-        action = .leavealltimer
-        self = .Passive
-      case .tx:
-        precondition(self == .Active)
-        action = .sLA
-        self = .Passive
-      case .rLA:
-        action = .leavealltimer
-        self = .Passive
-      case .leavealltimer:
-        action = .leavealltimer
-        self = .Active
-      default:
-        return []
-      }
-
-      return [action]
-    }
-  }
-
   private var _attributes = [AttributeType: Set<_AttributeValueState<A>>]()
   private var _enqueuedEvents = EnqueuedEvents()
-  private var _leaveAllState = LeaveAllState.Passive
-  private var _leaveAllTimer: Timer!
+  private var _leaveAll: LeaveAll!
   private var _jointimer: Timer!
   private nonisolated let _mad: Weak<MAD<A.P>>
   private nonisolated let _application: Weak<A>
@@ -203,11 +167,10 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     // All Period Timer is set to a random value, T, in the range LeaveAllTime
     // < T < 1.5 × LeaveAllTime when it is started. LeaveAllTime is defined in
     // Table 10-7.
-    _leaveAllTimer = Timer(onExpiry: _onLeaveAllTimerExpired)
-    let leaveAllTime = await mad.leaveAllTime
-    if leaveAllTime != Duration.zero {
-      _leaveAllTimer.start(interval: leaveAllTime)
-    }
+    _leaveAll = await LeaveAll(
+      interval: mad.leaveAllTime,
+      onLeaveAllTimerExpired: _onLeaveAllTimerExpired
+    )
   }
 
   @Sendable
@@ -215,7 +178,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     // this will send a .tx/.txLA event to all attributes which will then make
     // the appropriate state transitions, potentially triggering the encoding
     // of a vector
-    switch _leaveAllState {
+    switch _leaveAll.state {
     case .Active:
       try await _handleLeaveAll(
         event: .tx,
@@ -317,26 +280,18 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     }
   }
 
-  // handle an event in the LeaveAll state machine
+  // handle an event in the LeaveAll state machine (10.5)
   private func _handleLeaveAll(event: ProtocolEvent, flags: ParticipantEventFlags) async throws {
-    let action = _leaveAllState.handle(event: event).first!
+    let action = _leaveAll.action(for: event)
 
-    switch action {
-    case .leavealltimer:
-      // For an instance of the LeaveAll state machine, the leavealltimer!
-      // event is deemed to have occurred either when the leavealltimer associated
-      // with that state machine expires or when a Flush! event (10.7.5.2)
-      // occurs for the Port and spanning tree instance associated with that
-      // state machine.
-      break
-    case .sLA:
+    if action == .leavealltimer {
+      _leaveAll.startLeaveAllTimer()
+    } else if action == .sLA {
       // a) The LeaveAll state machine associated with that instance of the
       // Applicant or Registrar state machine performs the sLA action
       // (10.7.6.6); or a MRPDU is received with a LeaveAll
       try await _apply(event: .rLA, flags: flags)
       try _txEnqueueLeaveAllEvents()
-    default:
-      fatalError("invalid LeaveAll state")
     }
   }
 
@@ -347,7 +302,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
   }
 
   fileprivate func _txDequeue() async throws -> MRPDU {
-    guard let application = _application.object else { throw MRPError.internalError }
+    guard let application else { throw MRPError.internalError }
     let enqueuedMessages = try _coalesce(events: _enqueuedEvents)
     let pdu = MRPDU(
       protocolVersion: application.protocolVersion,
@@ -379,11 +334,11 @@ public final actor Participant<A: Application>: Equatable, Hashable {
 
   fileprivate func _handle(
     attributeEvent: AttributeEvent,
-    with a: _AttributeValueState<A>,
+    with attributeValue: _AttributeValueState<A>,
     flags: ParticipantEventFlags
   ) async throws {
     let protocolEvent = attributeEvent.protocolEvent
-    try await a.handle(event: protocolEvent, flags: flags)
+    try await attributeValue.handle(event: protocolEvent, flags: flags)
   }
 
   // TODO: use a more efficient representation such as a bitmask
@@ -599,13 +554,13 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
         "handling protocol event \(event) flags \(smFlags) state A \(applicant) R \(registrar?.description ?? "-")"
       )
 
-    let applicantAction = applicant.handle(event: event, flags: smFlags)
+    let applicantAction = applicant.action(for: event, flags: smFlags)
     if let applicantAction {
       participant._logger.trace("applicant action for event \(event): \(applicantAction)")
       try await handle(applicantAction: applicantAction, flags: flags)
     }
 
-    if let registrarAction = registrar?.handle(event: event, flags: smFlags) {
+    if let registrarAction = registrar?.action(for: event, flags: smFlags) {
       participant._logger.trace("registrar action for event \(event): \(registrarAction)")
       try await handle(registrarAction: registrarAction, flags: flags)
     }

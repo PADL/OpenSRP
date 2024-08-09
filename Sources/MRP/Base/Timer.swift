@@ -49,7 +49,7 @@ final class Timer: Sendable {
 
   func start(interval: Duration) {
     _task.withCriticalRegion { task in
-      precondition(task == nil || task!.isCancelled)
+      task?.cancel() // in case stop() was not called
       task = Task<(), Error> {
         try await Task.sleep(for: interval, clock: .continuous)
         try await _onExpiry()
