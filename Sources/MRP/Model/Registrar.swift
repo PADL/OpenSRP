@@ -106,7 +106,6 @@ private extension Registrar.State {
       } else if self == .MT {
         action = .Join
       }
-      if self == .LV {}
       self = .IN
     case .rLv:
       fallthrough
