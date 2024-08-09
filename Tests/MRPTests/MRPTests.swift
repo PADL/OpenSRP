@@ -166,5 +166,13 @@ final class MRPTests: XCTestCase {
     var serializationContext = SerializationContext()
     try packet.serialize(into: &serializationContext)
     XCTAssertEqual(bytes, serializationContext.bytes)
+
+    var serializationContext2 = SerializationContext()
+    try pdu.serialize(into: &serializationContext2, application: mvrp)
+    // Note: prefix is necessary because captured packet has trailing zeros
+    XCTAssertEqual(
+      Array(packet.payload.prefix(serializationContext2.bytes.count)),
+      serializationContext2.bytes
+    )
   }
 }
