@@ -339,33 +339,31 @@ public final actor Participant<A: Application>: Equatable, Hashable {
   }
 
   // TODO: use a more efficient representation such as a bitmask
-  private func _findAttributeValueState<V: Value>(
+  private func _findAttributeValueState(
     attributeType: AttributeType,
-    firstValue: V,
     index: Int,
     isNew: Bool
   ) throws -> _AttributeValueState<A> {
-    let absoluteValue = try firstValue.makeValue(relativeTo: index)
+    guard let application else { throw MRPError.internalError }
+    let absoluteValue = try AnyValue(application.makeValue(for: attributeType, at: index))
 
     if let attributeValue = _attributes[attributeType]?.first(where: {
-      ($0.value.value as? V) == absoluteValue
+      $0.value == absoluteValue
     }) {
       return attributeValue
-    } else if isNew {
-      let attributeValue = _AttributeValueState(
-        participant: self,
-        type: attributeType,
-        value: absoluteValue
-      )
-      if let index = _attributes.index(forKey: attributeType) {
-        _attributes.values[index].insert(attributeValue)
-      } else {
-        _attributes[attributeType] = [attributeValue]
-      }
-      return attributeValue
-    } else {
-      throw MRPError.unknownAttributeType
     }
+
+    let attributeValue = _AttributeValueState(
+      participant: self,
+      type: attributeType,
+      value: absoluteValue
+    )
+    if let index = _attributes.index(forKey: attributeType) {
+      _attributes.values[index].insert(attributeValue)
+    } else {
+      _attributes[attributeType] = [attributeValue]
+    }
+    return attributeValue
   }
 
   private func _getAttributeEvents(
@@ -400,8 +398,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
         // TODO: what is the correct policy for unknown attributes
         guard let attribute = try? _findAttributeValueState(
           attributeType: message.attributeType,
-          firstValue: vectorAttribute.firstValue,
-          index: i,
+          index: vectorAttribute.firstValue.index + i,
           isNew: packedEvents[i] == .New
         ) else { continue }
         try await _handle(
@@ -479,8 +476,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
   ) async throws {
     let attribute = try _findAttributeValueState(
       attributeType: attributeType,
-      firstValue: attributeValue,
-      index: 0,
+      index: attributeValue.index,
       isNew: isNew
     )
     try await _handle(
@@ -496,8 +492,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
   ) async throws {
     let attribute = try _findAttributeValueState(
       attributeType: attributeType,
-      firstValue: attributeValue,
-      index: 0,
+      index: attributeValue.index,
       isNew: false
     )
     try await _handle(attributeEvent: .Lv, with: attribute, flags: .locallyInitiated)
