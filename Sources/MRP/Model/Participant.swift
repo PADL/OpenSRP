@@ -173,6 +173,11 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     )
   }
 
+  deinit {
+    _jointimer.stop()
+    _leaveAll.stopLeaveAllTimer()
+  }
+
   @Sendable
   private func _onJoinTimerExpired() async throws {
     // this will send a .tx/.txLA event to all attributes which will then make
@@ -536,6 +541,10 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
         try await self.handle(event: .leavetimer, flags: .firedFromTimer)
       })
     }
+  }
+
+  deinit {
+    registrar?.stopLeaveTimer()
   }
 
   func hash(into hasher: inout Hasher) {
