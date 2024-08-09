@@ -162,5 +162,9 @@ final class MRPTests: XCTestCase {
         XCTAssertEqual(firstAttribute.threePackedEvents, [3, 1, 0])
       }
     }
+
+    var serializationContext = SerializationContext()
+    try packet.serialize(into: &serializationContext)
+    XCTAssertEqual(bytes, serializationContext.bytes)
   }
 }
