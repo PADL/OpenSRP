@@ -58,15 +58,13 @@ struct Applicant: Sendable, CustomStringConvertible {
   }
 
   enum Action: Sendable {
-    case sN // send a New message (10.7.6.2) A
-    case sJ // send a JoinIn or JoinMT message (10.7.6.3) A
-    case sL // send a Lv message (10.7.6.4) A
-    case s // send an In or an Empty message (10.7.6.5) A
+    case sN // send a New message (10.7.6.2)
+    case sJ // send a JoinIn or JoinMT message (10.7.6.3)
+    case sL // send a Lv message (10.7.6.4)
+    case s // send an In or an Empty message (10.7.6.5)
     case s_ // send an In or an Empty message, if required for optimization of the encoding
-    // (10.7.6.5) A
-    case sL_ // send a Lv message, if required for optimization of the encoding (10.7.6.4) A
-    case sJ_ // send a Join message, if required for optimization of the encoding (10.7.6.3) A
-    case sLA // send a Leave All message (10.7.6.6) A
+    case sL_ // send a Lv message, if required for optimization of the encoding (10.7.6.4)
+    case sJ_ // send a Join message, if required for optimization of the encoding (10.7.6.3)
   }
 
   // TODO: update counters

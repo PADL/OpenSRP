@@ -611,9 +611,11 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
     }
   }
 
-  func handle(applicantAction action: Applicant.Action, flags: ParticipantEventFlags) async throws {
+  private func handle(
+    applicantAction action: Applicant.Action,
+    flags: ParticipantEventFlags
+  ) async throws {
     guard let participant else { throw MRPError.internalError }
-    participant._logger.trace("handling applicant action \(action)")
     switch action {
     case .sN:
       // The AttributeEvent value New is encoded in the Vector as specified in
@@ -646,14 +648,14 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
       } else if registrar.state == .MT || registrar.state == .LV {
         await participant._txEnqueue(attributeEvent: .Mt, attributeValue: self)
       }
-    default:
-      break
     }
   }
 
-  func handle(registrarAction action: Registrar.Action, flags: ParticipantEventFlags) async throws {
+  private func handle(
+    registrarAction action: Registrar.Action,
+    flags: ParticipantEventFlags
+  ) async throws {
     guard let participant else { throw MRPError.internalError }
-    participant._logger.trace("handling registrar action \(action)")
     switch action {
     case .New:
       try await participant.application?.joinIndicated(
@@ -681,8 +683,6 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
         attributeValue: value,
         flags: flags
       )
-    case .leavetimer:
-      break
     }
   }
 }

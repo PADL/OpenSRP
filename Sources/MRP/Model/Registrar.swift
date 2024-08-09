@@ -26,10 +26,9 @@ struct Registrar: Sendable, CustomStringConvertible {
   }
 
   enum Action: Sendable {
-    case New // send a New indication to MAP and the MRP application (10.7.6.12) R
-    case Join // send a Join indication to MAP and the MRP application (10.7.6.13) R
-    case Lv // send a Lv indication to MAP and the MRP application (10.7.6.14) R
-    case leavetimer // Leave period timer (10.7.4.2) R
+    case New // send a New indication to MAP and the MRP application (10.7.6.12)
+    case Join // send a Join indication to MAP and the MRP application (10.7.6.13)
+    case Lv // send a Lv indication to MAP and the MRP application (10.7.6.14)
   }
 
   private let _state = ManagedCriticalState(State.MT)
@@ -39,8 +38,18 @@ struct Registrar: Sendable, CustomStringConvertible {
     _leavetimer = Timer(onExpiry: onLeaveTimerExpired)
   }
 
+  // note: this function has side effects, it will start/stop leavetimer
   func handle(event: ProtocolEvent, flags: StateMachineHandlerFlags) -> Action? {
-    _state.withCriticalRegion { $0.handle(event: event, flags: flags) }
+    _state.withCriticalRegion { state in
+      if state == .LV, event == .rNew || event == .rJoinIn || event == .rJoinMt {
+        stopLeaveTimer()
+      } else if state == .IN,
+                event == .rLv || event == .rLA || event == .txLA || event == .ReDeclare
+      {
+        startLeaveTimer()
+      }
+      return _state.withCriticalRegion { $0.handle(event: event, flags: flags) }
+    }
   }
 
   var state: State { _state.criticalState }
