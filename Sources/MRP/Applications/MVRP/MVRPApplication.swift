@@ -43,6 +43,8 @@ public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationDel
   // 10.12.1.5 MVRP ProtocolVersion
   public var protocolVersion: ProtocolVersion { 0 }
 
+  public var hasAttributeListLength: Bool { false }
+
   let _controller: Weak<MRPController<P>>
 
   public var controller: MRPController<P>? { _controller.object }

@@ -19,6 +19,7 @@ enum MRPError: Error {
   case attributeAlreadyRegistered
   case badVectorAttribute
   case badProtocolVersion
+  case badPduEndMark
   case badPduLength
   case doNotPropagateAttribute
   case invalidAttributeValue

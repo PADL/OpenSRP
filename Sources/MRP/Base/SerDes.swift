@@ -128,6 +128,18 @@ public struct DeserializationContext {
   func peek() throws -> UInt8 {
     try peek(count: 1).first!
   }
+
+  func peek() throws -> UInt16 {
+    try UInt16(bigEndianBytes: peek(count: 2))
+  }
+
+  func peek() throws -> UInt32 {
+    try UInt32(bigEndianBytes: peek(count: 4))
+  }
+
+  func peek() throws -> UInt64 {
+    try UInt64(bigEndianBytes: peek(count: 8))
+  }
 }
 
 extension FixedWidthInteger {

@@ -195,6 +195,48 @@ struct VectorAttribute<V: Value>: Sendable, Equatable {
   }
 
   init(
+    leaveAllEvent: LeaveAllEvent,
+    firstValue: V,
+    attributeEvents: [AttributeEvent],
+    packedEventsType: PackedEventsType
+  ) {
+    switch packedEventsType {
+    case .threePackedType:
+      let vector = ThreePackedEvents.chunked(attributeEvents.map(\.rawValue))
+      self.init(
+        leaveAllEvent: leaveAllEvent,
+        numberOfValues: UInt16(attributeEvents.count),
+        firstValue: firstValue,
+        vector: vector
+      )
+    case .fourPackedType:
+      let vector = FourPackedEvents.chunked(attributeEvents.map(\.rawValue))
+      self.init(
+        leaveAllEvent: leaveAllEvent,
+        numberOfValues: UInt16(attributeEvents.count),
+        firstValue: firstValue,
+        vector: vector
+      )
+    }
+  }
+
+  init(
+    leaveAllEvent: LeaveAllEvent,
+    firstValue: V,
+    attributeEvents: [AttributeEvent],
+    attributeType: AttributeType,
+    application: some Application
+  ) throws {
+    let packedEventsType = try application.packedEventsType(for: attributeType)
+    self.init(
+      leaveAllEvent: leaveAllEvent,
+      firstValue: firstValue,
+      attributeEvents: attributeEvents,
+      packedEventsType: packedEventsType
+    )
+  }
+
+  init(
     attributeType: AttributeType,
     attributeLength: AttributeLength,
     deserializationContext: inout DeserializationContext,
@@ -206,10 +248,11 @@ struct VectorAttribute<V: Value>: Sendable, Equatable {
       attributeOfType: attributeType,
       from: &deserializationContext
     ))
-    vector = try Array(
-      deserializationContext
-        .deserialize(count: Int(vectorHeader.numberOfValues))
+    let numberOfValueOctets = try ceil(
+      Int(vectorHeader.numberOfValues),
+      application.packingFactor(for: attributeType)
     )
+    vector = try Array(deserializationContext.deserialize(count: numberOfValueOctets))
   }
 
   func eraseToAny() -> VectorAttribute<AnyValue> {
@@ -248,7 +291,7 @@ struct VectorAttribute<V: Value>: Sendable, Equatable {
   }
 }
 
-struct Message: Serializable {
+struct Message {
   typealias V = AnyValue
 
   let attributeType: AttributeType
@@ -264,33 +307,71 @@ struct Message: Serializable {
     application: some Application
   ) throws {
     attributeType = try deserializationContext.deserialize()
+    // attributeLength is the length, in octets, of an attribute's firstValue
     let attributeLength: AttributeLength = try deserializationContext.deserialize()
-    let attributeListLength: AttributeListLength = try deserializationContext.deserialize()
+    // attributeListLength is optional and is the length, in octets, of the entire attribute list
+    // this can account for variable length attributes
+    var attributeListLength: AttributeListLength?
+    var attributeListPosition = 0
+    if application.hasAttributeListLength {
+      attributeListLength = try deserializationContext.deserialize()
+      attributeListPosition = deserializationContext.position
+    }
+
     var attributeList = [VectorAttribute<V>]()
-    for _ in 0..<attributeListLength {
-      try attributeList.append(VectorAttribute<V>(
+
+    repeat {
+      let mark: UInt16 = try deserializationContext.peek()
+      if mark == EndMark {
+        break
+      }
+      let vectorAttribute = try VectorAttribute<V>(
         attributeType: attributeType,
         attributeLength: attributeLength,
         deserializationContext: &deserializationContext,
         application: application
-      ))
+      )
+      attributeList.append(vectorAttribute)
+      // if an attribute list length was provided, check we haven't overrun it
+      if let attributeListLength,
+         deserializationContext.position >= attributeListPosition + Int(attributeListLength)
+      {
+        break
+      }
+    } while deserializationContext.position < deserializationContext.count
+
+    let endMark: UInt16 = try deserializationContext.deserialize()
+    guard endMark == EndMark else {
+      throw MRPError.badPduEndMark
     }
     self.attributeList = attributeList
   }
 
-  func serialize(into serializationContext: inout SerializationContext) throws {
+  func serialize(
+    into serializationContext: inout SerializationContext,
+    application: some Application
+  ) throws {
     serializationContext.serialize(uint8: attributeType)
     let attributeLengthPosition = serializationContext.position
     serializationContext.serialize(uint8: AttributeLength(0))
     var attributeLength: AttributeLength = 0
+    var attributeListLengthPosition: Int?
+    if application.hasAttributeListLength {
+      attributeListLengthPosition = serializationContext.position
+    }
     for attribute in attributeList {
       try attributeLength = attribute.serialize(into: &serializationContext)
+    }
+    serializationContext.serialize(uint16: EndMark)
+    if let attributeListLengthPosition {
+      let attributeListLength = UInt16(serializationContext.position - attributeListLengthPosition)
+      serializationContext.serialize(uint16: attributeListLength, at: attributeListLengthPosition)
     }
     serializationContext.serialize(uint8: attributeLength, at: attributeLengthPosition)
   }
 }
 
-struct MRPDU: Serializable {
+struct MRPDU {
   let protocolVersion: ProtocolVersion
   let messages: [Message]
 
@@ -306,6 +387,10 @@ struct MRPDU: Serializable {
     protocolVersion = try deserializationContext.deserialize()
     var messages = [Message]()
     repeat {
+      let mark: UInt16 = try deserializationContext.peek()
+      if mark == EndMark {
+        break
+      }
       try messages.append(Message(
         deserializationContext: &deserializationContext,
         application: application
@@ -314,10 +399,13 @@ struct MRPDU: Serializable {
     self.messages = messages
   }
 
-  func serialize(into serializationContext: inout SerializationContext) throws {
+  func serialize(
+    into serializationContext: inout SerializationContext,
+    application: some Application
+  ) throws {
     serializationContext.serialize(uint8: protocolVersion)
     for message in messages {
-      try message.serialize(into: &serializationContext)
+      try message.serialize(into: &serializationContext, application: application)
     }
     serializationContext.serialize(uint16: EndMark)
   }

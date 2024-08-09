@@ -65,12 +65,15 @@ extension Bridge {
     contextIdentifier: MAPContextIdentifier,
     on port: P
   ) async throws {
-    let packet = try IEEE802Packet(
+    var serializationContext = SerializationContext(bytes: [])
+    try pdu.serialize(into: &serializationContext, application: application)
+
+    let packet = IEEE802Packet(
       destMacAddress: application.groupAddress,
       contextIdentifier: contextIdentifier,
       sourceMacAddress: port.macAddress,
       etherType: application.etherType,
-      payload: pdu.serialized()
+      payload: serializationContext.bytes
     )
     try await tx(packet, on: port.id)
   }

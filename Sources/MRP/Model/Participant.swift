@@ -200,20 +200,6 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     try await _handleLeaveAll(event: .leavealltimer, flags: .firedFromTimer)
   }
 
-  private func _makeVector(
-    for attributeType: AttributeType,
-    attributeEvents: [EnqueuedEvent.AttributeEvent]
-  ) throws -> [UInt8] {
-    guard let application else { throw MRPError.internalError }
-
-    return switch try application.packedEventsType(for: attributeType) {
-    case .threePackedType:
-      ThreePackedEvents.chunked(attributeEvents.map(\.attributeEvent.rawValue)).map(\.value)
-    case .fourPackedType:
-      FourPackedEvents.chunked(attributeEvents.map(\.attributeEvent.rawValue)).map(\.value)
-    }
-  }
-
   private func _coalesce(events: EnqueuedEvents) throws -> [Message] {
     guard let application else { throw MRPError.internalError }
 
@@ -226,19 +212,25 @@ public final actor Participant<A: Application>: Equatable, Hashable {
           $0.attributeValue.index < $1.attributeValue.index
         })
       let valueIndexGroups = attributeEvents.map(\.attributeValue.index).consecutivelyGrouped
-      let vector = try _makeVector(for: event.key, attributeEvents: attributeEvents)
 
-      var vectorAttributes: [VectorAttribute<AnyValue>] = valueIndexGroups.map { group in
-        let firstValue = attributeEvents
-          .first(where: { $0.attributeValue.index == group[0] })!
-          .attributeValue.value
-        return VectorAttribute<AnyValue>(
-          leaveAllEvent: leaveAll ? .LeaveAll : .NullLeaveAllEvent,
-          numberOfValues: NumberOfValues(group.count),
-          firstValue: firstValue,
-          vector: vector
-        )
-      }
+      var vectorAttributes: [VectorAttribute<AnyValue>] = try valueIndexGroups
+        .map { valueIndexGroup in
+          let firstIndex = valueIndexGroup.first!
+          let lastIndex = valueIndexGroup.last!
+          let firstValue = attributeEvents
+            .first(where: { $0.attributeValue.index == firstIndex })!
+            .attributeValue.value
+          let attributeEventsSlice = attributeEvents[firstIndex...lastIndex]
+          precondition(attributeEventsSlice.count == valueIndexGroup.count)
+
+          return try VectorAttribute<AnyValue>(
+            leaveAllEvent: leaveAll ? .LeaveAll : .NullLeaveAllEvent,
+            firstValue: firstValue,
+            attributeEvents: Array(attributeEventsSlice.map(\.attributeEvent)),
+            attributeType: event.key,
+            application: application
+          )
+        }
 
       if vectorAttributes.count == 0, leaveAll {
         let vectorAttribute = try VectorAttribute<AnyValue>(
