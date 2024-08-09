@@ -49,11 +49,10 @@ final class Timer: Sendable {
 
   func start(interval: Duration) {
     _task.withCriticalRegion { task in
-      task?.cancel()
+      precondition(task == nil || task!.isCancelled)
       task = Task<(), Error> {
-        for await _ in AsyncTimerSequence(interval: interval, clock: .continuous) {
-          try await _onExpiry()
-        }
+        try await Task.sleep(for: interval, clock: .continuous)
+        try await _onExpiry()
       }
     }
   }

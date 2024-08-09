@@ -42,7 +42,7 @@
 // registered
 
 struct Applicant: Sendable, CustomStringConvertible {
-  enum State: Sendable, StateMachineHandler {
+  enum State: Sendable {
     case VO // Very anxious Observer
     case VP // Very anxious Passive
     case VN // Very anxious New
@@ -55,6 +55,18 @@ struct Applicant: Sendable, CustomStringConvertible {
     case AP // Anxious Passive
     case QP // Quiet Passive
     case LO // Leaving Observer
+  }
+
+  enum Action: Sendable {
+    case sN // send a New message (10.7.6.2) A
+    case sJ // send a JoinIn or JoinMT message (10.7.6.3) A
+    case sL // send a Lv message (10.7.6.4) A
+    case s // send an In or an Empty message (10.7.6.5) A
+    case s_ // send an In or an Empty message, if required for optimization of the encoding
+    // (10.7.6.5) A
+    case sL_ // send a Lv message, if required for optimization of the encoding (10.7.6.4) A
+    case sJ_ // send a Join message, if required for optimization of the encoding (10.7.6.3) A
+    case sLA // send a Leave All message (10.7.6.6) A
   }
 
   // TODO: update counters
@@ -71,7 +83,7 @@ struct Applicant: Sendable, CustomStringConvertible {
 
   init() {}
 
-  func handle(event: ProtocolEvent, flags: StateMachineHandlerFlags) -> [ProtocolAction] {
+  func handle(event: ProtocolEvent, flags: StateMachineHandlerFlags) -> Action? {
     _state.withCriticalRegion { $0.handle(event: event, flags: flags) }
   }
 
@@ -84,8 +96,8 @@ extension Applicant.State {
   mutating func handle(
     event: ProtocolEvent,
     flags: StateMachineHandlerFlags
-  ) -> [ProtocolAction] {
-    var action: ProtocolAction?
+  ) -> Applicant.Action? {
+    var action: Applicant.Action?
 
     switch event {
     case .Begin:
@@ -270,7 +282,6 @@ extension Applicant.State {
       break
     }
 
-    if let action { return [action] }
-    else { return [] }
+    return action
   }
 }

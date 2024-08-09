@@ -46,19 +46,20 @@ enum ProtocolEvent: Sendable {
 }
 
 enum ProtocolAction: Sendable {
-  case New // send a New indication to MAP and the MRP application (10.7.6.12)
-  case Join // send a Join indication to MAP and the MRP application (10.7.6.13)
-  case Lv // send a Lv indication to MAP and the MRP application (10.7.6.14)
+  case New // send a New indication to MAP and the MRP application (10.7.6.12) R
+  case Join // send a Join indication to MAP and the MRP application (10.7.6.13) R
+  case Lv // send a Lv indication to MAP and the MRP application (10.7.6.14) R
   case sN // send a New message (10.7.6.2)
-  case sJ // send a JoinIn or JoinMT message (10.7.6.3)
-  case sL // send a Lv message (10.7.6.4)
-  case s // send an In or an Empty message (10.7.6.5)
+  case sJ // send a JoinIn or JoinMT message (10.7.6.3) A
+  case sL // send a Lv message (10.7.6.4) A
+  case s // send an In or an Empty message (10.7.6.5) A
   case s_ // send an In or an Empty message, if required for optimization of the encoding (10.7.6.5)
-  case sL_ // send a Lv message, if required for optimization of the encoding (10.7.6.4)
-  case sJ_ // send a Join message, if required for optimization of the encoding (10.7.6.3)
-  case sLA // send a Leave All message (10.7.6.6)
-  case periodic // Periodic transmission event (10.7.6.7).
-  case leavetimer // Leave period timer (10.7.4.2)
-  case leavealltimer // Leave All period timer (10.7.4.3)
-  case periodictimer // Periodic Transmission timer (10.7.4.4)
+  // A
+  case sL_ // send a Lv message, if required for optimization of the encoding (10.7.6.4) A
+  case sJ_ // send a Join message, if required for optimization of the encoding (10.7.6.3) A
+  case sLA // send a Leave All message (10.7.6.6) A
+  case periodic // Periodic transmission event (10.7.6.7). P
+  case leavetimer // Leave period timer (10.7.4.2) R
+  case leavealltimer // Leave All period timer (10.7.4.3) P
+  case periodictimer // Periodic Transmission timer (10.7.4.4) P
 }

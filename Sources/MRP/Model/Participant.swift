@@ -17,8 +17,9 @@
 // one Participant per MRP application per Port
 //
 // a) Participants can issue declarations for MRP application attributes (10.2,
-//    10.3, 10.7.3, and 10.7.7).  b) Participants can withdraw declarations for
-//    attributes (10.2, 10.3, 10.7.3, and 10.7.7).
+//    10.3, 10.7.3, and 10.7.7).
+// b) Participants can withdraw declarations for attributes (10.2, 10.3,
+//    10.7.3, and 10.7.7).
 // c) Each Bridge propagates declarations to MRP Participants (10.3).
 // d) MRP Participants can track the current state of declaration and
 //    registration of attributes on each Port of the participant device (10.7.7 and
@@ -33,7 +34,6 @@
 // Propagation Context (MAP Context) understood by the Bridge. A MAP Context
 // identifies the set of Bridge Ports that form the applicable active topology
 // (8.4).
-//
 
 import Logging
 
@@ -56,7 +56,7 @@ public struct ParticipantEventFlags: OptionSet, Sendable {
   // fired from a timer
   public static let firedFromTimer = ParticipantEventFlags(rawValue: 1 << 0)
 
-  // source is local MAC address, e.g. from kernel MVRP stack
+  // source is local MAC address, e.g. from kernel MVRP stack, used to avoid loopback
   public static let sourceIsLocal = ParticipantEventFlags(rawValue: 1 << 1)
 
   // locally initiated from mvrpd
@@ -74,13 +74,6 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     port.hash(into: &hasher)
     contextIdentifier.hash(into: &hasher)
   }
-
-  private nonisolated let _mad: Weak<MAD<A.P>>
-  fileprivate nonisolated var mad: MAD<A.P>? { _mad.object }
-  private nonisolated let _application: Weak<A>
-  fileprivate nonisolated var application: A? { _application.object }
-  nonisolated let port: A.P
-  nonisolated let contextIdentifier: MAPContextIdentifier
 
   private enum EnqueuedEvent {
     struct AttributeEvent {
@@ -114,14 +107,14 @@ public final actor Participant<A: Application>: Equatable, Hashable {
       case let .attributeEvent(attributeEvent):
         attributeEvent
       case .leaveAllEvent:
-        fatalError()
+        fatalError("attemped to unsafely unwrap LeaveAll event")
       }
     }
   }
 
   private typealias EnqueuedEvents = [AttributeType: [EnqueuedEvent]]
 
-  private enum LeaveAllState: StateMachineHandler {
+  private enum LeaveAllState {
     case Active
     case Passive
 
@@ -161,8 +154,16 @@ public final actor Participant<A: Application>: Equatable, Hashable {
   private var _leaveAllState = LeaveAllState.Passive
   private var _leaveAllTimer: Timer!
   private var _jointimer: Timer!
+  private nonisolated let _mad: Weak<MAD<A.P>>
+  private nonisolated let _application: Weak<A>
+
   fileprivate let _logger: Logger
   fileprivate let _type: ParticipantType
+  fileprivate nonisolated var mad: MAD<A.P>? { _mad.object }
+  fileprivate nonisolated var application: A? { _application.object }
+
+  nonisolated let port: A.P
+  nonisolated let contextIdentifier: MAPContextIdentifier
 
   init(
     mad: MAD<A.P>,
@@ -284,6 +285,8 @@ public final actor Participant<A: Application>: Equatable, Hashable {
       messages.append(Message(attributeType: event.key, attributeList: vectorAttributes))
     }
 
+    _logger.trace("coalesced events \(events) into \(messages)")
+
     return messages
   }
 
@@ -332,7 +335,6 @@ public final actor Participant<A: Application>: Equatable, Hashable {
       // (10.7.6.6); or a MRPDU is received with a LeaveAll
       try await _apply(event: .rLA, flags: flags)
       try _txEnqueueLeaveAllEvents()
-    // try await _handleLeaveAll(event: .rLA)
     default:
       fatalError("invalid LeaveAll state")
     }
@@ -591,52 +593,28 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
   func handle(event: ProtocolEvent, flags: ParticipantEventFlags) async throws {
     guard let participant else { throw MRPError.internalError }
     let smFlags = try await participant._getSmFlags(for: attributeType)
-    var logString: String!
-    if participant._logger.logLevel == .trace {
-      logString = "participant handling protocol event \(event) flags \(smFlags) " +
-        "applicantState \(applicant) registrarState \(registrar?.description ?? "none") =>"
+
+    participant._logger
+      .trace(
+        "handling protocol event \(event) flags \(smFlags) state A \(applicant) R \(registrar?.description ?? "-")"
+      )
+
+    let applicantAction = applicant.handle(event: event, flags: smFlags)
+    if let applicantAction {
+      participant._logger.trace("applicant action for event \(event): \(applicantAction)")
+      try await handle(applicantAction: applicantAction, flags: flags)
     }
-    let applicantActions = applicant.handle(event: event, flags: smFlags)
-    let registrarActions = registrar?.handle(event: event, flags: smFlags) ?? []
-    if participant._logger.logLevel == .trace {
-      logString += "applicantState \(applicant) registrarState \(registrar?.description ?? "none")"
-      participant._logger.trace("\(logString!) -- actions \(applicantActions + registrarActions)")
-    }
-    for action in applicantActions + registrarActions {
-      try await handle(action: action, flags: flags)
+
+    if let registrarAction = registrar?.handle(event: event, flags: smFlags) {
+      participant._logger.trace("registrar action for event \(event): \(registrarAction)")
+      try await handle(registrarAction: registrarAction, flags: flags)
     }
   }
 
-  func handle(action: ProtocolAction, flags: ParticipantEventFlags) async throws {
+  func handle(applicantAction action: Applicant.Action, flags: ParticipantEventFlags) async throws {
     guard let participant else { throw MRPError.internalError }
-    participant._logger.trace("handling protocol action \(action)")
+    participant._logger.trace("handling applicant action \(action)")
     switch action {
-    case .New:
-      try await participant.application?.joinIndicated(
-        contextIdentifier: participant.contextIdentifier,
-        port: participant.port,
-        attributeType: attributeType,
-        attributeValue: value,
-        isNew: true,
-        flags: flags
-      )
-    case .Join:
-      try await participant.application?.joinIndicated(
-        contextIdentifier: participant.contextIdentifier,
-        port: participant.port,
-        attributeType: attributeType,
-        attributeValue: value,
-        isNew: false,
-        flags: flags
-      )
-    case .Lv:
-      try await participant.application?.leaveIndicated(
-        contextIdentifier: participant.contextIdentifier,
-        port: participant.port,
-        attributeType: attributeType,
-        attributeValue: value,
-        flags: flags
-      )
     case .sN:
       // The AttributeEvent value New is encoded in the Vector as specified in
       // 10.7.6.1.
@@ -669,6 +647,41 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
         await participant._txEnqueue(attributeEvent: .Mt, attributeValue: self)
       }
     default:
+      break
+    }
+  }
+
+  func handle(registrarAction action: Registrar.Action, flags: ParticipantEventFlags) async throws {
+    guard let participant else { throw MRPError.internalError }
+    participant._logger.trace("handling registrar action \(action)")
+    switch action {
+    case .New:
+      try await participant.application?.joinIndicated(
+        contextIdentifier: participant.contextIdentifier,
+        port: participant.port,
+        attributeType: attributeType,
+        attributeValue: value,
+        isNew: true,
+        flags: flags
+      )
+    case .Join:
+      try await participant.application?.joinIndicated(
+        contextIdentifier: participant.contextIdentifier,
+        port: participant.port,
+        attributeType: attributeType,
+        attributeValue: value,
+        isNew: false,
+        flags: flags
+      )
+    case .Lv:
+      try await participant.application?.leaveIndicated(
+        contextIdentifier: participant.contextIdentifier,
+        port: participant.port,
+        attributeType: attributeType,
+        attributeValue: value,
+        flags: flags
+      )
+    case .leavetimer:
       break
     }
   }

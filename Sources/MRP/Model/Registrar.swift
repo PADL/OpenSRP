@@ -19,10 +19,17 @@
 // the Applicant looks after the interests of all would-be Participants.
 
 struct Registrar: Sendable, CustomStringConvertible {
-  enum State: Sendable, StateMachineHandler {
+  enum State: Sendable {
     case IN // Registered
     case LV // Previously registered, but now being timed out
     case MT // Not registered
+  }
+
+  enum Action: Sendable {
+    case New // send a New indication to MAP and the MRP application (10.7.6.12) R
+    case Join // send a Join indication to MAP and the MRP application (10.7.6.13) R
+    case Lv // send a Lv indication to MAP and the MRP application (10.7.6.14) R
+    case leavetimer // Leave period timer (10.7.4.2) R
   }
 
   private let _state = ManagedCriticalState(State.MT)
@@ -32,7 +39,7 @@ struct Registrar: Sendable, CustomStringConvertible {
     _leavetimer = Timer(onExpiry: onLeaveTimerExpired)
   }
 
-  func handle(event: ProtocolEvent, flags: StateMachineHandlerFlags) -> [ProtocolAction] {
+  func handle(event: ProtocolEvent, flags: StateMachineHandlerFlags) -> Action? {
     _state.withCriticalRegion { $0.handle(event: event, flags: flags) }
   }
 
@@ -64,18 +71,18 @@ extension Registrar.State {
   mutating func handle(
     event: ProtocolEvent,
     flags: StateMachineHandlerFlags
-  ) -> [ProtocolAction] {
-    var actions = [ProtocolAction]()
-
+  ) -> Registrar.Action? {
     if flags.contains(.registrationForbidden) {
       self = .MT
-      return actions
+      return nil
     }
     if (flags.contains(.registrationFixedNewPropagated) && event != .rNew) ||
       flags.contains(.registrationFixedNewIgnored)
     {
-      return actions
+      return nil
     }
+
+    var action: Registrar.Action?
 
     switch event {
     case .Begin:
@@ -86,13 +93,11 @@ extension Registrar.State {
       fallthrough
     case .rJoinMt:
       if event == .rNew {
-        actions.append(.New)
+        action = .New
       } else if self == .MT {
-        actions.append(.Join)
+        action = .Join
       }
-      if self == .LV {
-        actions.append(.leavetimer)
-      }
+      if self == .LV {}
       self = .IN
     case .rLv:
       fallthrough
@@ -102,23 +107,22 @@ extension Registrar.State {
       fallthrough
     case .ReDeclare:
       precondition(self == .IN)
-      actions = [.leavetimer]
       self = .LV
     case .Flush:
       if self != .MT {
-        actions.append(.Lv)
+        action = .Lv
       }
       self = .MT
     case .leavetimer:
       precondition(self != .IN)
       if self == .LV || flags.contains(.operPointToPointMAC) {
-        actions = [.Lv]
+        action = .Lv
       }
       self = .MT
     default:
       break
     }
 
-    return actions
+    return action
   }
 }

@@ -29,7 +29,3 @@ struct StateMachineHandlerFlags: OptionSet {
   static let registrationForbidden = StateMachineHandlerFlags(rawValue: 1 << 3)
   static let applicantOnlyParticipant = StateMachineHandlerFlags(rawValue: 1 << 4)
 }
-
-protocol StateMachineHandler: Sendable {
-  mutating func handle(event: ProtocolEvent, flags: StateMachineHandlerFlags) -> [ProtocolAction]
-}
