@@ -44,7 +44,7 @@ private final class MRPDaemon: AsyncParsableCommand {
   var bridgeInterface: String
 
   @Option(name: .shortAndLong, help: "NetFilter group")
-  var nfGroup: Int = 100
+  var nfGroup: Int = 10
 
   @Option(name: .long, help: "Exclude physical interface (may be specified multiple times)")
   var excludeIface: [String] = []

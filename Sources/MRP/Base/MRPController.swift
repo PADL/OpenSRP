@@ -78,11 +78,15 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
 
     try bridge.willRun(ports: ports)
 
-    try await withThrowingTaskGroup(of: Void.self) { group in
-      _taskGroup = group
-      group.addTask { @Sendable in try await self._handleBridgeNotifications() }
-      group.addTask { @Sendable in try await self._handleRxPackets() }
-      for try await _ in group {}
+    do {
+      try await withThrowingTaskGroup(of: Void.self) { group in
+        _taskGroup = group
+        group.addTask { @Sendable in try await self._handleBridgeNotifications() }
+        group.addTask { @Sendable in try await self._handleRxPackets() }
+        for try await _ in group {}
+      }
+    } catch {
+      logger.error("MRP event loop terminated: \(error)")
     }
   }
 
@@ -228,7 +232,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
         }
       } catch {
         logger
-          .info("failed to handle bridge notification on \(notification.port): \(error)")
+          .error("failed to handle bridge notification on \(notification.port): \(error)")
       }
     }
   }
@@ -240,7 +244,11 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
         logger.info("application \(packet.etherType) on port \(id) not found, skipping")
         continue
       }
-      try await application.rx(packet: packet, from: port)
+      do {
+        try await application.rx(packet: packet, from: port)
+      } catch {
+        logger.error("failed to process packet \(packet) from port \(port): \(error)")
+      }
     }
   }
 
