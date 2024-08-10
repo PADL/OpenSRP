@@ -183,8 +183,7 @@ private extension LinuxPort {
   }
 }
 
-public final class LinuxBridge: Bridge, @unchecked
-Sendable, CustomStringConvertible {
+public final class LinuxBridge: Bridge, @unchecked Sendable, CustomStringConvertible {
   public typealias Port = LinuxPort
 
   private let _txSocket: Socket
@@ -192,6 +191,7 @@ Sendable, CustomStringConvertible {
   private var _nlLinkMonitorTask: Task<(), Error>?
   private let _nlNfLog: NFNLLog
   private var _nlNfLogMonitorTask: Task<(), Error>?
+  private var _bridgeIndex: Int = 0
   private let _bridgePort = ManagedCriticalState<Port?>(nil)
   private let _portNotificationChannel = AsyncChannel<PortNotification<Port>>()
   private let _rxPacketsChannel = AsyncThrowingChannel<(Port.ID, IEEE802Packet), Error>()
@@ -208,7 +208,10 @@ Sendable, CustomStringConvertible {
     guard bridgePorts.count == 1 else {
       throw MRPError.invalidBridgeIdentity
     }
-    _bridgePort.withCriticalRegion { $0 = bridgePorts.first! }
+    _bridgeIndex = bridgePorts.first!._rtnl.index
+    _bridgePort.withCriticalRegion {
+      $0 = bridgePorts.first!
+    }
     _nlLinkMonitorTask = Task<(), Error> { [self] in
       for try await notification in _nlLinkSocket.notifications {
         do {
@@ -238,16 +241,15 @@ Sendable, CustomStringConvertible {
   private func _handleLinkNotification(_ linkMessage: RTNLLinkMessage) async throws {
     var portNotification: PortNotification<Port>?
     try _bridgePort.withCriticalRegion { bridgePort in
-      let bridgeIndex = bridgePort!._rtnl.index
       let port = try Port(rtnl: linkMessage.link, bridge: self)
-      if port._isBridgeSelf, port._rtnl.index == bridgeIndex {
+      if port._isBridgeSelf, port._rtnl.index == _bridgeIndex {
         if case .new = linkMessage {
           bridgePort = port
         } else {
           debugPrint("LinuxBridge: bridge device itself removed")
           throw Errno.noSuchAddressOrDevice
         }
-      } else if port._rtnl.master == bridgeIndex {
+      } else if port._rtnl.master == _bridgeIndex {
         if case .new = linkMessage {
           portNotification = .added(port)
           try _addLinkLocalRxTask(port: port)
@@ -285,10 +287,6 @@ Sendable, CustomStringConvertible {
       _nlLinkSocket.getLinks(family: family).map { try Port(rtnl: $0, bridge: self) }
         .collect()
     )
-  }
-
-  private var _bridgeIndex: Int {
-    _bridgePort.criticalState!._rtnl.index
   }
 
   @_spi(SwiftMRPPrivate)
@@ -369,9 +367,8 @@ Sendable, CustomStringConvertible {
   }
 
   public func getPorts() async throws -> Set<Port> {
-    let bridgeIndex = _bridgeIndex
     return try await _getPorts().filter {
-      !$0._isBridgeSelf && $0._rtnl.master == bridgeIndex
+      !$0._isBridgeSelf && $0._rtnl.master == _bridgeIndex
     }
   }
 
