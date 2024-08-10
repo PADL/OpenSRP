@@ -19,18 +19,26 @@ import AsyncExtensions
 public protocol Bridge<P>: Sendable {
   associatedtype P: Port
 
-  var vlans: Set<VLAN> { get }
   var notifications: AnyAsyncSequence<PortNotification<P>> { get }
 
-  func register(groupAddress: EUI48, etherType: UInt16) throws
-  func deregister(groupAddress: EUI48, etherType: UInt16) throws
+  func register(
+    groupAddress: EUI48,
+    etherType: UInt16,
+    controller: isolated MRPController<P>
+  ) async throws
+  func deregister(
+    groupAddress: EUI48,
+    etherType: UInt16,
+    controller: isolated MRPController<P>
+  ) async throws
 
-  func run() async throws
-  func shutdown() throws
+  func run(controller: isolated MRPController<P>) async throws
+  func shutdown(controller: isolated MRPController<P>) async throws
 
   // Bridge provies a unified interface for sending and receiving packets, even
   // though the actual implementation may need separate paths for handling link-
   // local and non-link-local packets
+  func getVlans(controller: isolated MRPController<P>) async -> Set<VLAN>
 
   func tx(_ packet: IEEE802Packet, on: P.ID) async throws
   var rxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)> { get throws }

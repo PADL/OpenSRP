@@ -412,6 +412,10 @@ public extension NLSocket {
     try add(membership: RTNLGRP_LINK)
   }
 
+  func unsubscribeLinks() throws {
+    try drop(membership: RTNLGRP_LINK)
+  }
+
   fileprivate func addOrRemove(vlans: Set<UInt16>, ifIndex: Int, isAdd: Bool) async throws {
     let message = try NLMessage(type: isAdd ? RTM_SETLINK : RTM_DELLINK, flags: 0)
     let attr = message.nestStart(attr: CInt(IFLA_AF_SPEC))

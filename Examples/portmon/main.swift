@@ -14,6 +14,7 @@
 // limitations under the License.
 //
 
+import Logging
 @_spi(SwiftMRPPrivate)
 import MRP
 
@@ -43,16 +44,27 @@ actor PortMonitor {
   }
 
   func run() async throws {
-    let bridge = try await B(
+    let bridge = try B(
       name: CommandLine.arguments.count > 1 ? CommandLine
         .arguments[1] : "br0",
       netFilterGroup: 10
     )
 
+    let logger = Logger(label: "com.padl.MRP.portmon")
+    let controller = try await MRPController(bridge: bridge, logger: logger)
+
     // now we need to register to ensure RX task is created
     // we can do this for every application we wish to monitor
-    try bridge.register(groupAddress: IndividualLANScopeGroupAddress, etherType: 0x22EA) // MSRP
-    try bridge.register(groupAddress: CustomerBridgeMRPGroupAddress, etherType: 0x88F5) // MVRP
+    try await bridge.register(
+      groupAddress: IndividualLANScopeGroupAddress,
+      etherType: 0x22EA,
+      controller: controller
+    ) // MSRP
+    try await bridge.register(
+      groupAddress: CustomerBridgeMRPGroupAddress,
+      etherType: 0x88F5,
+      controller: controller
+    ) // MVRP
 
     try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { @Sendable in
@@ -63,7 +75,7 @@ actor PortMonitor {
       }
       group.addTask { @Sendable in
         print("Monitoring bridge RX packets...")
-        try await bridge.run()
+        try await bridge.run(controller: controller)
         do {
           for try await (index, packet) in bridge.rxPackets {
             await print(

@@ -24,7 +24,6 @@ import CNetLink
 import Glibc
 import IORing
 import IORingUtils
-import Locking
 import NetLink
 import SocketAddress
 import SystemPackage
@@ -183,78 +182,57 @@ private extension LinuxPort {
   }
 }
 
-public final class LinuxBridge: Bridge, @unchecked
-Sendable, CustomStringConvertible {
+public final class LinuxBridge: Bridge, CustomStringConvertible, @unchecked Sendable {
   public typealias Port = LinuxPort
 
   private let _txSocket: Socket
   fileprivate let _nlLinkSocket: NLSocket
-  private var _nlLinkMonitorTask: Task<(), Error>?
   private let _nlNfLog: NFNLLog
-  private var _nlNfLogMonitorTask: Task<(), Error>?
+  private var _nlNfLogMonitorTask: Task<(), Error>!
+  private var _nlLinkMonitorTask: Task<(), Error>!
+  private let _bridgeName: String
   private var _bridgeIndex: Int = 0
-  private let _bridgePort = ManagedCriticalState<Port?>(nil)
+  private var _bridgePort: Port?
   private let _portNotificationChannel = AsyncChannel<PortNotification<Port>>()
   private let _rxPacketsChannel = AsyncThrowingChannel<(Port.ID, IEEE802Packet), Error>()
-  private let _linkLocalRegistrations = ManagedCriticalState<Set<FilterRegistration>>([])
-  private let _linkLocalRxTasks = ManagedCriticalState<[LinkLocalRXTaskKey: Task<(), Error>]>([:])
+  private var _linkLocalRegistrations = Set<FilterRegistration>()
+  private var _linkLocalRxTasks = [LinkLocalRXTaskKey: Task<(), Error>]()
 
-  public init(name: String, netFilterGroup group: Int) async throws {
+  public init(name: String, netFilterGroup group: Int) throws {
     _txSocket = try Socket(ring: IORing.shared, domain: sa_family_t(AF_PACKET), type: SOCK_RAW)
     _nlLinkSocket = try NLSocket(protocol: NETLINK_ROUTE)
     _nlNfLog = try NFNLLog(group: UInt16(group))
-    try _nlLinkSocket.subscribeLinks()
-    let bridgePort = try await _getBridgePort(name: name)
-    _bridgeIndex = bridgePort._rtnl.index
-    _bridgePort.withCriticalRegion { $0 = bridgePort }
-    _nlLinkMonitorTask = Task<(), Error> { [self] in
-      for try await notification in _nlLinkSocket.notifications {
-        do {
-          try _handleLinkNotification(notification as! RTNLLinkMessage)
-        } catch Errno.noSuchAddressOrDevice {
-          throw Errno.noSuchAddressOrDevice
-        } catch {}
-      }
-    }
-    _nlNfLogMonitorTask = Task<(), Error> { [self] in
-      for try await packet in _nfNlLogRxPackets {
-        await _rxPacketsChannel.send(packet)
-      }
-    }
+    _bridgeName = name
   }
 
   deinit {
-    _nlLinkMonitorTask?.cancel()
-    _nlNfLogMonitorTask?.cancel()
-    try? shutdown()
+    try? _shutdown()
   }
 
   public nonisolated var description: String {
-    "LinuxBridge(name: \(bridgePort.name))"
+    "LinuxBridge(name: \(_bridgePort!.name))"
   }
 
   private func _handleLinkNotification(_ linkMessage: RTNLLinkMessage) throws {
     var portNotification: PortNotification<Port>?
-    try _bridgePort.withCriticalRegion { bridgePort in
-      let port = try Port(rtnl: linkMessage.link, bridge: self)
-      if port._isBridgeSelf, port._rtnl.index == _bridgeIndex {
-        if case .new = linkMessage {
-          bridgePort = port
-        } else {
-          debugPrint("LinuxBridge: bridge device itself removed")
-          throw Errno.noSuchAddressOrDevice
-        }
-      } else if port._rtnl.master == _bridgeIndex {
-        if case .new = linkMessage {
-          portNotification = .added(port)
-          try _addLinkLocalRxTask(port: port)
-        } else {
-          try _cancelLinkLocalRxTask(port: port)
-          portNotification = .removed(port)
-        }
+    let port = try Port(rtnl: linkMessage.link, bridge: self)
+    if port._isBridgeSelf, port._rtnl.index == _bridgeIndex {
+      if case .new = linkMessage {
+        _bridgePort = port
       } else {
-        debugPrint("LinuxBridge: ignoring port \(port), not a member or us")
+        debugPrint("LinuxBridge: bridge device itself removed")
+        throw Errno.noSuchAddressOrDevice
       }
+    } else if port._rtnl.master == _bridgeIndex {
+      if case .new = linkMessage {
+        portNotification = .added(port)
+        try _addLinkLocalRxTask(port: port)
+      } else {
+        try _cancelLinkLocalRxTask(port: port)
+        portNotification = .removed(port)
+      }
+    } else {
+      debugPrint("LinuxBridge: ignoring port \(port), not a member or us")
     }
     if let portNotification {
       Task { await _portNotificationChannel.send(portNotification) }
@@ -266,11 +244,11 @@ Sendable, CustomStringConvertible {
   }
 
   public var defaultPVid: UInt16? {
-    _bridgePort.criticalState!._pvid
+    _bridgePort!._pvid
   }
 
-  public var vlans: Set<VLAN> {
-    if let vlans = _bridgePort.criticalState!._vlans {
+  public func getVlans(controller: isolated MRPController<Port>) async -> Set<VLAN> {
+    if let vlans = _bridgePort!._vlans {
       Set(vlans.map { VLAN(vid: $0) })
     } else {
       Set()
@@ -278,7 +256,7 @@ Sendable, CustomStringConvertible {
   }
 
   public var name: String {
-    _bridgePort.criticalState!.name
+    _bridgePort!.name
   }
 
   private func _getPorts(family: sa_family_t) async throws -> Set<Port> {
@@ -305,7 +283,7 @@ Sendable, CustomStringConvertible {
 
   @_spi(SwiftMRPPrivate)
   public var bridgePort: Port {
-    _bridgePort.criticalState!
+    _bridgePort!
   }
 
   private struct LinkLocalRXTaskKey: Hashable {
@@ -330,18 +308,15 @@ Sendable, CustomStringConvertible {
 
   private func _addLinkLocalRxTask(port: Port) throws {
     precondition(!port._isBridgeSelf)
-    let filterRegistrations = _linkLocalRegistrations.criticalState
-    _linkLocalRxTasks.withCriticalRegion { linkLocalRxTasks in
-      for filterRegistration in filterRegistrations {
-        let key = LinkLocalRXTaskKey(portID: port.id, filterRegistration: filterRegistration)
-        linkLocalRxTasks[key] = _allocateLinkLocalRxTask(
-          port: port,
-          filterRegistration: filterRegistration
-        )
-        debugPrint(
-          "LinuxBridge: started link-local RX task for \(port) filter registration \(filterRegistration)"
-        )
-      }
+    for filterRegistration in _linkLocalRegistrations {
+      let key = LinkLocalRXTaskKey(portID: port.id, filterRegistration: filterRegistration)
+      _linkLocalRxTasks[key] = _allocateLinkLocalRxTask(
+        port: port,
+        filterRegistration: filterRegistration
+      )
+      debugPrint(
+        "LinuxBridge: started link-local RX task for \(port) filter registration \(filterRegistration)"
+      )
     }
   }
 
@@ -351,36 +326,63 @@ Sendable, CustomStringConvertible {
   }
 
   private func _cancelLinkLocalRxTask(portID: Port.ID) throws {
-    let filterRegistrations = _linkLocalRegistrations.criticalState
-    _linkLocalRxTasks.withCriticalRegion { linkLocalRxTasks in
-      for filterRegistration in filterRegistrations {
-        let key = LinkLocalRXTaskKey(portID: portID, filterRegistration: filterRegistration)
-        guard let index = linkLocalRxTasks.index(forKey: key) else { continue }
-        let task = linkLocalRxTasks[index].value
-        linkLocalRxTasks.remove(at: index)
-        task.cancel()
-        debugPrint(
-          "LinuxBridge: removed link-local RX task for \(portID) filter registration \(filterRegistration)"
-        )
+    for filterRegistration in _linkLocalRegistrations {
+      let key = LinkLocalRXTaskKey(portID: portID, filterRegistration: filterRegistration)
+      guard let index = _linkLocalRxTasks.index(forKey: key) else { continue }
+      let task = _linkLocalRxTasks[index].value
+      _linkLocalRxTasks.remove(at: index)
+      task.cancel()
+      debugPrint(
+        "LinuxBridge: removed link-local RX task for \(portID) filter registration \(filterRegistration)"
+      )
+    }
+  }
+
+  public func register(
+    groupAddress: EUI48,
+    etherType: UInt16,
+    controller: isolated MRPController<Port>
+  ) async throws {
+    guard _isLinkLocal(macAddress: groupAddress) else { return }
+    _linkLocalRegistrations.insert(FilterRegistration(
+      groupAddress: groupAddress,
+      etherType: etherType
+    ))
+  }
+
+  public func deregister(
+    groupAddress: EUI48,
+    etherType: UInt16,
+    controller: isolated MRPController<Port>
+  ) async throws {
+    guard _isLinkLocal(macAddress: groupAddress) else { return }
+    _linkLocalRegistrations.remove(FilterRegistration(
+      groupAddress: groupAddress,
+      etherType: etherType
+    ))
+  }
+
+  public func run(controller: isolated MRPController<Port>) async throws {
+    _bridgePort = try await _getBridgePort(name: _bridgeName)
+    _bridgeIndex = _bridgePort!._rtnl.index
+
+    try _nlLinkSocket.subscribeLinks()
+
+    _nlLinkMonitorTask = Task<(), Error> { [self] in
+      for try await notification in _nlLinkSocket.notifications {
+        do {
+          try _handleLinkNotification(notification as! RTNLLinkMessage)
+        } catch Errno.noSuchAddressOrDevice {
+          throw Errno.noSuchAddressOrDevice
+        } catch {}
       }
     }
-  }
-
-  public func register(groupAddress: EUI48, etherType: UInt16) throws {
-    guard _isLinkLocal(macAddress: groupAddress) else { return }
-    _linkLocalRegistrations.withCriticalRegion {
-      $0.insert(FilterRegistration(groupAddress: groupAddress, etherType: etherType))
+    _nlNfLogMonitorTask = Task<(), Error> { [self] in
+      for try await packet in _nfNlLogRxPackets {
+        await _rxPacketsChannel.send(packet)
+      }
     }
-  }
 
-  public func deregister(groupAddress: EUI48, etherType: UInt16) throws {
-    guard _isLinkLocal(macAddress: groupAddress) else { return }
-    _linkLocalRegistrations.withCriticalRegion {
-      $0.remove(FilterRegistration(groupAddress: groupAddress, etherType: etherType))
-    }
-  }
-
-  public func run() async throws {
     let ports = try await _getMemberPorts()
     for port in ports {
       await _portNotificationChannel.send(.added(port))
@@ -388,23 +390,31 @@ Sendable, CustomStringConvertible {
     }
   }
 
-  public func shutdown() throws {
-    let portIDs = _linkLocalRxTasks.criticalState.keys.map(\.portID)
+  private func _shutdown() throws {
+    let portIDs = _linkLocalRxTasks.keys.map(\.portID)
     for portID in portIDs {
-      try _cancelLinkLocalRxTask(portID: portID)
+      try? _cancelLinkLocalRxTask(portID: portID)
     }
+
+    _nlNfLogMonitorTask?.cancel()
+    _nlLinkMonitorTask?.cancel()
+
+    try? _nlLinkSocket.unsubscribeLinks()
+
+    _bridgePort = nil
+    _bridgeIndex = 0
+  }
+
+  public func shutdown(controller: isolated MRPController<Port>) async throws {
+    try _shutdown()
   }
 
   private func _add(vlans: Set<VLAN>) async throws {
-    if let bridgePort = _bridgePort.criticalState {
-      try await bridgePort._add(vlans: vlans)
-    }
+    try await _bridgePort!._add(vlans: vlans)
   }
 
   private func _remove(vlans: Set<VLAN>) async throws {
-    if let bridgePort = _bridgePort.criticalState {
-      try await bridgePort._remove(vlans: vlans)
-    }
+    try await _bridgePort!._remove(vlans: vlans)
   }
 
   public func tx(_ packet: IEEE802Packet, on portID: P.ID) async throws {
@@ -486,9 +496,7 @@ fileprivate final class FilterRegistration: Equatable, Hashable, Sendable, Custo
 
 extension LinuxBridge: MMRPAwareBridge {
   func register(groupAddress: EUI48, on ports: Set<P>) async throws {
-    try _bridgePort.withCriticalRegion { bridgePort in
-      try bridgePort!._addOrDelMulti(groupAddress: groupAddress, isAdd: true)
-    }
+    try _bridgePort!._addOrDelMulti(groupAddress: groupAddress, isAdd: true)
     for port in ports {
       try port._addOrDelMulti(groupAddress: groupAddress, isAdd: true)
     }
@@ -498,9 +506,7 @@ extension LinuxBridge: MMRPAwareBridge {
     for port in ports {
       try port._addOrDelMulti(groupAddress: groupAddress, isAdd: false)
     }
-    try _bridgePort.withCriticalRegion { bridgePort in
-      try bridgePort!._addOrDelMulti(groupAddress: groupAddress, isAdd: false)
-    }
+    try _bridgePort!._addOrDelMulti(groupAddress: groupAddress, isAdd: false)
   }
 
   func register(

@@ -74,7 +74,8 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
         _taskGroup = group
         group.addTask { @Sendable in try await self._handleBridgeNotifications() }
         group.addTask { @Sendable [self] in
-          try await bridge.run() // will block until starting set of ports is initialized
+          try await bridge
+            .run(controller: self) // will block until starting set of ports is initialized
           try await _handleRxPackets()
         }
         for try await _ in group {}
@@ -84,9 +85,9 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
     }
   }
 
-  private func _shutdown() {
+  private func _shutdown() async {
     logger.info("stopping MRP for bridge \(bridge)")
-    try? bridge.shutdown()
+    try? await bridge.shutdown(controller: self)
     for port in ports {
       try? _didRemove(port: port)
     }
@@ -97,7 +98,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
     try await cancelWhenGracefulShutdown {
       try await self._run()
     }
-    _shutdown()
+    await _shutdown()
   }
 
   public func lookup(port name: String) throws -> some Port {
@@ -108,10 +109,15 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
   }
 
   var knownContextIdentifiers: Set<MAPContextIdentifier> {
-    Set([MAPBaseSpanningTreeContext] + bridge.vlans.map { MAPContextIdentifier(vlan: $0) })
+    get async {
+      await Set(
+        [MAPBaseSpanningTreeContext] + bridge.getVlans(controller: self)
+          .map { MAPContextIdentifier(vlan: $0) }
+      )
+    }
   }
 
-  func context(for contextIdentifier: MAPContextIdentifier) -> MAPContext<P> {
+  func context(for contextIdentifier: MAPContextIdentifier) async -> MAPContext<P> {
     if contextIdentifier == MAPBaseSpanningTreeContext {
       ports
     } else {
@@ -122,9 +128,14 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
   }
 
   var knownContexts: MAPContextDictionary {
-    MAPContextDictionary(uniqueKeysWithValues: knownContextIdentifiers.map { contextIdentifier in
-      (contextIdentifier, context(for: contextIdentifier))
-    })
+    get async {
+      await MAPContextDictionary(
+        uniqueKeysWithValues: knownContextIdentifiers
+          .asyncMap { @Sendable contextIdentifier in
+            await (contextIdentifier, context(for: contextIdentifier))
+          }
+      )
+    }
   }
 
   private func _applyContextIdentifierChanges(
@@ -300,21 +311,26 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
     _taskGroup?.cancelAll()
   }
 
-  func register(application: some Application<P>) throws {
+  func register(application: some Application<P>) async throws {
     guard _applications[application.etherType] == nil
     else { throw MRPError.applicationAlreadyRegistered }
-    try bridge.register(groupAddress: application.groupAddress, etherType: application.etherType)
+    try await bridge.register(
+      groupAddress: application.groupAddress,
+      etherType: application.etherType,
+      controller: self
+    )
     _applications[application.etherType] = application
     logger.info("registered application \(application)")
   }
 
-  func deregister(application: some Application<P>) throws {
+  func deregister(application: some Application<P>) async throws {
     guard _applications[application.etherType] == nil
     else { throw MRPError.unknownApplication }
     _applications.removeValue(forKey: application.etherType)
-    try? bridge.deregister(
+    try? await bridge.deregister(
       groupAddress: application.groupAddress,
-      etherType: application.etherType
+      etherType: application.etherType,
+      controller: self
     )
     logger.info("deregistered application \(application)")
   }
