@@ -179,6 +179,7 @@ extension BaseApplication {
     isNew: Bool,
     eventSource: ParticipantEventSource
   ) async throws {
+    precondition(!(attributeValue is AnyValue))
     do {
       try await _delegate?.onJoinIndication(
         contextIdentifier: contextIdentifier,
@@ -212,6 +213,7 @@ extension BaseApplication {
     attributeValue: some Value,
     eventSource: ParticipantEventSource
   ) async throws {
+    precondition(!(attributeValue is AnyValue))
     do {
       try await _delegate?.onLeaveIndication(
         contextIdentifier: contextIdentifier,

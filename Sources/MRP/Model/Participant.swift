@@ -511,10 +511,10 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
 
   var participant: P? { _participant.object }
 
-  init(participant: P, type: AttributeType, value: any Value) {
+  init(participant: P, type: AttributeType, value: AnyValue) {
     _participant = Weak(participant)
     attributeType = type
-    self.value = AnyValue(value)
+    self.value = value
     if participant._type != .applicantOnly {
       registrar = Registrar(onLeaveTimerExpired: {
         try await self.handle(event: .leavetimer, eventSource: .timer)
@@ -609,7 +609,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
         contextIdentifier: participant.contextIdentifier,
         port: participant.port,
         attributeType: attributeType,
-        attributeValue: value,
+        attributeValue: value.value,
         isNew: true,
         eventSource: eventSource
       )
@@ -618,7 +618,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
         contextIdentifier: participant.contextIdentifier,
         port: participant.port,
         attributeType: attributeType,
-        attributeValue: value,
+        attributeValue: value.value,
         isNew: false,
         eventSource: eventSource
       )
@@ -627,7 +627,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
         contextIdentifier: participant.contextIdentifier,
         port: participant.port,
         attributeType: attributeType,
-        attributeValue: value,
+        attributeValue: value.value,
         eventSource: eventSource
       )
     }
