@@ -199,7 +199,7 @@ extension BaseApplication {
         attributeType: attributeType,
         attributeValue: attributeValue,
         isNew: isNew,
-        eventSource: .propagation
+        eventSource: .map
       )
     }
   }
@@ -229,7 +229,7 @@ extension BaseApplication {
       try await participant.leave(
         attributeType: attributeType,
         attributeValue: attributeValue,
-        eventSource: .propagation
+        eventSource: .map
       )
     }
   }

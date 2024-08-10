@@ -49,7 +49,7 @@ public enum ParticipantEventSource: Sendable {
   case local
   case peer
   case administrativeControl
-  case propagation
+  case map
 }
 
 public final actor Participant<A: Application>: Equatable, Hashable {
