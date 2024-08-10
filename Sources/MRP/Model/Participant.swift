@@ -45,10 +45,15 @@ enum ParticipantType {
 }
 
 public enum ParticipantEventSource: Sendable {
+  // event source was an internal timer
   case timer
+  // event source was the local port (e.g. kernel MVRP)
   case local
+  // event source was a remote peer
   case peer
+  // event source was explicit administrative control (e.g. TSN endpoint)
   case administrativeControl
+  // event source was transitive via MAP function
   case map
 }
 
