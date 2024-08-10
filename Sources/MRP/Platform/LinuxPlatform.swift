@@ -210,7 +210,7 @@ public final class LinuxBridge: Bridge, CustomStringConvertible, @unchecked Send
   }
 
   public nonisolated var description: String {
-    "LinuxBridge(name: \(_bridgePort!.name))"
+    "LinuxBridge(name: \(_bridgeName))"
   }
 
   private func _handleLinkNotification(_ linkMessage: RTNLLinkMessage) throws {
