@@ -189,7 +189,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     try await _handleLeaveAll(event: .leavealltimer, eventSource: .timer)
   }
 
-  private func _coalesce(events: EnqueuedEvents) throws -> [Message] {
+  private func _packMessages(with events: EnqueuedEvents) throws -> [Message] {
     guard let application else { throw MRPError.internalError }
 
     var messages = [Message]()
@@ -281,14 +281,14 @@ public final actor Participant<A: Application>: Equatable, Hashable {
   }
 
   private func _apply(event: ProtocolEvent, eventSource: ParticipantEventSource) async throws {
-    try await _apply { attribute in
-      try await attribute.handle(event: event, eventSource: eventSource)
+    try await _apply { attributeValue in
+      try await attributeValue.handle(event: event, eventSource: eventSource)
     }
   }
 
-  fileprivate func _txDequeue() async throws -> MRPDU {
+  private func _txDequeue() async throws -> MRPDU {
     guard let application else { throw MRPError.internalError }
-    let enqueuedMessages = try _coalesce(events: _enqueuedEvents)
+    let enqueuedMessages = try _packMessages(with: _enqueuedEvents)
     let pdu = MRPDU(
       protocolVersion: application.protocolVersion,
       messages: enqueuedMessages
@@ -299,7 +299,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     return pdu
   }
 
-  fileprivate func _apply(
+  private func _apply(
     attributeType: AttributeType? = nil,
     _ block: ParticipantApplyFunction<A>
   ) async rethrows {
@@ -317,7 +317,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     }
   }
 
-  fileprivate func _handle(
+  private func _handle(
     attributeEvent: AttributeEvent,
     with attributeValue: _AttributeValueState<A>,
     eventSource: ParticipantEventSource
@@ -545,11 +545,15 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
     if let applicantAction {
       participant._logger.trace("applicant action for event \(event): \(applicantAction)")
       try await handle(applicantAction: applicantAction, eventSource: eventSource)
+    } else {
+      participant._logger.trace("no applicant action for event \(event), skipping")
     }
 
     if let registrarAction = registrar?.action(for: event, flags: smFlags) {
       participant._logger.trace("registrar action for event \(event): \(registrarAction)")
       try await handle(registrarAction: registrarAction, eventSource: eventSource)
+    } else {
+      participant._logger.trace("no registrar action for event \(event), skipping")
     }
   }
 
