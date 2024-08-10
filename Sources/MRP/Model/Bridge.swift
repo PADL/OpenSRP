@@ -40,7 +40,7 @@ public protocol Bridge<P>: Sendable {
   // local and non-link-local packets
   func getVlans(controller: isolated MRPController<P>) async -> Set<VLAN>
 
-  func tx(_ packet: IEEE802Packet, on: P.ID) async throws
+  func tx(_ packet: IEEE802Packet, on: P.ID, controller: isolated MRPController<P>) async throws
   var rxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)> { get throws }
 }
 
@@ -49,7 +49,8 @@ extension Bridge {
     pdu: MRPDU,
     for application: some Application,
     contextIdentifier: MAPContextIdentifier,
-    on port: P
+    on port: P,
+    controller: isolated MRPController<P>
   ) async throws {
     var serializationContext = SerializationContext(bytes: [])
     try pdu.serialize(into: &serializationContext, application: application)
@@ -61,6 +62,6 @@ extension Bridge {
       etherType: application.etherType,
       payload: serializationContext.bytes
     )
-    try await tx(packet, on: port.id)
+    try await tx(packet, on: port.id, controller: controller)
   }
 }

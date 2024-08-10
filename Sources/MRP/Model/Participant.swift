@@ -427,7 +427,8 @@ public final actor Participant<A: Application>: Equatable, Hashable {
       pdu: _txDequeue(),
       for: application,
       contextIdentifier: contextIdentifier,
-      on: port
+      on: port,
+      controller: controller
     )
   }
 

@@ -63,13 +63,25 @@ struct MockBridge: MRP.Bridge, CustomStringConvertible {
   var description: String { "MockBridge" }
   func getVlans(controller: isolated MRPController<P>) async -> Set<MRP.VLAN> { [] }
 
-  func register(groupAddress: MRP.EUI48, etherType: UInt16, controller: isolated MRPController<P>) async throws {}
-  func deregister(groupAddress: MRP.EUI48, etherType: UInt16, controller: isolated MRPController<P>) async throws {}
+  func register(
+    groupAddress: MRP.EUI48,
+    etherType: UInt16,
+    controller: isolated MRPController<P>
+  ) async throws {}
+  func deregister(
+    groupAddress: MRP.EUI48,
+    etherType: UInt16,
+    controller: isolated MRPController<P>
+  ) async throws {}
 
   func run(controller: isolated MRPController<P>) async throws {}
   func shutdown(controller: isolated MRPController<P>) async throws {}
 
-  func tx(_ packet: MRP.IEEE802Packet, on: Int) async throws {}
+  func tx(
+    _ packet: MRP.IEEE802Packet,
+    on: Int,
+    controller: isolated MRPController<P>
+  ) async throws {}
 }
 
 final class MRPTests: XCTestCase {

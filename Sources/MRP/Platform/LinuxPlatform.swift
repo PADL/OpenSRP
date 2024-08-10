@@ -417,7 +417,11 @@ public final class LinuxBridge: Bridge, CustomStringConvertible, @unchecked Send
     try await _bridgePort!._remove(vlans: vlans)
   }
 
-  public func tx(_ packet: IEEE802Packet, on portID: P.ID) async throws {
+  public func tx(
+    _ packet: IEEE802Packet,
+    on portID: P.ID,
+    controller: isolated MRPController<Port>
+  ) async throws {
     var serializationContext = SerializationContext()
     let packetType = _isMulticast(macAddress: packet.destMacAddress) ?
       UInt8(PACKET_MULTICAST) : UInt8(PACKET_HOST)
