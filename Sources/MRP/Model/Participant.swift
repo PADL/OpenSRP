@@ -44,23 +44,12 @@ enum ParticipantType {
   case applicantOnly
 }
 
-public struct ParticipantEventFlags: OptionSet, Sendable {
-  public typealias RawValue = UInt32
-
-  public let rawValue: RawValue
-
-  public init(rawValue: UInt32) {
-    self.rawValue = rawValue
-  }
-
-  // fired from a timer
-  public static let firedFromTimer = ParticipantEventFlags(rawValue: 1 << 0)
-
-  // source is local MAC address, e.g. from kernel MVRP stack, used to avoid loopback
-  public static let sourceIsLocal = ParticipantEventFlags(rawValue: 1 << 1)
-
-  // locally initiated from mvrpd
-  public static let locallyInitiated = ParticipantEventFlags(rawValue: 1 << 2)
+public enum ParticipantEventSource: Sendable {
+  case timer
+  case local
+  case peer
+  case administrativeControl
+  case propagation
 }
 
 public final actor Participant<A: Application>: Equatable, Hashable {
@@ -187,17 +176,17 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     case .Active:
       try await _handleLeaveAll(
         event: .tx,
-        flags: .firedFromTimer
+        eventSource: .timer
       ) // sets LeaveAll to passive and emits sLA action
-      try await _apply(event: .txLA, flags: .firedFromTimer)
+      try await _apply(event: .txLA, eventSource: .timer)
     case .Passive:
-      try await _apply(event: .tx, flags: .firedFromTimer)
+      try await _apply(event: .tx, eventSource: .timer)
     }
   }
 
   @Sendable
   private func _onLeaveAllTimerExpired() async throws {
-    try await _handleLeaveAll(event: .leavealltimer, flags: .firedFromTimer)
+    try await _handleLeaveAll(event: .leavealltimer, eventSource: .timer)
   }
 
   private func _coalesce(events: EnqueuedEvents) throws -> [Message] {
@@ -274,7 +263,10 @@ public final actor Participant<A: Application>: Equatable, Hashable {
   }
 
   // handle an event in the LeaveAll state machine (10.5)
-  private func _handleLeaveAll(event: ProtocolEvent, flags: ParticipantEventFlags) async throws {
+  private func _handleLeaveAll(
+    event: ProtocolEvent,
+    eventSource: ParticipantEventSource
+  ) async throws {
     let action = _leaveAll.action(for: event)
 
     if action == .leavealltimer {
@@ -283,14 +275,14 @@ public final actor Participant<A: Application>: Equatable, Hashable {
       // a) The LeaveAll state machine associated with that instance of the
       // Applicant or Registrar state machine performs the sLA action
       // (10.7.6.6); or a MRPDU is received with a LeaveAll
-      try await _apply(event: .rLA, flags: flags)
+      try await _apply(event: .rLA, eventSource: eventSource)
       try _txEnqueueLeaveAllEvents()
     }
   }
 
-  private func _apply(event: ProtocolEvent, flags: ParticipantEventFlags) async throws {
+  private func _apply(event: ProtocolEvent, eventSource: ParticipantEventSource) async throws {
     try await _apply { attribute in
-      try await attribute.handle(event: event, flags: flags)
+      try await attribute.handle(event: event, eventSource: eventSource)
     }
   }
 
@@ -328,10 +320,10 @@ public final actor Participant<A: Application>: Equatable, Hashable {
   fileprivate func _handle(
     attributeEvent: AttributeEvent,
     with attributeValue: _AttributeValueState<A>,
-    flags: ParticipantEventFlags
+    eventSource: ParticipantEventSource
   ) async throws {
     let protocolEvent = attributeEvent.protocolEvent
-    try await attributeValue.handle(event: protocolEvent, flags: flags)
+    try await attributeValue.handle(event: protocolEvent, eventSource: eventSource)
   }
 
   // TODO: use a more efficient representation such as a bitmask
@@ -378,10 +370,11 @@ public final actor Participant<A: Application>: Equatable, Hashable {
   }
 
   func rx(message: Message, sourceMacAddress: EUI48) async throws {
-    var flags = ParticipantEventFlags()
-    if _isEqualMacAddress(sourceMacAddress, port.macAddress) {
-      flags.insert(.sourceIsLocal)
-    }
+    let eventSource: ParticipantEventSource = _isEqualMacAddress(
+      sourceMacAddress,
+      port.macAddress
+    ) ?
+      .local : .peer
     for vectorAttribute in message.attributeList {
       let packedEvents = try _getAttributeEvents(
         attributeType: message.attributeType,
@@ -400,12 +393,12 @@ public final actor Participant<A: Application>: Equatable, Hashable {
         try await _handle(
           attributeEvent: packedEvents[i],
           with: attribute,
-          flags: flags
+          eventSource: eventSource
         )
       }
 
       if vectorAttribute.leaveAllEvent == .LeaveAll {
-        try await _handleLeaveAll(event: .rLA, flags: flags)
+        try await _handleLeaveAll(event: .rLA, eventSource: eventSource)
       }
     }
   }
@@ -448,8 +441,8 @@ public final actor Participant<A: Application>: Equatable, Hashable {
   // generated when the Port Role changes from either Root Port or Alternate
   // Port to Designated Port.
   func flush() async throws {
-    try await _apply(event: .Flush, flags: .locallyInitiated)
-    try await _handleLeaveAll(event: .Flush, flags: .locallyInitiated)
+    try await _apply(event: .Flush, eventSource: .administrativeControl)
+    try await _handleLeaveAll(event: .Flush, eventSource: .administrativeControl)
   }
 
   // A Re-declare! event signals to the Applicant and Registrar state machines
@@ -462,13 +455,14 @@ public final actor Participant<A: Application>: Equatable, Hashable {
   // instance, this event is generated when the Port Role changes from
   // Designated Port to either Root Port or Alternate Port.
   func redeclare() async throws {
-    try await _apply(event: .ReDeclare, flags: .locallyInitiated)
+    try await _apply(event: .ReDeclare, eventSource: .administrativeControl)
   }
 
   func join(
     attributeType: AttributeType,
     attributeValue: some Value,
-    isNew: Bool
+    isNew: Bool,
+    eventSource: ParticipantEventSource
   ) async throws {
     let attribute = try _findAttributeValueState(
       attributeType: attributeType,
@@ -478,20 +472,21 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     try await _handle(
       attributeEvent: isNew ? .New : .JoinMt,
       with: attribute,
-      flags: .locallyInitiated
+      eventSource: .administrativeControl
     )
   }
 
   func leave(
     attributeType: AttributeType,
-    attributeValue: some Value
+    attributeValue: some Value,
+    eventSource: ParticipantEventSource
   ) async throws {
     let attribute = try _findAttributeValueState(
       attributeType: attributeType,
       index: attributeValue.index,
       isNew: false
     )
-    try await _handle(attributeEvent: .Lv, with: attribute, flags: .locallyInitiated)
+    try await _handle(attributeEvent: .Lv, with: attribute, eventSource: eventSource)
   }
 }
 
@@ -521,7 +516,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
     self.value = AnyValue(value)
     if participant._type != .applicantOnly {
       registrar = Registrar(onLeaveTimerExpired: {
-        try await self.handle(event: .leavetimer, flags: .firedFromTimer)
+        try await self.handle(event: .leavetimer, eventSource: .timer)
       })
     }
   }
@@ -537,7 +532,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
     }
   }
 
-  func handle(event: ProtocolEvent, flags: ParticipantEventFlags) async throws {
+  func handle(event: ProtocolEvent, eventSource: ParticipantEventSource) async throws {
     guard let participant else { throw MRPError.internalError }
     let smFlags = try await participant._getSmFlags(for: attributeType)
 
@@ -549,18 +544,18 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
     let applicantAction = applicant.action(for: event, flags: smFlags)
     if let applicantAction {
       participant._logger.trace("applicant action for event \(event): \(applicantAction)")
-      try await handle(applicantAction: applicantAction, flags: flags)
+      try await handle(applicantAction: applicantAction, eventSource: eventSource)
     }
 
     if let registrarAction = registrar?.action(for: event, flags: smFlags) {
       participant._logger.trace("registrar action for event \(event): \(registrarAction)")
-      try await handle(registrarAction: registrarAction, flags: flags)
+      try await handle(registrarAction: registrarAction, eventSource: eventSource)
     }
   }
 
   private func handle(
     applicantAction action: Applicant.Action,
-    flags: ParticipantEventFlags
+    eventSource: ParticipantEventSource
   ) async throws {
     guard let participant else { throw MRPError.internalError }
     switch action {
@@ -600,7 +595,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
 
   private func handle(
     registrarAction action: Registrar.Action,
-    flags: ParticipantEventFlags
+    eventSource: ParticipantEventSource
   ) async throws {
     guard let participant else { throw MRPError.internalError }
     switch action {
@@ -611,7 +606,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
         attributeType: attributeType,
         attributeValue: value,
         isNew: true,
-        flags: flags
+        eventSource: eventSource
       )
     case .Join:
       try await participant.application?.joinIndicated(
@@ -620,7 +615,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
         attributeType: attributeType,
         attributeValue: value,
         isNew: false,
-        flags: flags
+        eventSource: eventSource
       )
     case .Lv:
       try await participant.application?.leaveIndicated(
@@ -628,7 +623,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
         port: participant.port,
         attributeType: attributeType,
         attributeValue: value,
-        flags: flags
+        eventSource: eventSource
       )
     }
   }

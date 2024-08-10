@@ -159,7 +159,7 @@ extension MVRPApplication {
     attributeType: AttributeType,
     attributeValue: some Value,
     isNew: Bool,
-    flags: ParticipantEventFlags
+    eventSource: ParticipantEventSource
   ) async throws {
     guard let controller else { throw MRPError.internalError }
     guard let bridge = controller.bridge as? any MVRPAwareBridge<P> else { return }
@@ -170,14 +170,16 @@ extension MVRPApplication {
       let vlan = (attributeValue as! VLAN)
       guard !_vlanExclusions.contains(vlan) else { throw MRPError.doNotPropagateAttribute }
       let ports = await controller.context(for: contextIdentifier).filter {
-        if flags.contains(.sourceIsLocal), $0 == port {
+        if eventSource == .local, $0 == port {
           false
         } else {
           !port.vlans.contains(vlan)
         }
       }
       _logger
-        .info("MVRP join indication from port \(port) VID \(vlan) isNew \(isNew) flags \(flags)")
+        .info(
+          "MVRP join indication from port \(port) VID \(vlan) isNew \(isNew) source \(eventSource)"
+        )
       try await bridge.register(vlan: vlan, on: ports)
     }
   }
@@ -193,7 +195,7 @@ extension MVRPApplication {
     port: P,
     attributeType: AttributeType,
     attributeValue: some Value,
-    flags: ParticipantEventFlags
+    eventSource: ParticipantEventSource
   ) async throws {
     guard let controller else { throw MRPError.internalError }
     guard let bridge = controller.bridge as? any MVRPAwareBridge<P> else { return }
@@ -204,13 +206,13 @@ extension MVRPApplication {
       let vlan = (attributeValue as! VLAN)
       guard !_vlanExclusions.contains(vlan) else { throw MRPError.doNotPropagateAttribute }
       let ports = await controller.context(for: contextIdentifier).filter {
-        if flags.contains(.sourceIsLocal), $0 == port {
+        if eventSource == .local, $0 == port {
           true // FIXME: is this logic correct?
         } else {
           port.vlans.contains(vlan)
         }
       }
-      _logger.info("MVRP leave indication from port \(port) VID \(vlan) flags \(flags)")
+      _logger.info("MVRP leave indication from port \(port) VID \(vlan) source \(eventSource)")
       try await bridge.deregister(vlan: vlan, from: ports)
     }
   }

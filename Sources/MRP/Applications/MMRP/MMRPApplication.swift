@@ -178,7 +178,7 @@ extension MMRPApplication {
     attributeType: AttributeType,
     attributeValue: some Value,
     isNew: Bool,
-    flags: ParticipantEventFlags
+    eventSource: ParticipantEventSource
   ) async throws {
     guard let controller else { throw MRPError.internalError }
     guard let bridge = controller.bridge as? any MMRPAwareBridge<P> else { return }
@@ -191,7 +191,7 @@ extension MMRPApplication {
       guard _isMulticast(macAddress: macAddress) else { throw MRPError.invalidAttributeValue }
       _logger
         .info(
-          "MMRP join indication from port \(port) address \(_macAddressToString(macAddress)) isNew \(isNew) flags \(flags)"
+          "MMRP join indication from port \(port) address \(_macAddressToString(macAddress)) isNew \(isNew) source \(eventSource)"
         )
       try await bridge.register(groupAddress: macAddress, on: ports)
     case .serviceRequirementVector:
@@ -216,7 +216,7 @@ extension MMRPApplication {
     port: P,
     attributeType: AttributeType,
     attributeValue: some Value,
-    flags: ParticipantEventFlags
+    eventSource: ParticipantEventSource
   ) async throws {
     guard let controller else { throw MRPError.internalError }
     guard let bridge = controller.bridge as? any MMRPAwareBridge<P> else { return }
@@ -229,7 +229,7 @@ extension MMRPApplication {
       guard _isMulticast(macAddress: macAddress) else { throw MRPError.invalidAttributeValue }
       _logger
         .info(
-          "MMRP leave indication from port \(port) address \(_macAddressToString(macAddress)) flags \(flags)"
+          "MMRP leave indication from port \(port) address \(_macAddressToString(macAddress)) source \(eventSource)"
         )
       try await bridge.deregister(groupAddress: macAddress, from: ports)
     case .serviceRequirementVector:

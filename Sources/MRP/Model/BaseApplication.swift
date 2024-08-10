@@ -30,14 +30,14 @@ protocol BaseApplicationDelegate<P>: Sendable {
     attributeType: AttributeType,
     attributeValue: some Value,
     isNew: Bool,
-    flags: ParticipantEventFlags
+    eventSource: ParticipantEventSource
   ) async throws
   func onLeaveIndication(
     contextIdentifier: MAPContextIdentifier,
     port: P,
     attributeType: AttributeType,
     attributeValue: some Value,
-    flags: ParticipantEventFlags
+    eventSource: ParticipantEventSource
   ) async throws
 }
 
@@ -177,7 +177,7 @@ extension BaseApplication {
     attributeType: AttributeType,
     attributeValue: some Value,
     isNew: Bool,
-    flags: ParticipantEventFlags
+    eventSource: ParticipantEventSource
   ) async throws {
     do {
       try await _delegate?.onJoinIndication(
@@ -186,7 +186,7 @@ extension BaseApplication {
         attributeType: attributeType,
         attributeValue: attributeValue,
         isNew: isNew,
-        flags: flags
+        eventSource: eventSource
       )
     } catch MRPError.doNotPropagateAttribute {
       return
@@ -198,7 +198,8 @@ extension BaseApplication {
       try await participant.join(
         attributeType: attributeType,
         attributeValue: attributeValue,
-        isNew: isNew
+        isNew: isNew,
+        eventSource: .propagation
       )
     }
   }
@@ -208,7 +209,7 @@ extension BaseApplication {
     port: P,
     attributeType: AttributeType,
     attributeValue: some Value,
-    flags: ParticipantEventFlags
+    eventSource: ParticipantEventSource
   ) async throws {
     do {
       try await _delegate?.onLeaveIndication(
@@ -216,7 +217,7 @@ extension BaseApplication {
         port: port,
         attributeType: attributeType,
         attributeValue: attributeValue,
-        flags: flags
+        eventSource: eventSource
       )
     } catch MRPError.doNotPropagateAttribute {
       return
@@ -227,7 +228,8 @@ extension BaseApplication {
       guard participant.port != port else { return }
       try await participant.leave(
         attributeType: attributeType,
-        attributeValue: attributeValue
+        attributeValue: attributeValue,
+        eventSource: .propagation
       )
     }
   }

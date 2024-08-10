@@ -72,7 +72,7 @@ public protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
     attributeType: AttributeType,
     attributeValue: V,
     isNew: Bool,
-    flags: ParticipantEventFlags
+    eventSource: ParticipantEventSource
   ) async throws
 
   func leaveIndicated<V: Value>(
@@ -80,7 +80,7 @@ public protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
     port: P,
     attributeType: AttributeType,
     attributeValue: V,
-    flags: ParticipantEventFlags
+    eventSource: ParticipantEventSource
   ) async throws
 }
 
@@ -165,7 +165,8 @@ extension Application {
       try await participant.join(
         attributeType: attributeType,
         attributeValue: attributeValue,
-        isNew: isNew
+        isNew: isNew,
+        eventSource: .administrativeControl
       )
     }
   }
@@ -178,7 +179,8 @@ extension Application {
     try await apply(for: contextIdentifier) { participant in
       try await participant.leave(
         attributeType: attributeType,
-        attributeValue: attributeValue
+        attributeValue: attributeValue,
+        eventSource: .administrativeControl
       )
     }
   }
