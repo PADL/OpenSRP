@@ -50,7 +50,7 @@ struct Registrar: Sendable, CustomStringConvertible {
       {
         startLeaveTimer()
       }
-      return _state.withCriticalRegion { $0.action(for: event, flags: flags) }
+      return state.action(for: event, flags: flags)
     }
   }
 

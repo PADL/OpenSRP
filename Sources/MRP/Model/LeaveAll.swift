@@ -39,7 +39,6 @@ struct LeaveAll: Sendable, CustomStringConvertible {
     }
   }
 
-  // note: this function has side effects, it will start/stop leavetimer
   func action(for event: ProtocolEvent) -> Action? {
     _state.withCriticalRegion { state in
       state.action(for: event)
