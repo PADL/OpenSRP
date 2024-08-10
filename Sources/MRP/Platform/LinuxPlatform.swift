@@ -376,7 +376,7 @@ Sendable, CustomStringConvertible {
   public func willRun() async throws -> Set<Port> {
     let ports = try await _getMemberPorts()
     for port in ports {
-      await _portNotificationChannel.send(portNotification)
+      await _portNotificationChannel.send(.added(port))
       try _addLinkLocalRxTask(port: port)
     }
     return ports

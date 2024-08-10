@@ -54,13 +54,11 @@ actor PortMonitor {
     try bridge.register(groupAddress: IndividualLANScopeGroupAddress, etherType: 0x22EA) // MSRP
     try bridge.register(groupAddress: CustomerBridgeMRPGroupAddress, etherType: 0x88F5) // MVRP
 
-    ports = try await bridge.getPorts()
+    ports = try await bridge.willRun()
     print("Ports at startup on bridge \(bridge.name):")
     for port in ports {
       print("\(port)")
     }
-
-    try bridge.willRun(ports: ports)
 
     try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { @Sendable in
