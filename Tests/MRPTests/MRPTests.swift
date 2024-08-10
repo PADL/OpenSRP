@@ -67,9 +67,9 @@ struct MockBridge: MRP.Bridge, CustomStringConvertible {
 
   func deregister(groupAddress: MRP.EUI48, etherType: UInt16) throws {}
 
-  func willRun(ports: Set<MockPort>) throws {}
+  func run() async throws {}
 
-  func willShutdown() throws {}
+  func shutdown() throws {}
 
   func tx(_ packet: MRP.IEEE802Packet, on: Int) async throws {}
 }

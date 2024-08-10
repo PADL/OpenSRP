@@ -204,15 +204,9 @@ Sendable, CustomStringConvertible {
     _nlLinkSocket = try NLSocket(protocol: NETLINK_ROUTE)
     _nlNfLog = try NFNLLog(group: UInt16(group))
     try _nlLinkSocket.subscribeLinks()
-    let bridgePorts = try await _getPorts(family: sa_family_t(AF_BRIDGE))
-      .filter { $0._isBridgeSelf && $0.name == name }
-    guard bridgePorts.count == 1 else {
-      throw MRPError.invalidBridgeIdentity
-    }
-    _bridgeIndex = bridgePorts.first!._rtnl.index
-    _bridgePort.withCriticalRegion {
-      $0 = bridgePorts.first!
-    }
+    let bridgePort = try await _getBridgePort(name: name)
+    _bridgeIndex = bridgePort._rtnl.index
+    _bridgePort.withCriticalRegion { $0 = bridgePort }
     _nlLinkMonitorTask = Task<(), Error> { [self] in
       for try await notification in _nlLinkSocket.notifications {
         do {
@@ -232,7 +226,7 @@ Sendable, CustomStringConvertible {
   deinit {
     _nlLinkMonitorTask?.cancel()
     _nlNfLogMonitorTask?.cancel()
-    try? willShutdown()
+    try? shutdown()
   }
 
   public nonisolated var description: String {
@@ -267,6 +261,10 @@ Sendable, CustomStringConvertible {
     }
   }
 
+  public var notifications: AnyAsyncSequence<PortNotification<Port>> {
+    _portNotificationChannel.eraseToAnyAsyncSequence()
+  }
+
   public var defaultPVid: UInt16? {
     _bridgePort.criticalState!._pvid
   }
@@ -291,9 +289,18 @@ Sendable, CustomStringConvertible {
   }
 
   private func _getMemberPorts() async throws -> Set<Port> {
-    try await _getPorts(family: sa_family_t(AF_UNSPEC)).filter {
+    try await _getPorts(family: sa_family_t(AF_BRIDGE)).filter {
       !$0._isBridgeSelf && $0._rtnl.master == _bridgeIndex
     }
+  }
+
+  private func _getBridgePort(name: String) async throws -> Port {
+    let bridgePorts = try await _getPorts(family: sa_family_t(AF_BRIDGE))
+      .filter { $0._isBridgeSelf && $0.name == name }
+    guard bridgePorts.count == 1 else {
+      throw MRPError.invalidBridgeIdentity
+    }
+    return bridgePorts.first!
   }
 
   @_spi(SwiftMRPPrivate)
@@ -373,32 +380,19 @@ Sendable, CustomStringConvertible {
     }
   }
 
-  public func willRun() async throws -> Set<Port> {
+  public func run() async throws {
     let ports = try await _getMemberPorts()
     for port in ports {
       await _portNotificationChannel.send(.added(port))
       try _addLinkLocalRxTask(port: port)
     }
-    return ports
   }
 
-  public func willShutdown() throws {
+  public func shutdown() throws {
     let portIDs = _linkLocalRxTasks.criticalState.keys.map(\.portID)
     for portID in portIDs {
       try _cancelLinkLocalRxTask(portID: portID)
     }
-  }
-
-  public var notifications: AnyAsyncSequence<PortNotification<Port>> {
-    _nlLinkSocket.notifications.compactMap { @Sendable notification in
-      let link = notification as! RTNLLinkMessage
-      switch link {
-      case let .new(link):
-        return try .added(Port(rtnl: link, bridge: self))
-      case let .del(link):
-        return try .removed(Port(rtnl: link, bridge: self))
-      }
-    }.eraseToAnyAsyncSequence()
   }
 
   private func _add(vlans: Set<VLAN>) async throws {

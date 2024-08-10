@@ -30,7 +30,7 @@ actor PortMonitor {
   var ports = Set<P>()
 
   func handle(notification: PortNotification<P>) {
-    print("\(notification)")
+    print("received port \(notification)")
     switch notification {
     case let .added(port): ports.insert(port)
     case let .removed(port): ports.remove(port)
@@ -54,12 +54,6 @@ actor PortMonitor {
     try bridge.register(groupAddress: IndividualLANScopeGroupAddress, etherType: 0x22EA) // MSRP
     try bridge.register(groupAddress: CustomerBridgeMRPGroupAddress, etherType: 0x88F5) // MVRP
 
-    ports = try await bridge.willRun()
-    print("Ports at startup on bridge \(bridge.name):")
-    for port in ports {
-      print("\(port)")
-    }
-
     try await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { @Sendable in
         print("Monitoring for bridge notifications...")
@@ -69,6 +63,7 @@ actor PortMonitor {
       }
       group.addTask { @Sendable in
         print("Monitoring bridge RX packets...")
+        try await bridge.run()
         do {
           for try await (index, packet) in bridge.rxPackets {
             await print(

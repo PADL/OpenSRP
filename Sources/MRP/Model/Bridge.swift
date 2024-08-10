@@ -25,8 +25,8 @@ public protocol Bridge<P>: Sendable {
   func register(groupAddress: EUI48, etherType: UInt16) throws
   func deregister(groupAddress: EUI48, etherType: UInt16) throws
 
-  func willRun() async throws -> Set<P>
-  func willShutdown() throws
+  func run() async throws
+  func shutdown() throws
 
   // Bridge provies a unified interface for sending and receiving packets, even
   // though the actual implementation may need separate paths for handling link-
