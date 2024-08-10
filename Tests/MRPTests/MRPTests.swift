@@ -54,22 +54,20 @@ struct MockBridge: MRP.Bridge, CustomStringConvertible {
   var notifications = AsyncEmptySequence<MRP.PortNotification<MockPort>>().eraseToAnyAsyncSequence()
   var rxPackets = AsyncEmptySequence<(Int, MRP.IEEE802Packet)>().eraseToAnyAsyncSequence()
 
-  func getPorts() async throws -> Set<MockPort> {
+  func getPorts(controller: isolated MRPController<P>) async throws -> Set<MockPort> {
     [MockPort(id: 0)]
   }
 
   typealias P = MockPort
 
   var description: String { "MockBridge" }
-  var vlans: Set<MRP.VLAN> { [] }
+  func getVlans(controller: isolated MRPController<P>) async -> Set<MRP.VLAN> { [] }
 
-  func register(groupAddress: MRP.EUI48, etherType: UInt16) throws {}
+  func register(groupAddress: MRP.EUI48, etherType: UInt16, controller: isolated MRPController<P>) async throws {}
+  func deregister(groupAddress: MRP.EUI48, etherType: UInt16, controller: isolated MRPController<P>) async throws {}
 
-  func deregister(groupAddress: MRP.EUI48, etherType: UInt16) throws {}
-
-  func run() async throws {}
-
-  func shutdown() throws {}
+  func run(controller: isolated MRPController<P>) async throws {}
+  func shutdown(controller: isolated MRPController<P>) async throws {}
 
   func tx(_ packet: MRP.IEEE802Packet, on: Int) async throws {}
 }
