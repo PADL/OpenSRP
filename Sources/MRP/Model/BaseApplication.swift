@@ -193,6 +193,7 @@ extension BaseApplication {
     } catch {
       throw error
     }
+    guard eventSource != .map else { return } // don't recursively invoke MAP
     try await apply(for: contextIdentifier) { participant in
       guard participant.port != port else { return }
       try await participant.join(
@@ -224,6 +225,7 @@ extension BaseApplication {
     } catch {
       throw error
     }
+    guard eventSource != .map else { return } // don't recursively invoke MAP
     try await apply(for: contextIdentifier) { participant in
       guard participant.port != port else { return }
       try await participant.leave(
