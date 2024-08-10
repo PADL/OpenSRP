@@ -215,7 +215,7 @@ public final class LinuxBridge: Bridge, @unchecked Sendable, CustomStringConvert
     _nlLinkMonitorTask = Task<(), Error> { [self] in
       for try await notification in _nlLinkSocket.notifications {
         do {
-          try await _handleLinkNotification(notification as! RTNLLinkMessage)
+          try _handleLinkNotification(notification as! RTNLLinkMessage)
         } catch Errno.noSuchAddressOrDevice {
           throw Errno.noSuchAddressOrDevice
         } catch {}
@@ -238,7 +238,7 @@ public final class LinuxBridge: Bridge, @unchecked Sendable, CustomStringConvert
     "LinuxBridge(name: \(bridgePort.name))"
   }
 
-  private func _handleLinkNotification(_ linkMessage: RTNLLinkMessage) async throws {
+  private func _handleLinkNotification(_ linkMessage: RTNLLinkMessage) throws {
     var portNotification: PortNotification<Port>?
     try _bridgePort.withCriticalRegion { bridgePort in
       let port = try Port(rtnl: linkMessage.link, bridge: self)
@@ -262,7 +262,7 @@ public final class LinuxBridge: Bridge, @unchecked Sendable, CustomStringConvert
       }
     }
     if let portNotification {
-      await _portNotificationChannel.send(portNotification)
+      Task { await _portNotificationChannel.send(portNotification) }
     }
   }
 
@@ -282,11 +282,17 @@ public final class LinuxBridge: Bridge, @unchecked Sendable, CustomStringConvert
     _bridgePort.criticalState!.name
   }
 
-  private func _getPorts(family: sa_family_t = sa_family_t(AF_UNSPEC)) async throws -> Set<Port> {
+  private func _getPorts(family: sa_family_t) async throws -> Set<Port> {
     try await Set(
       _nlLinkSocket.getLinks(family: family).map { try Port(rtnl: $0, bridge: self) }
         .collect()
     )
+  }
+
+  public func getPorts() async throws -> Set<Port> {
+    return try await _getPorts(family: sa_family_t(AF_UNSPEC)).filter {
+      !$0._isBridgeSelf && $0._rtnl.master == _bridgeIndex
+    }
   }
 
   @_spi(SwiftMRPPrivate)
@@ -363,12 +369,6 @@ public final class LinuxBridge: Bridge, @unchecked Sendable, CustomStringConvert
     guard _isLinkLocal(macAddress: groupAddress) else { return }
     _linkLocalRegistrations.withCriticalRegion {
       $0.remove(FilterRegistration(groupAddress: groupAddress, etherType: etherType))
-    }
-  }
-
-  public func getPorts() async throws -> Set<Port> {
-    return try await _getPorts().filter {
-      !$0._isBridgeSelf && $0._rtnl.master == _bridgeIndex
     }
   }
 
