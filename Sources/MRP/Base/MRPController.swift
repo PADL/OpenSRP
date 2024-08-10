@@ -58,10 +58,6 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
     logger.debug("initializing MRP with bridge \(bridge), port exclusions \(portExclusions)")
     self.bridge = bridge
     self.logger = logger
-    _ports = try await [P.ID: P](uniqueKeysWithValues: bridge.getPorts().compactMap {
-      if portExclusions.contains($0.name) { return nil }
-      return ($0.id, $0)
-    })
     _rxPackets = try bridge.rxPackets
     _portExclusions = portExclusions
   }
@@ -72,11 +68,11 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
 
   private func _run() async throws {
     logger.info("starting MRP for bridge \(bridge)")
-    for port in ports {
-      try? await _didAdd(port: port)
-    }
 
-    try bridge.willRun(ports: ports)
+    _ports = try await [P.ID: P](uniqueKeysWithValues: bridge.willRun().compactMap { port in
+      guard !_portExclusions.contains(port.name) else { return nil }
+      return (port.id, port)
+    })
 
     do {
       try await withThrowingTaskGroup(of: Void.self) { group in

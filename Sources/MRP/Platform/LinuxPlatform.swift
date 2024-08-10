@@ -183,7 +183,8 @@ private extension LinuxPort {
   }
 }
 
-public final class LinuxBridge: Bridge, @unchecked Sendable, CustomStringConvertible {
+public final class LinuxBridge: Bridge, @unchecked
+Sendable, CustomStringConvertible {
   public typealias Port = LinuxPort
 
   private let _txSocket: Socket
@@ -289,8 +290,8 @@ public final class LinuxBridge: Bridge, @unchecked Sendable, CustomStringConvert
     )
   }
 
-  public func getPorts() async throws -> Set<Port> {
-    return try await _getPorts(family: sa_family_t(AF_UNSPEC)).filter {
+  private func _getMemberPorts() async throws -> Set<Port> {
+    try await _getPorts(family: sa_family_t(AF_UNSPEC)).filter {
       !$0._isBridgeSelf && $0._rtnl.master == _bridgeIndex
     }
   }
@@ -372,10 +373,13 @@ public final class LinuxBridge: Bridge, @unchecked Sendable, CustomStringConvert
     }
   }
 
-  public func willRun(ports: Set<Port>) throws {
+  public func willRun() async throws -> Set<Port> {
+    let ports = try await _getMemberPorts()
     for port in ports {
+      await _portNotificationChannel.send(portNotification)
       try _addLinkLocalRxTask(port: port)
     }
+    return ports
   }
 
   public func willShutdown() throws {

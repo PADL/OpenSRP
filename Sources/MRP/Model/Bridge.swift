@@ -25,9 +25,7 @@ public protocol Bridge<P>: Sendable {
   func register(groupAddress: EUI48, etherType: UInt16) throws
   func deregister(groupAddress: EUI48, etherType: UInt16) throws
 
-  func getPorts() async throws -> Set<P>
-
-  func willRun(ports: Set<P>) throws
+  func willRun() async throws -> Set<P>
   func willShutdown() throws
 
   // Bridge provies a unified interface for sending and receiving packets, even
@@ -36,26 +34,6 @@ public protocol Bridge<P>: Sendable {
 
   func tx(_ packet: IEEE802Packet, on: P.ID) async throws
   var rxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)> { get throws }
-}
-
-extension Bridge {
-  func willRun() async throws {
-    try await willRun(ports: getPorts())
-  }
-
-  func port(name: String) async throws -> P {
-    guard let port = try await getPorts().first(where: { $0.name == name }) else {
-      throw MRPError.portNotFound
-    }
-    return port
-  }
-
-  func port(id: P.ID) async throws -> P {
-    guard let port = try await getPorts().first(where: { $0.id == id }) else {
-      throw MRPError.portNotFound
-    }
-    return port
-  }
 }
 
 extension Bridge {
