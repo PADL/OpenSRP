@@ -69,8 +69,6 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
   private func _run() async throws {
     logger.info("starting MRP for bridge \(bridge)")
 
-    _ports = [:]
-
     do {
       try await withThrowingTaskGroup(of: Void.self) { group in
         _taskGroup = group
