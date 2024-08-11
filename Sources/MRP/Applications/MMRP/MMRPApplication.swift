@@ -98,8 +98,8 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     }
   }
 
-  public func packedEventsType(for attributeType: AttributeType) throws -> PackedEventsType {
-    .threePackedType
+  public func hasApplicationSpecificEvents(for: AttributeType) throws -> Bool {
+    false
   }
 
   public func administrativeControl(for attributeType: AttributeType) throws
@@ -178,7 +178,9 @@ extension MMRPApplication {
     attributeType: AttributeType,
     attributeValue: some Value,
     isNew: Bool,
-    eventSource: ParticipantEventSource
+    eventSource: ParticipantEventSource,
+    applicationSpecificEvents: [UInt8]?
+
   ) async throws {
     guard let controller else { throw MRPError.internalError }
     guard let bridge = controller.bridge as? any MMRPAwareBridge<P> else { return }
@@ -216,7 +218,9 @@ extension MMRPApplication {
     port: P,
     attributeType: AttributeType,
     attributeValue: some Value,
-    eventSource: ParticipantEventSource
+    eventSource: ParticipantEventSource,
+    applicationSpecificEvents: [UInt8]?
+
   ) async throws {
     guard let controller else { throw MRPError.internalError }
     guard let bridge = controller.bridge as? any MMRPAwareBridge<P> else { return }

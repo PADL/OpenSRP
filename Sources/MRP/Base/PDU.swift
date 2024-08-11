@@ -18,7 +18,7 @@ import Algorithms
 
 public typealias ProtocolVersion = UInt8
 
-struct ThreePackedEvents {
+struct ThreePackedEvents: Equatable {
   let value: UInt8
 
   init(_ value: UInt8) {
@@ -48,7 +48,7 @@ struct ThreePackedEvents {
   }
 }
 
-struct FourPackedEvents {
+struct FourPackedEvents: Equatable {
   let value: UInt8
 
   init(_ value: UInt8) {
@@ -83,11 +83,6 @@ struct FourPackedEvents {
 typealias NumberOfValues = UInt16 // Number of events encoded in the vector
 
 let EndMark: UInt16 = 0
-
-public enum PackedEventsType {
-  case threePackedType
-  case fourPackedType
-}
 
 enum LeaveAllEvent: UInt8 {
   case NullLeaveAllEvent = 0
@@ -124,7 +119,9 @@ typealias AttributeListLength = UInt16
 
 struct VectorAttribute<V: Value>: Sendable, Equatable {
   static func == (lhs: VectorAttribute<V>, rhs: VectorAttribute<V>) -> Bool {
-    guard lhs.vectorHeader == rhs.vectorHeader && lhs.vector == rhs.vector else {
+    guard lhs.vectorHeader == rhs.vectorHeader && lhs.threePackedEvents == rhs
+      .threePackedEvents && lhs.fourPackedEvents == rhs.fourPackedEvents
+    else {
       return false
     }
 
@@ -139,22 +136,52 @@ struct VectorAttribute<V: Value>: Sendable, Equatable {
   // (10.8.2.3) for the Attribute to which the message applies.
 
   let firstValue: V
-  let vector: [UInt8] // packed events
+  let threePackedEvents: [ThreePackedEvents]
+  let fourPackedEvents: [FourPackedEvents]?
 
   var leaveAllEvent: LeaveAllEvent { vectorHeader.leaveAllEvent }
   var numberOfValues: NumberOfValues { vectorHeader.numberOfValues }
 
-  init(vectorHeader: VectorHeader, firstValue: V, vector: [UInt8]) {
+  var attributeEvents: [AttributeEvent] {
+    get throws {
+      try threePackedEvents.flatMap {
+        let tuple = $0.tuple
+        return [tuple.0, tuple.1, tuple.2]
+      }.map {
+        guard let attributeEvent = AttributeEvent(rawValue: $0) else {
+          throw MRPError.invalidAttributeValue
+        }
+        return attributeEvent
+      }
+    }
+  }
+
+  var applicationSpecificEvents: [UInt8]? {
+    guard let fourPackedEvents else { return nil }
+    return fourPackedEvents.flatMap {
+      let tuple = $0.tuple
+      return [tuple.0, tuple.1, tuple.2, tuple.3]
+    }
+  }
+
+  init(
+    vectorHeader: VectorHeader,
+    firstValue: V,
+    threePackedEvents: [ThreePackedEvents],
+    fourPackedEvents: [FourPackedEvents]?
+  ) {
     self.vectorHeader = vectorHeader
     self.firstValue = firstValue
-    self.vector = vector
+    self.threePackedEvents = threePackedEvents
+    self.fourPackedEvents = fourPackedEvents
   }
 
   init(
     leaveAllEvent: LeaveAllEvent,
     numberOfValues: NumberOfValues,
     firstValue: V,
-    vector: [UInt8]
+    threePackedEvents: [ThreePackedEvents],
+    fourPackedEvents: [FourPackedEvents]?
   ) {
     self.init(
       vectorHeader: VectorHeader(
@@ -162,77 +189,68 @@ struct VectorAttribute<V: Value>: Sendable, Equatable {
         numberOfValues: numberOfValues
       ),
       firstValue: firstValue,
-      vector: vector
+      threePackedEvents: threePackedEvents,
+      fourPackedEvents: fourPackedEvents
     )
   }
 
   init(
-    leaveAllEvent: LeaveAllEvent,
-    numberOfValues: NumberOfValues,
+    vectorHeader: VectorHeader,
     firstValue: V,
-    vector: [ThreePackedEvents]
+    threePackedEvents: [UInt8],
+    fourPackedEvents: [UInt8]?
   ) {
-    self.init(
-      leaveAllEvent: leaveAllEvent,
-      numberOfValues: numberOfValues,
-      firstValue: firstValue,
-      vector: vector.map(\.value)
-    )
-  }
-
-  init(
-    leaveAllEvent: LeaveAllEvent,
-    numberOfValues: NumberOfValues,
-    firstValue: V,
-    vector: [FourPackedEvents]
-  ) {
-    self.init(
-      leaveAllEvent: leaveAllEvent,
-      numberOfValues: numberOfValues,
-      firstValue: firstValue,
-      vector: vector.map(\.value)
-    )
-  }
-
-  init(
-    leaveAllEvent: LeaveAllEvent,
-    firstValue: V,
-    attributeEvents: [AttributeEvent],
-    packedEventsType: PackedEventsType
-  ) {
-    switch packedEventsType {
-    case .threePackedType:
-      let vector = ThreePackedEvents.chunked(attributeEvents.map(\.rawValue))
-      self.init(
-        leaveAllEvent: leaveAllEvent,
-        numberOfValues: UInt16(attributeEvents.count),
-        firstValue: firstValue,
-        vector: vector
-      )
-    case .fourPackedType:
-      let vector = FourPackedEvents.chunked(attributeEvents.map(\.rawValue))
-      self.init(
-        leaveAllEvent: leaveAllEvent,
-        numberOfValues: UInt16(attributeEvents.count),
-        firstValue: firstValue,
-        vector: vector
-      )
+    let _fourPackedEvents: [FourPackedEvents]?
+    if let fourPackedEvents {
+      _fourPackedEvents = fourPackedEvents.map { FourPackedEvents($0) }
+    } else {
+      _fourPackedEvents = nil
     }
+    self.init(
+      vectorHeader: vectorHeader,
+      firstValue: firstValue,
+      threePackedEvents: threePackedEvents.map { ThreePackedEvents($0) },
+      fourPackedEvents: _fourPackedEvents
+    )
+  }
+
+  init(
+    leaveAllEvent: LeaveAllEvent,
+    numberOfValues: NumberOfValues,
+    firstValue: V,
+    threePackedEvents: [UInt8],
+    fourPackedEvents: [UInt8]?
+  ) {
+    self.init(
+      vectorHeader: VectorHeader(
+        leaveAllEvent: leaveAllEvent,
+        numberOfValues: numberOfValues
+      ),
+      firstValue: firstValue,
+      threePackedEvents: threePackedEvents,
+      fourPackedEvents: fourPackedEvents
+    )
   }
 
   init(
     leaveAllEvent: LeaveAllEvent,
     firstValue: V,
     attributeEvents: [AttributeEvent],
-    attributeType: AttributeType,
-    application: some Application
-  ) throws {
-    let packedEventsType = try application.packedEventsType(for: attributeType)
+    applicationSpecificEvents: [UInt8]?
+  ) {
+    let fourPackedEvents: [FourPackedEvents]?
+    if let applicationSpecificEvents {
+      precondition(applicationSpecificEvents.count == attributeEvents.count)
+      fourPackedEvents = FourPackedEvents.chunked(applicationSpecificEvents)
+    } else {
+      fourPackedEvents = nil
+    }
     self.init(
       leaveAllEvent: leaveAllEvent,
+      numberOfValues: UInt16(attributeEvents.count),
       firstValue: firstValue,
-      attributeEvents: attributeEvents,
-      packedEventsType: packedEventsType
+      threePackedEvents: ThreePackedEvents.chunked(attributeEvents.map(\.rawValue)),
+      fourPackedEvents: fourPackedEvents
     )
   }
 
@@ -242,40 +260,33 @@ struct VectorAttribute<V: Value>: Sendable, Equatable {
     deserializationContext: inout DeserializationContext,
     application: some Application
   ) throws where V == AnyValue {
-    vectorHeader = try VectorHeader(deserializationContext: &deserializationContext)
+    let vectorHeader = try VectorHeader(deserializationContext: &deserializationContext)
     try deserializationContext.assertRemainingLength(isAtLeast: Int(attributeLength))
-    firstValue = try AnyValue(application.deserialize(
+    let firstValue = try AnyValue(application.deserialize(
       attributeOfType: attributeType,
       from: &deserializationContext
     ))
-    let numberOfValueOctets = try ceil(
-      Int(vectorHeader.numberOfValues),
-      application.packingFactor(for: attributeType)
-    )
-    vector = try Array(deserializationContext.deserialize(count: numberOfValueOctets))
-  }
 
-  func eraseToAny() -> VectorAttribute<AnyValue> {
-    let anyFirstValue = AnyValue(firstValue)
-    return VectorAttribute<AnyValue>(
+    let numberOfValueOctets = ceil(Int(vectorHeader.numberOfValues), 3)
+    let threePacketEvents = try Array(
+      deserializationContext
+        .deserialize(count: numberOfValueOctets)
+    )
+
+    let fourPackedEvents: [UInt8]?
+
+    if try application.hasApplicationSpecificEvents(for: attributeType) {
+      let numberOfValueOctets = ceil(Int(vectorHeader.numberOfValues), 4)
+      fourPackedEvents = try Array(deserializationContext.deserialize(count: numberOfValueOctets))
+    } else {
+      fourPackedEvents = nil
+    }
+    self.init(
       vectorHeader: vectorHeader,
-      firstValue: anyFirstValue,
-      vector: vector
+      firstValue: firstValue,
+      threePackedEvents: threePacketEvents,
+      fourPackedEvents: fourPackedEvents
     )
-  }
-
-  var threePackedEvents: [UInt8] {
-    vector.flatMap {
-      let tuple = ThreePackedEvents($0).tuple
-      return [tuple.0, tuple.1, tuple.2]
-    }
-  }
-
-  var fourPackedEvents: [UInt8] {
-    vector.flatMap {
-      let tuple = FourPackedEvents($0).tuple
-      return [tuple.0, tuple.1, tuple.2, tuple.3]
-    }
   }
 
   func serialize(into serializationContext: inout SerializationContext) throws
@@ -286,7 +297,10 @@ struct VectorAttribute<V: Value>: Sendable, Equatable {
     let oldPosition = serializationContext.position
     try firstValue.serialize(into: &serializationContext)
     attributeLength = AttributeLength(serializationContext.position - oldPosition)
-    serializationContext.serialize(vector)
+    serializationContext.serialize(threePackedEvents.map(\.value))
+    if let fourPackedEvents {
+      serializationContext.serialize(fourPackedEvents.map(\.value))
+    }
     return attributeLength
   }
 }

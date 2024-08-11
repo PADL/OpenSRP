@@ -202,27 +202,26 @@ public final actor Participant<A: Application>: Equatable, Hashable {
         })
       let valueIndexGroups = attributeEvents.map(\.attributeValue.index).consecutivelyGrouped
 
-      var vectorAttributes: [VectorAttribute<AnyValue>] = try valueIndexGroups
+      var vectorAttributes: [VectorAttribute<AnyValue>] = valueIndexGroups
         .map { valueIndexGroup in
           let firstIndex = attributeEvents
             .firstIndex(where: { $0.attributeValue.index == valueIndexGroup[0] })!
           let attributeEvents = attributeEvents[firstIndex..<(firstIndex + valueIndexGroups.count)]
 
-          return try VectorAttribute<AnyValue>(
+          return VectorAttribute<AnyValue>(
             leaveAllEvent: leaveAll ? .LeaveAll : .NullLeaveAllEvent,
             firstValue: attributeEvents[firstIndex].attributeValue.value,
             attributeEvents: Array(attributeEvents.map(\.attributeEvent)),
-            attributeType: event.key,
-            application: application
+            applicationSpecificEvents: nil
           )
         }
 
       if vectorAttributes.count == 0, leaveAll {
         let vectorAttribute = try VectorAttribute<AnyValue>(
           leaveAllEvent: .LeaveAll,
-          numberOfValues: 0,
           firstValue: AnyValue(application.makeValue(for: event.key)),
-          vector: [UInt8]()
+          attributeEvents: [],
+          applicationSpecificEvents: nil
         )
         vectorAttributes.append(vectorAttribute)
       }
@@ -280,9 +279,17 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     }
   }
 
-  private func _apply(event: ProtocolEvent, eventSource: ParticipantEventSource) async throws {
+  private func _apply(
+    event: ProtocolEvent,
+    eventSource: ParticipantEventSource,
+    applicationSpecificEvents: [UInt8]? = nil
+  ) async throws {
     try await _apply { attributeValue in
-      try await attributeValue.handle(event: event, eventSource: eventSource)
+      try await attributeValue.handle(
+        event: event,
+        eventSource: eventSource,
+        applicationSpecificEvents: applicationSpecificEvents
+      )
     }
   }
 
@@ -320,17 +327,21 @@ public final actor Participant<A: Application>: Equatable, Hashable {
   private func _handle(
     attributeEvent: AttributeEvent,
     with attributeValue: _AttributeValueState<A>,
-    eventSource: ParticipantEventSource
+    eventSource: ParticipantEventSource,
+    applicationSpecificEvents: [UInt8]?
   ) async throws {
     let protocolEvent = attributeEvent.protocolEvent
-    try await attributeValue.handle(event: protocolEvent, eventSource: eventSource)
+    try await attributeValue.handle(
+      event: protocolEvent,
+      eventSource: eventSource,
+      applicationSpecificEvents: applicationSpecificEvents
+    )
   }
 
   // TODO: use a more efficient representation such as a bitmask
   private func _findAttributeValueState(
     attributeType: AttributeType,
-    index: Int,
-    isNew: Bool
+    index: Int
   ) throws -> _AttributeValueState<A> {
     guard let application else { throw MRPError.internalError }
     let absoluteValue = try AnyValue(application.makeValue(for: attributeType, at: index))
@@ -354,21 +365,6 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     return attributeValue
   }
 
-  private func _getAttributeEvents(
-    attributeType: AttributeType,
-    vectorAttribute: VectorAttribute<some Value>
-  ) throws
-    -> [AttributeEvent]
-  {
-    guard let application else { throw MRPError.internalError }
-    switch try application.packedEventsType(for: attributeType) {
-    case .threePackedType:
-      return vectorAttribute.threePackedEvents.compactMap { AttributeEvent(rawValue: $0) }
-    case .fourPackedType:
-      return vectorAttribute.fourPackedEvents.compactMap { AttributeEvent(rawValue: $0) }
-    }
-  }
-
   func rx(message: Message, sourceMacAddress: EUI48) async throws {
     let eventSource: ParticipantEventSource = _isEqualMacAddress(
       sourceMacAddress,
@@ -376,10 +372,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     ) ?
       .local : .peer
     for vectorAttribute in message.attributeList {
-      let packedEvents = try _getAttributeEvents(
-        attributeType: message.attributeType,
-        vectorAttribute: vectorAttribute
-      )
+      let packedEvents = try vectorAttribute.attributeEvents
       guard packedEvents.count >= vectorAttribute.numberOfValues else {
         throw MRPError.badVectorAttribute
       }
@@ -387,13 +380,13 @@ public final actor Participant<A: Application>: Equatable, Hashable {
         // TODO: what is the correct policy for unknown attributes
         guard let attribute = try? _findAttributeValueState(
           attributeType: message.attributeType,
-          index: vectorAttribute.firstValue.index + i,
-          isNew: packedEvents[i] == .New
+          index: vectorAttribute.firstValue.index + i
         ) else { continue }
         try await _handle(
           attributeEvent: packedEvents[i],
           with: attribute,
-          eventSource: eventSource
+          eventSource: eventSource,
+          applicationSpecificEvents: vectorAttribute.applicationSpecificEvents
         )
       }
 
@@ -463,31 +456,37 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     attributeType: AttributeType,
     attributeValue: some Value,
     isNew: Bool,
-    eventSource: ParticipantEventSource
+    eventSource: ParticipantEventSource,
+    applicationSpecificEvents: [UInt8]? = nil
   ) async throws {
     let attribute = try _findAttributeValueState(
       attributeType: attributeType,
-      index: attributeValue.index,
-      isNew: isNew
+      index: attributeValue.index
     )
     try await _handle(
       attributeEvent: isNew ? .New : .JoinMt,
       with: attribute,
-      eventSource: .administrativeControl
+      eventSource: .administrativeControl,
+      applicationSpecificEvents: applicationSpecificEvents
     )
   }
 
   func leave(
     attributeType: AttributeType,
     attributeValue: some Value,
-    eventSource: ParticipantEventSource
+    eventSource: ParticipantEventSource,
+    applicationSpecificEvents: [UInt8]? = nil
   ) async throws {
     let attribute = try _findAttributeValueState(
       attributeType: attributeType,
-      index: attributeValue.index,
-      isNew: false
+      index: attributeValue.index
     )
-    try await _handle(attributeEvent: .Lv, with: attribute, eventSource: eventSource)
+    try await _handle(
+      attributeEvent: .Lv,
+      with: attribute,
+      eventSource: eventSource,
+      applicationSpecificEvents: applicationSpecificEvents
+    )
   }
 }
 
@@ -517,7 +516,11 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
     self.value = value
     if participant._type != .applicantOnly {
       registrar = Registrar(onLeaveTimerExpired: {
-        try await self.handle(event: .leavetimer, eventSource: .timer)
+        try await self.handle(
+          event: .leavetimer,
+          eventSource: .timer,
+          applicationSpecificEvents: nil
+        )
       })
     }
   }
@@ -533,7 +536,11 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
     }
   }
 
-  func handle(event: ProtocolEvent, eventSource: ParticipantEventSource) async throws {
+  func handle(
+    event: ProtocolEvent,
+    eventSource: ParticipantEventSource,
+    applicationSpecificEvents: [UInt8]?
+  ) async throws {
     guard let participant else { throw MRPError.internalError }
     let smFlags = try await participant._getSmFlags(for: attributeType)
 
@@ -552,7 +559,11 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
 
     if let registrarAction = registrar?.action(for: event, flags: smFlags) {
       participant._logger.trace("registrar action for event \(event): \(registrarAction)")
-      try await handle(registrarAction: registrarAction, eventSource: eventSource)
+      try await handle(
+        registrarAction: registrarAction,
+        eventSource: eventSource,
+        applicationSpecificEvents: applicationSpecificEvents
+      )
     } else {
       participant._logger.trace("no registrar action for event \(event), skipping")
     }
@@ -600,7 +611,8 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
 
   private func handle(
     registrarAction action: Registrar.Action,
-    eventSource: ParticipantEventSource
+    eventSource: ParticipantEventSource,
+    applicationSpecificEvents: [UInt8]?
   ) async throws {
     guard let participant else { throw MRPError.internalError }
     switch action {
@@ -611,7 +623,8 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
         attributeType: attributeType,
         attributeValue: value.value,
         isNew: true,
-        eventSource: eventSource
+        eventSource: eventSource,
+        applicationSpecificEvents: applicationSpecificEvents
       )
     case .Join:
       try await participant.application?.joinIndicated(
@@ -620,7 +633,8 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
         attributeType: attributeType,
         attributeValue: value.value,
         isNew: false,
-        eventSource: eventSource
+        eventSource: eventSource,
+        applicationSpecificEvents: applicationSpecificEvents
       )
     case .Lv:
       try await participant.application?.leaveIndicated(
@@ -628,7 +642,8 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
         port: participant.port,
         attributeType: attributeType,
         attributeValue: value.value,
-        eventSource: eventSource
+        eventSource: eventSource,
+        applicationSpecificEvents: applicationSpecificEvents
       )
     }
   }

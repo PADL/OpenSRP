@@ -182,7 +182,8 @@ private extension LinuxPort {
   }
 }
 
-public final class LinuxBridge: Bridge, CustomStringConvertible, @unchecked Sendable {
+public final class LinuxBridge: Bridge, CustomStringConvertible, @unchecked
+Sendable {
   public typealias Port = LinuxPort
 
   private let _txSocket: Socket

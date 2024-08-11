@@ -57,7 +57,7 @@ public protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
     _ block: AsyncApplyFunction<T>
   ) async rethrows -> [T]
 
-  func packedEventsType(for: AttributeType) throws -> PackedEventsType
+  func hasApplicationSpecificEvents(for: AttributeType) throws -> Bool
   func administrativeControl(for: AttributeType) throws -> AdministrativeControl
 
   func makeValue(for attributeType: AttributeType, at index: Int) throws -> any Value
@@ -72,7 +72,8 @@ public protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
     attributeType: AttributeType,
     attributeValue: V,
     isNew: Bool,
-    eventSource: ParticipantEventSource
+    eventSource: ParticipantEventSource,
+    applicationSpecificEvents: [UInt8]?
   ) async throws
 
   func leaveIndicated<V: Value>(
@@ -80,7 +81,8 @@ public protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
     port: P,
     attributeType: AttributeType,
     attributeValue: V,
-    eventSource: ParticipantEventSource
+    eventSource: ParticipantEventSource,
+    applicationSpecificEvents: [UInt8]?
   ) async throws
 }
 
@@ -97,15 +99,6 @@ public extension Application {
 extension Application {
   typealias ParticipantSpecificApplyFunction<T> = (Participant<Self>) -> (T) throws -> ()
   typealias AsyncParticipantSpecificApplyFunction<T> = (Participant<Self>) -> (T) async throws -> ()
-
-  func packingFactor(for attributeType: AttributeType) throws -> Int {
-    switch try packedEventsType(for: attributeType) {
-    case .threePackedType:
-      3
-    case .fourPackedType:
-      4
-    }
-  }
 
   func periodic(for contextIdentifier: MAPContextIdentifier? = nil) async throws {
     try await apply(for: contextIdentifier) { participant in
