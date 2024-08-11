@@ -87,8 +87,12 @@ public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     }
   }
 
-  public func hasApplicationSpecificEvents(for: AttributeType) throws -> Bool {
+  public func hasApplicationEvents(for: AttributeType) -> Bool {
     false
+  }
+
+  public func mapApplicationEvent(for context: ApplicationEventContext) throws -> ApplicationEvent {
+    throw MRPError.unknownAttributeType
   }
 
   public func administrativeControl(for attributeType: AttributeType) throws
@@ -160,8 +164,7 @@ extension MVRPApplication {
     attributeValue: some Value,
     isNew: Bool,
     eventSource: ParticipantEventSource,
-    applicationSpecificEvents: [UInt8]?
-
+    applicationEvent: ApplicationEvent?
   ) async throws {
     guard let controller else { throw MRPError.internalError }
     guard let bridge = controller.bridge as? any MVRPAwareBridge<P> else { return }
@@ -198,7 +201,7 @@ extension MVRPApplication {
     attributeType: AttributeType,
     attributeValue: some Value,
     eventSource: ParticipantEventSource,
-    applicationSpecificEvents: [UInt8]?
+    applicationEvent: ApplicationEvent?
 
   ) async throws {
     guard let controller else { throw MRPError.internalError }

@@ -156,7 +156,7 @@ struct VectorAttribute<V: Value>: Sendable, Equatable {
     }
   }
 
-  var applicationSpecificEvents: [UInt8]? {
+  var applicationEvents: [ApplicationEvent]? {
     guard let fourPackedEvents else { return nil }
     return fourPackedEvents.flatMap {
       let tuple = $0.tuple
@@ -236,12 +236,12 @@ struct VectorAttribute<V: Value>: Sendable, Equatable {
     leaveAllEvent: LeaveAllEvent,
     firstValue: V,
     attributeEvents: [AttributeEvent],
-    applicationSpecificEvents: [UInt8]?
+    applicationEvents: [ApplicationEvent]?
   ) {
     let fourPackedEvents: [FourPackedEvents]?
-    if let applicationSpecificEvents {
-      precondition(applicationSpecificEvents.count == attributeEvents.count)
-      fourPackedEvents = FourPackedEvents.chunked(applicationSpecificEvents)
+    if let applicationEvents {
+      precondition(applicationEvents.count == attributeEvents.count)
+      fourPackedEvents = FourPackedEvents.chunked(applicationEvents)
     } else {
       fourPackedEvents = nil
     }
@@ -275,7 +275,7 @@ struct VectorAttribute<V: Value>: Sendable, Equatable {
 
     let fourPackedEvents: [UInt8]?
 
-    if try application.hasApplicationSpecificEvents(for: attributeType) {
+    if application.hasApplicationEvents(for: attributeType) {
       let numberOfValueOctets = ceil(Int(vectorHeader.numberOfValues), 4)
       fourPackedEvents = try Array(deserializationContext.deserialize(count: numberOfValueOctets))
     } else {

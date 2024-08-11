@@ -22,6 +22,19 @@ public enum AdministrativeControl {
   case nonParticipant // the state machine does not send any MRP messages
 }
 
+public typealias ApplicationEvent = UInt8
+
+public struct ApplicationEventContext {
+  let applicant: Applicant
+  let registrar: Registrar?
+  let action: Applicant.Action
+  let eventSource: ParticipantEventSource
+  let attributeEvent: AttributeEvent
+  let attributeType: AttributeType
+  let attributeValue: any Value
+  let applicationEvent: UInt8
+}
+
 public protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
   associatedtype P: Port
 
@@ -58,8 +71,9 @@ public protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
     _ block: AsyncApplyFunction<T>
   ) async rethrows -> [T]
 
-  func hasApplicationSpecificEvents(for: AttributeType) throws -> Bool
+  func hasApplicationEvents(for: AttributeType) -> Bool
   func administrativeControl(for: AttributeType) throws -> AdministrativeControl
+  func mapApplicationEvent(for context: ApplicationEventContext) throws -> ApplicationEvent
 
   func makeValue(for attributeType: AttributeType, at index: Int) throws -> any Value
   func deserialize(
@@ -74,7 +88,7 @@ public protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
     attributeValue: V,
     isNew: Bool,
     eventSource: ParticipantEventSource,
-    applicationSpecificEvents: [UInt8]?
+    applicationEvent: ApplicationEvent?
   ) async throws
 
   func leaveIndicated<V: Value>(
@@ -83,7 +97,7 @@ public protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
     attributeType: AttributeType,
     attributeValue: V,
     eventSource: ParticipantEventSource,
-    applicationSpecificEvents: [UInt8]?
+    applicationEvent: ApplicationEvent?
   ) async throws
 }
 

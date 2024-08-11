@@ -31,7 +31,7 @@ protocol BaseApplicationDelegate<P>: Sendable {
     attributeValue: some Value,
     isNew: Bool,
     eventSource: ParticipantEventSource,
-    applicationSpecificEvents: [UInt8]?
+    applicationEvent: ApplicationEvent?
   ) async throws
   func onLeaveIndication(
     contextIdentifier: MAPContextIdentifier,
@@ -39,7 +39,7 @@ protocol BaseApplicationDelegate<P>: Sendable {
     attributeType: AttributeType,
     attributeValue: some Value,
     eventSource: ParticipantEventSource,
-    applicationSpecificEvents: [UInt8]?
+    applicationEvent: ApplicationEvent?
   ) async throws
 }
 
@@ -187,7 +187,7 @@ extension BaseApplication {
     attributeValue: some Value,
     isNew: Bool,
     eventSource: ParticipantEventSource,
-    applicationSpecificEvents: [UInt8]?
+    applicationEvent: ApplicationEvent?
   ) async throws {
     precondition(!(attributeValue is AnyValue))
     do {
@@ -198,7 +198,7 @@ extension BaseApplication {
         attributeValue: attributeValue,
         isNew: isNew,
         eventSource: eventSource,
-        applicationSpecificEvents: applicationSpecificEvents
+        applicationEvent: applicationEvent
       )
     } catch MRPError.doNotPropagateAttribute {
       return
@@ -213,7 +213,7 @@ extension BaseApplication {
         attributeValue: attributeValue,
         isNew: isNew,
         eventSource: .map,
-        applicationSpecificEvents: applicationSpecificEvents
+        applicationEvent: applicationEvent
       )
     }
   }
@@ -224,7 +224,7 @@ extension BaseApplication {
     attributeType: AttributeType,
     attributeValue: some Value,
     eventSource: ParticipantEventSource,
-    applicationSpecificEvents: [UInt8]?
+    applicationEvent: ApplicationEvent?
   ) async throws {
     precondition(!(attributeValue is AnyValue))
     do {
@@ -234,7 +234,7 @@ extension BaseApplication {
         attributeType: attributeType,
         attributeValue: attributeValue,
         eventSource: eventSource,
-        applicationSpecificEvents: applicationSpecificEvents
+        applicationEvent: applicationEvent
       )
     } catch MRPError.doNotPropagateAttribute {
       return
@@ -248,7 +248,7 @@ extension BaseApplication {
         attributeType: attributeType,
         attributeValue: attributeValue,
         eventSource: .map,
-        applicationSpecificEvents: applicationSpecificEvents
+        applicationEvent: applicationEvent
       )
     }
   }

@@ -68,6 +68,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     struct AttributeEvent {
       let attributeEvent: MRP.AttributeEvent
       let attributeValue: _AttributeValueState<A>
+      let applicationEvent: UInt8?
     }
 
     case attributeEvent(AttributeEvent)
@@ -207,12 +208,19 @@ public final actor Participant<A: Application>: Equatable, Hashable {
           let firstIndex = attributeEvents
             .firstIndex(where: { $0.attributeValue.index == valueIndexGroup[0] })!
           let attributeEvents = attributeEvents[firstIndex..<(firstIndex + valueIndexGroups.count)]
+          let applicationEvents: [ApplicationEvent]?
+
+          if application.hasApplicationEvents(for: event.key) {
+            applicationEvents = attributeEvents.map(\.applicationEvent!)
+          } else {
+            applicationEvents = nil
+          }
 
           return VectorAttribute<AnyValue>(
             leaveAllEvent: leaveAll ? .LeaveAll : .NullLeaveAllEvent,
             firstValue: attributeEvents[firstIndex].attributeValue.value,
             attributeEvents: Array(attributeEvents.map(\.attributeEvent)),
-            applicationSpecificEvents: nil
+            applicationEvents: applicationEvents
           )
         }
 
@@ -221,7 +229,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
           leaveAllEvent: .LeaveAll,
           firstValue: AnyValue(application.makeValue(for: event.key)),
           attributeEvents: [],
-          applicationSpecificEvents: nil
+          applicationEvents: nil
         )
         vectorAttributes.append(vectorAttribute)
       }
@@ -245,11 +253,13 @@ public final actor Participant<A: Application>: Equatable, Hashable {
 
   fileprivate func _txEnqueue(
     attributeEvent: AttributeEvent,
-    attributeValue: _AttributeValueState<A>
+    attributeValue: _AttributeValueState<A>,
+    applicationEvent: ApplicationEvent? = nil
   ) {
     let event = EnqueuedEvent.AttributeEvent(
       attributeEvent: attributeEvent,
-      attributeValue: attributeValue
+      attributeValue: attributeValue,
+      applicationEvent: applicationEvent
     )
     _txEnqueue(.attributeEvent(event))
   }
@@ -282,13 +292,13 @@ public final actor Participant<A: Application>: Equatable, Hashable {
   private func _apply(
     event: ProtocolEvent,
     eventSource: ParticipantEventSource,
-    applicationSpecificEvents: [UInt8]? = nil
+    applicationEvent: ApplicationEvent? = nil
   ) async throws {
     try await _apply { attributeValue in
       try await attributeValue.handle(
         event: event,
         eventSource: eventSource,
-        applicationSpecificEvents: applicationSpecificEvents
+        applicationEvent: applicationEvent
       )
     }
   }
@@ -328,13 +338,13 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     attributeEvent: AttributeEvent,
     with attributeValue: _AttributeValueState<A>,
     eventSource: ParticipantEventSource,
-    applicationSpecificEvents: [UInt8]?
+    applicationEvent: ApplicationEvent?
   ) async throws {
     let protocolEvent = attributeEvent.protocolEvent
     try await attributeValue.handle(
       event: protocolEvent,
       eventSource: eventSource,
-      applicationSpecificEvents: applicationSpecificEvents
+      applicationEvent: applicationEvent
     )
   }
 
@@ -386,7 +396,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
           attributeEvent: packedEvents[i],
           with: attribute,
           eventSource: eventSource,
-          applicationSpecificEvents: vectorAttribute.applicationSpecificEvents
+          applicationEvent: vectorAttribute.applicationEvents?[i] ?? nil
         )
       }
 
@@ -457,7 +467,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     attributeValue: some Value,
     isNew: Bool,
     eventSource: ParticipantEventSource,
-    applicationSpecificEvents: [UInt8]? = nil
+    applicationEvent: ApplicationEvent? = nil
   ) async throws {
     let attribute = try _findAttributeValueState(
       attributeType: attributeType,
@@ -467,7 +477,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
       attributeEvent: isNew ? .New : .JoinMt,
       with: attribute,
       eventSource: .administrativeControl,
-      applicationSpecificEvents: applicationSpecificEvents
+      applicationEvent: applicationEvent
     )
   }
 
@@ -475,7 +485,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     attributeType: AttributeType,
     attributeValue: some Value,
     eventSource: ParticipantEventSource,
-    applicationSpecificEvents: [UInt8]? = nil
+    applicationEvent: ApplicationEvent? = nil
   ) async throws {
     let attribute = try _findAttributeValueState(
       attributeType: attributeType,
@@ -485,7 +495,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
       attributeEvent: .Lv,
       with: attribute,
       eventSource: eventSource,
-      applicationSpecificEvents: applicationSpecificEvents
+      applicationEvent: applicationEvent
     )
   }
 }
@@ -519,7 +529,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
         try await self.handle(
           event: .leavetimer,
           eventSource: .timer,
-          applicationSpecificEvents: nil
+          applicationEvent: nil
         )
       })
     }
@@ -539,7 +549,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
   func handle(
     event: ProtocolEvent,
     eventSource: ParticipantEventSource,
-    applicationSpecificEvents: [UInt8]?
+    applicationEvent: ApplicationEvent?
   ) async throws {
     guard let participant else { throw MRPError.internalError }
     let smFlags = try await participant._getSmFlags(for: attributeType)
@@ -552,7 +562,11 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
     let applicantAction = applicant.action(for: event, flags: smFlags)
     if let applicantAction {
       participant._logger.trace("applicant action for event \(event): \(applicantAction)")
-      try await handle(applicantAction: applicantAction, eventSource: eventSource)
+      try await handle(
+        applicantAction: applicantAction,
+        eventSource: eventSource,
+        applicationEvent: applicationEvent
+      )
     } else {
       participant._logger.trace("no applicant action for event \(event), skipping")
     }
@@ -562,7 +576,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
       try await handle(
         registrarAction: registrarAction,
         eventSource: eventSource,
-        applicationSpecificEvents: applicationSpecificEvents
+        applicationEvent: applicationEvent
       )
     } else {
       participant._logger.trace("no registrar action for event \(event), skipping")
@@ -571,14 +585,17 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
 
   private func handle(
     applicantAction action: Applicant.Action,
-    eventSource: ParticipantEventSource
+    eventSource: ParticipantEventSource,
+    applicationEvent: ApplicationEvent?
   ) async throws {
+    var attributeEvent: AttributeEvent?
+
     guard let participant else { throw MRPError.internalError }
     switch action {
     case .sN:
       // The AttributeEvent value New is encoded in the Vector as specified in
       // 10.7.6.1.
-      await participant._txEnqueue(attributeEvent: .New, attributeValue: self)
+      attributeEvent = .New
     case .sJ:
       fallthrough
     case .sJ_:
@@ -588,31 +605,49 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
       // transmitting the value is not necessary for correct/ protocol
       // operation.
       guard let registrar else { break }
-      if registrar.state == .IN {
-        await participant._txEnqueue(attributeEvent: .JoinIn, attributeValue: self)
-      } else if registrar.state == .MT || registrar.state == .LV {
-        await participant._txEnqueue(attributeEvent: .JoinMt, attributeValue: self)
-      }
+      attributeEvent = (registrar.state == .IN) ? .JoinIn : .JoinMt
     case .sL:
       fallthrough
     case .sL_:
-      await participant._txEnqueue(attributeEvent: .Lv, attributeValue: self)
+      attributeEvent = .Lv
     case .s:
       fallthrough
     case .s_:
       guard let registrar else { break }
-      if registrar.state == .IN {
-        await participant._txEnqueue(attributeEvent: .In, attributeValue: self)
-      } else if registrar.state == .MT || registrar.state == .LV {
-        await participant._txEnqueue(attributeEvent: .Mt, attributeValue: self)
-      }
+      attributeEvent = (registrar.state == .IN) ? .In : .Mt
+    }
+
+    let mappedApplicationEvent: ApplicationEvent?
+
+    if let application = participant.application, let applicationEvent {
+      let context = ApplicationEventContext(
+        applicant: applicant,
+        registrar: registrar,
+        action: action,
+        eventSource: eventSource,
+        attributeEvent: .In,
+        attributeType: attributeType,
+        attributeValue: value.value,
+        applicationEvent: applicationEvent
+      )
+      mappedApplicationEvent = try application.mapApplicationEvent(for: context)
+    } else {
+      mappedApplicationEvent = nil
+    }
+
+    if let attributeEvent {
+      await participant._txEnqueue(
+        attributeEvent: attributeEvent,
+        attributeValue: self,
+        applicationEvent: mappedApplicationEvent
+      )
     }
   }
 
   private func handle(
     registrarAction action: Registrar.Action,
     eventSource: ParticipantEventSource,
-    applicationSpecificEvents: [UInt8]?
+    applicationEvent: UInt8?
   ) async throws {
     guard let participant else { throw MRPError.internalError }
     switch action {
@@ -624,7 +659,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
         attributeValue: value.value,
         isNew: true,
         eventSource: eventSource,
-        applicationSpecificEvents: applicationSpecificEvents
+        applicationEvent: applicationEvent
       )
     case .Join:
       try await participant.application?.joinIndicated(
@@ -634,7 +669,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
         attributeValue: value.value,
         isNew: false,
         eventSource: eventSource,
-        applicationSpecificEvents: applicationSpecificEvents
+        applicationEvent: applicationEvent
       )
     case .Lv:
       try await participant.application?.leaveIndicated(
@@ -643,7 +678,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
         attributeType: attributeType,
         attributeValue: value.value,
         eventSource: eventSource,
-        applicationSpecificEvents: applicationSpecificEvents
+        applicationEvent: applicationEvent
       )
     }
   }
