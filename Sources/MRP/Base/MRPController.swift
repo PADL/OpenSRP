@@ -407,4 +407,11 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
     logger.debug("controller stopping TX on port \(port)")
     _periodicTimers[port.id]?.stop()
   }
+
+  public func getApplication<T: Application>(for etherType: UInt16) throws -> T {
+    guard let application = _applications[etherType] as? T else {
+      throw MRPError.unknownApplication
+    }
+    return application
+  }
 }
