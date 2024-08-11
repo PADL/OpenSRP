@@ -168,15 +168,14 @@ final class MRPTests: XCTestCase {
       if let firstAttribute = message.attributeList.first {
         XCTAssertEqual(firstAttribute.firstValue, AnyValue(VLAN(vid: 1)))
         XCTAssertEqual(firstAttribute.leaveAllEvent, .NullLeaveAllEvent)
-        XCTAssertEqual(firstAttribute.vector, [114])
-        XCTAssertEqual(firstAttribute.threePackedEvents, [3, 1, 0])
+        XCTAssertEqual(firstAttribute.threePackedEvents.map(\.value), [114])
+        XCTAssertEqual(try firstAttribute.attributeEvents, [.JoinMt, .JoinIn, .New])
 
-        let v = try VectorAttribute(
+        let v = VectorAttribute(
           leaveAllEvent: .NullLeaveAllEvent,
           firstValue: AnyValue(VLAN(vid: 1)),
           attributeEvents: [.JoinMt, .JoinIn],
-          attributeType: 1,
-          application: mvrp
+          applicationEvents: nil
         )
         XCTAssertEqual(v, firstAttribute)
       }

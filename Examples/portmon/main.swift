@@ -62,7 +62,7 @@ actor PortMonitor {
     ) // MSRP
     try await bridge.register(
       groupAddress: CustomerBridgeMRPGroupAddress,
-      etherType: 0x88F5,
+      etherType: MVRPEtherType,
       controller: controller
     ) // MVRP
 

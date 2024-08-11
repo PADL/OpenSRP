@@ -17,6 +17,8 @@
 import Locking
 import Logging
 
+public let MMRPEtherType: UInt16 = 0x88F6
+
 protocol MMRPAwareBridge<P>: Bridge where P: Port {
   func register(groupAddress: EUI48, on ports: Set<P>) async throws
   func deregister(groupAddress: EUI48, from ports: Set<P>) async throws
@@ -48,7 +50,7 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationDel
   public var groupAddress: EUI48 { CustomerBridgeMRPGroupAddress }
 
   // 10.12.1.4 MMRP application EtherType
-  public var etherType: UInt16 { 0x88F6 }
+  public var etherType: UInt16 { MMRPEtherType }
 
   // 10.12.1.5 MMRP ProtocolVersion
   public var protocolVersion: ProtocolVersion { 0 }
