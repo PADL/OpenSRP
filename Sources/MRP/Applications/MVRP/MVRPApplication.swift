@@ -29,7 +29,7 @@ public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationDel
   var _delegate: (any BaseApplicationDelegate<P>)? { self }
 
   // for now, we only operate in the Base Spanning Tree Context
-  var _contextsSupported: Bool { false }
+  public var nonBaseContextsSupported: Bool { false }
 
   public var validAttributeTypes: ClosedRange<AttributeType> {
     MVRPAttributeType.validAttributeTypes

@@ -138,6 +138,18 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
     }
   }
 
+  private var _nonBaseContextsSupported: Bool {
+    // if at least one application supports non-base spanning tree contexts, then we need to
+    // allocate a context per VID
+    var nonBaseContextsSupported = false
+    _apply { application in
+      if application.nonBaseContextsSupported {
+        nonBaseContextsSupported = true
+      }
+    }
+    return nonBaseContextsSupported
+  }
+
   private func _applyContextIdentifierChanges(
     beforeAddingOrUpdating port: P,
     isNewPort: Bool
@@ -146,25 +158,33 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
     let removedContextIdentifiers: Set<MAPContextIdentifier>
     let updatedContextIdentifiers: Set<MAPContextIdentifier>
 
-    if let existingPort = ports.first(where: { $0.id == port.id }) {
-      addedContextIdentifiers = port.contextIdentifiers.subtracting(existingPort.contextIdentifiers)
-      removedContextIdentifiers = existingPort.contextIdentifiers
-        .subtracting(port.contextIdentifiers)
-      updatedContextIdentifiers = existingPort.contextIdentifiers
-        .intersection(port.contextIdentifiers)
+    if _nonBaseContextsSupported {
+      if let existingPort = ports.first(where: { $0.id == port.id }) {
+        addedContextIdentifiers = port.contextIdentifiers
+          .subtracting(existingPort.contextIdentifiers)
+        removedContextIdentifiers = existingPort.contextIdentifiers
+          .subtracting(port.contextIdentifiers)
+        updatedContextIdentifiers = existingPort.contextIdentifiers
+          .intersection(port.contextIdentifiers)
+      } else {
+        addedContextIdentifiers = port.contextIdentifiers
+        removedContextIdentifiers = []
+        updatedContextIdentifiers = []
+      }
+
+      precondition(!addedContextIdentifiers.contains(MAPBaseSpanningTreeContext))
+      precondition(!removedContextIdentifiers.contains(MAPBaseSpanningTreeContext))
+
+      logger
+        .trace(
+          "applying context identifier changes prior to \(isNewPort ? "adding" : "updating") port \(port): removed \(removedContextIdentifiers) updated \(updatedContextIdentifiers) added \(addedContextIdentifiers)"
+        )
     } else {
-      addedContextIdentifiers = port.contextIdentifiers
+      addedContextIdentifiers = []
       removedContextIdentifiers = []
       updatedContextIdentifiers = []
     }
 
-    precondition(!addedContextIdentifiers.contains(MAPBaseSpanningTreeContext))
-    precondition(!removedContextIdentifiers.contains(MAPBaseSpanningTreeContext))
-
-    logger
-      .trace(
-        "applying context identifier changes prior to \(isNewPort ? "adding" : "updating") port \(port): removed \(removedContextIdentifiers) updated \(updatedContextIdentifiers) added \(addedContextIdentifiers)"
-      )
     for contextIdentifier in removedContextIdentifiers {
       try _didRemove(contextIdentifier: contextIdentifier, with: [port])
     }

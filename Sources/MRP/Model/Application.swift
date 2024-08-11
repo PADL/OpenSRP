@@ -33,6 +33,7 @@ public protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
   var etherType: UInt16 { get }
   var protocolVersion: ProtocolVersion { get }
   var hasAttributeListLength: Bool { get }
+  var nonBaseContextsSupported: Bool { get }
 
   var controller: MRPController<P>? { get }
 

@@ -49,15 +49,16 @@ protocol BaseApplication: Application where P == P {
   var _controller: Weak<MRPController<P>> { get }
   var _participants: ManagedCriticalState<MAPParticipantDictionary> { get }
   var _delegate: (any BaseApplicationDelegate<P>)? { get }
-
-  var _contextsSupported: Bool { get }
 }
 
 extension BaseApplication {
   var controller: MRPController<P>? { _controller.object }
 
   public func add(participant: Participant<Self>) throws {
-    precondition(_contextsSupported || participant.contextIdentifier == MAPBaseSpanningTreeContext)
+    precondition(
+      nonBaseContextsSupported || participant
+        .contextIdentifier == MAPBaseSpanningTreeContext
+    )
     _participants.withCriticalRegion {
       if let index = $0.index(forKey: participant.contextIdentifier) {
         $0.values[index].insert(participant)
@@ -70,7 +71,10 @@ extension BaseApplication {
   public func remove(
     participant: Participant<Self>
   ) throws {
-    precondition(_contextsSupported || participant.contextIdentifier == MAPBaseSpanningTreeContext)
+    precondition(
+      nonBaseContextsSupported || participant
+        .contextIdentifier == MAPBaseSpanningTreeContext
+    )
     _participants.withCriticalRegion {
       $0[participant.contextIdentifier]?.remove(participant)
     }
@@ -124,7 +128,8 @@ extension BaseApplication {
     contextIdentifier: MAPContextIdentifier,
     with context: MAPContext<P>
   ) async throws {
-    guard _contextsSupported || contextIdentifier == MAPBaseSpanningTreeContext else { return }
+    guard nonBaseContextsSupported || contextIdentifier == MAPBaseSpanningTreeContext
+    else { return }
     try _delegate?.onContextAdded(contextIdentifier: contextIdentifier, with: context)
     for port in context {
       guard (try? findParticipant(for: contextIdentifier, port: port)) == nil
@@ -146,7 +151,8 @@ extension BaseApplication {
     contextIdentifier: MAPContextIdentifier,
     with context: MAPContext<P>
   ) throws {
-    guard _contextsSupported || contextIdentifier == MAPBaseSpanningTreeContext else { return }
+    guard nonBaseContextsSupported || contextIdentifier == MAPBaseSpanningTreeContext
+    else { return }
     try _delegate?.onContextUpdated(contextIdentifier: contextIdentifier, with: context)
     for port in context {
       let participant = try findParticipant(
@@ -161,7 +167,8 @@ extension BaseApplication {
     contextIdentifier: MAPContextIdentifier,
     with context: MAPContext<P>
   ) throws {
-    guard _contextsSupported || contextIdentifier == MAPBaseSpanningTreeContext else { return }
+    guard nonBaseContextsSupported || contextIdentifier == MAPBaseSpanningTreeContext
+    else { return }
     try _delegate?.onContextRemoved(contextIdentifier: contextIdentifier, with: context)
     for port in context {
       let participant = try findParticipant(
