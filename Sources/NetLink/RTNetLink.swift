@@ -417,7 +417,7 @@ public extension NLSocket {
   }
 
   fileprivate func addOrRemove(vlans: Set<UInt16>, ifIndex: Int, isAdd: Bool) async throws {
-    let message = try NLMessage(type: isAdd ? RTM_SETLINK : RTM_DELLINK, flags: 0)
+    let message = try NLMessage(socket: self, type: isAdd ? RTM_NEWLINK : RTM_DELLINK)
     let attr = message.nestStart(attr: CInt(IFLA_AF_SPEC))
     var hdr = ifinfomsg()
     hdr.ifi_index = Int32(ifIndex)

@@ -363,9 +363,12 @@ public final class NLSocket: @unchecked Sendable {
         continuation.resume(with: result)
       case let .stream(continuation):
         continuation.yield(with: result)
-      default:
-        // shouldn't be reached
-        break
+      case let .ack(continuation):
+        if case let .failure(error) = result {
+          continuation.resume(throwing: error)
+        } else {
+          continuation.resume()
+        }
       }
     } else {
       Task {
@@ -382,6 +385,7 @@ public final class NLSocket: @unchecked Sendable {
     message: consuming NLMessage
   ) async throws {
     let sequence = message.sequence
+    precondition(sequence != 0)
     return try await withTaskCancellationHandler(operation: {
       try await withCheckedThrowingContinuation { continuation in
         _requests.withCriticalRegion { $0[sequence] = .ack(continuation) }
@@ -400,6 +404,7 @@ public final class NLSocket: @unchecked Sendable {
     message: consuming NLMessage
   ) async throws -> NLObjectConstructible {
     let sequence = message.sequence
+    precondition(sequence != 0)
     return try await withTaskCancellationHandler(operation: {
       try await withCheckedThrowingContinuation { continuation in
         _requests.withCriticalRegion { $0[sequence] = .continuation(continuation) }
@@ -478,7 +483,7 @@ struct NLMessage: ~Copyable {
     try self.init(seq: socket.useNextSequenceNumber(), type: type, flags: flags)
   }
 
-  init(
+  private init(
     pid: UInt32 = UInt32(NL_AUTO_PID),
     seq: UInt32 = UInt32(NL_AUTO_SEQ),
     type: Int,
