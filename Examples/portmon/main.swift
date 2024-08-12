@@ -25,7 +25,11 @@ actor PortMonitor {
 
   public static func main() async throws {
     let portmon = PortMonitor()
-    try await portmon.run()
+    do {
+      try await portmon.run()
+    } catch {
+      print("\(CommandLine.arguments[0]): \(error)")
+    }
   }
 
   var ports = Set<P>()
