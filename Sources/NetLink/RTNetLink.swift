@@ -18,6 +18,7 @@ import AsyncAlgorithms
 import AsyncExtensions
 import CLinuxSockAddr
 import CNetLink
+import SocketAddress
 import SystemPackage
 
 protocol RTNLLinkFactory {}
@@ -94,6 +95,21 @@ Sendable, CustomStringConvertible,
   }
 
   public typealias Address = (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8)
+
+  public static func parseMacAddressString(_ macAddress: String) throws -> Address {
+    let ll = try sockaddr_ll(
+      family: sa_family_t(AF_PACKET),
+      presentationAddress: macAddress
+    )
+    return (
+      ll.sll_addr.0,
+      ll.sll_addr.1,
+      ll.sll_addr.2,
+      ll.sll_addr.3,
+      ll.sll_addr.4,
+      ll.sll_addr.5
+    )
+  }
 
   private func _makeAddress(_ addr: OpaquePointer) -> Address {
     var mac = [UInt8](repeating: 0, count: Int(nl_addr_get_len(addr)))
@@ -234,11 +250,51 @@ public final class RTNLLinkBridge: RTNLLink {
   }
 
   public func add(vlans: Set<UInt16>, socket: NLSocket) async throws {
-    try await socket.addOrRemove(vlans: vlans, ifIndex: index, isAdd: true, flags: _bridgeFlags)
+    try await socket.addOrRemove(
+      vlans: vlans,
+      interfaceIndex: index,
+      flags: _bridgeFlags,
+      isAdd: true
+    )
   }
 
   public func remove(vlans: Set<UInt16>, socket: NLSocket) async throws {
-    try await socket.addOrRemove(vlans: vlans, ifIndex: index, isAdd: false, flags: _bridgeFlags)
+    try await socket.addOrRemove(
+      vlans: vlans,
+      interfaceIndex: index,
+      flags: _bridgeFlags,
+      isAdd: false
+    )
+  }
+
+  public func add(
+    link: RTNLLink,
+    groupAddresses: [Address],
+    vlanID: UInt16? = nil,
+    socket: NLSocket
+  ) async throws {
+    try await socket.addOrRemove(
+      bridgeIndex: index,
+      interfaceIndex: link.index,
+      groupAddresses: groupAddresses,
+      vlanID: vlanID,
+      isAdd: true
+    )
+  }
+
+  public func remove(
+    link: RTNLLink,
+    groupAddresses: [Address],
+    vlanID: UInt16? = nil,
+    socket: NLSocket
+  ) async throws {
+    try await socket.addOrRemove(
+      bridgeIndex: index,
+      interfaceIndex: link.index,
+      groupAddresses: groupAddresses,
+      vlanID: vlanID,
+      isAdd: false
+    )
   }
 
   public var bridgePortState: UInt8 {
@@ -424,17 +480,16 @@ public extension NLSocket {
 
   fileprivate func addOrRemove(
     vlans: Set<UInt16>,
-    ifIndex: Int,
-    isAdd: Bool,
-    flags: UInt16 = 0
+    interfaceIndex: Int,
+    flags: UInt16 = 0,
+    isAdd: Bool
   ) async throws {
-    let message = try NLMessage(socket: self, type: isAdd ? RTM_SETLINK : RTM_DELLINK)
-    var hdr = ifinfomsg()
-    hdr.ifi_index = Int32(ifIndex)
-    hdr.ifi_family = UInt8(AF_BRIDGE)
-    try withUnsafeBytes(of: &hdr) {
-      try message.append(Array($0))
-    }
+    let message = try NLMessage(
+      socket: self,
+      type: isAdd ? RTM_SETLINK : RTM_DELLINK,
+      flags: NLM_F_EXCL | NLM_F_CREATE
+    )
+    try message.appendIfInfo(index: interfaceIndex)
     let attr = message.nestStart(attr: CInt(IFLA_AF_SPEC))
     if flags != 0 {
       try message.put(u16: flags, for: CInt(IFLA_BRIDGE_FLAGS))
@@ -444,6 +499,33 @@ public extension NLSocket {
       try message.put(opaque: &vlanInfo, for: CInt(IFLA_BRIDGE_VLAN_INFO))
     }
     message.nestEnd(attr: attr)
+    try await ackRequest(message: message)
+  }
+
+  fileprivate func addOrRemove(
+    bridgeIndex: Int,
+    interfaceIndex: Int,
+    groupAddresses: [RTNLLink.Address],
+    vlanID: UInt16? = nil,
+    flags: UInt8 = 0,
+    isAdd: Bool
+  ) async throws {
+    let message = try NLMessage(socket: self, type: isAdd ? RTM_NEWMDB : RTM_DELMDB)
+    var portMsg = br_port_msg(family: UInt8(AF_BRIDGE), ifindex: UInt32(bridgeIndex))
+    try withUnsafeBytes(of: &portMsg) {
+      try message.append(Array($0))
+    }
+    var entry = br_mdb_entry(
+      ifindex: UInt32(interfaceIndex),
+      state: UInt8(MDB_PERMANENT),
+      flags: flags,
+      vid: vlanID ?? 0,
+      addr: .init()
+    )
+    for groupAddress in groupAddresses {
+      entry.addr.u.mac_addr = groupAddress
+      try message.put(opaque: &entry, for: CInt(MDBA_MDB_ENTRY))
+    }
     try await ackRequest(message: message)
   }
 }

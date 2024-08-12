@@ -507,6 +507,20 @@ struct NLMessage: ~Copyable {
     }
   }
 
+  func appendIfInfo(
+    family: sa_family_t = sa_family_t(AF_BRIDGE),
+    index: Int = 0,
+    flags: UInt32 = 0
+  ) throws {
+    var hdr = ifinfomsg()
+    hdr.ifi_family = UInt8(family)
+    hdr.ifi_index = Int32(index)
+    hdr.ifi_flags = flags
+    try withUnsafeBytes(of: &hdr) {
+      try append(Array($0))
+    }
+  }
+
   func nestStart(attr: CInt) -> NLAttribute {
     NLAttribute(_nla: nla_nest_start(_msg, attr))
   }

@@ -83,6 +83,7 @@ PlatformTargets = [
     dependencies: ["CNetLink",
                    "Locking",
                    .product(name: "CLinuxSockAddr", package: "SocketAddress"),
+                   .product(name: "SocketAddress", package: "SocketAddress"),
                    .product(name: "SystemPackage", package: "swift-system"),
                    .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
                    "AsyncExtensions"],

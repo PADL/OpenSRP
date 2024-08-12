@@ -161,25 +161,6 @@ private extension LinuxPort {
       socket: _bridge!._nlLinkSocket
     )
   }
-
-  func _addOrDelMulti(groupAddress: EUI48, isAdd: Bool) throws {
-    let socket = try Socket(
-      ring: IORing.shared,
-      domain: sa_family_t(AF_PACKET),
-      type: SOCK_RAW
-    )
-    if isAdd {
-      try socket.addMulticastMembership(for: _makeLinkLayerAddress(
-        macAddress: groupAddress,
-        index: id
-      ))
-    } else {
-      try socket.dropMulticastMembership(for: _makeLinkLayerAddress(
-        macAddress: groupAddress,
-        index: id
-      ))
-    }
-  }
 }
 
 public final class LinuxBridge: Bridge, CustomStringConvertible, @unchecked
@@ -501,17 +482,23 @@ fileprivate final class FilterRegistration: Equatable, Hashable, Sendable, Custo
 
 extension LinuxBridge: MMRPAwareBridge {
   func register(groupAddress: EUI48, on ports: Set<P>) async throws {
-    try _bridgePort!._addOrDelMulti(groupAddress: groupAddress, isAdd: true)
     for port in ports {
-      try port._addOrDelMulti(groupAddress: groupAddress, isAdd: true)
+      try await (bridgePort._rtnl as! RTNLLinkBridge).add(
+        link: port._rtnl,
+        groupAddresses: [groupAddress],
+        socket: _nlLinkSocket
+      )
     }
   }
 
   func deregister(groupAddress: EUI48, from ports: Set<P>) async throws {
     for port in ports {
-      try port._addOrDelMulti(groupAddress: groupAddress, isAdd: false)
+      try await (bridgePort._rtnl as! RTNLLinkBridge).remove(
+        link: port._rtnl,
+        groupAddresses: [groupAddress],
+        socket: _nlLinkSocket
+      )
     }
-    try _bridgePort!._addOrDelMulti(groupAddress: groupAddress, isAdd: false)
   }
 
   func register(
