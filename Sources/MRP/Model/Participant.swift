@@ -213,12 +213,12 @@ public final actor Participant<A: Application>: Equatable, Hashable {
           let firstIndex = attributeEvents
             .firstIndex(where: { $0.attributeValue.index == valueIndexGroup[0] })!
           let attributeEvents = attributeEvents[firstIndex..<(firstIndex + valueIndexGroups.count)]
-          let applicationEvents: [ApplicationEvent]?
-
-          if application.hasApplicationEvents(for: event.key) {
-            applicationEvents = attributeEvents.map(\.applicationEvent!)
+          let applicationEvents: [ApplicationEvent]? = if application
+            .hasApplicationEvents(for: event.key)
+          {
+            attributeEvents.map(\.applicationEvent!)
           } else {
-            applicationEvents = nil
+            nil
           }
 
           return VectorAttribute<AnyValue>(

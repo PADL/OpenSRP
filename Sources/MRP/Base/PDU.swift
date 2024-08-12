@@ -200,11 +200,10 @@ struct VectorAttribute<V: Value>: Sendable, Equatable {
     threePackedEvents: [UInt8],
     fourPackedEvents: [UInt8]?
   ) {
-    let _fourPackedEvents: [FourPackedEvents]?
-    if let fourPackedEvents {
-      _fourPackedEvents = fourPackedEvents.map { FourPackedEvents($0) }
+    let _fourPackedEvents: [FourPackedEvents]? = if let fourPackedEvents {
+      fourPackedEvents.map { FourPackedEvents($0) }
     } else {
-      _fourPackedEvents = nil
+      nil
     }
     self.init(
       vectorHeader: vectorHeader,
