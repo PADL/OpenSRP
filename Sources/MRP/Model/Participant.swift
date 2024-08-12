@@ -564,13 +564,14 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
         "handling protocol event \(event) for attribute \(attributeType) value \(value) flags \(smFlags) state A \(applicant) R \(registrar?.description ?? "-")"
       )
 
+    var applicationEvent = applicationEvent
     let applicantAction = applicant.action(for: event, flags: smFlags)
     if let applicantAction {
       participant._logger.trace("applicant action for event \(event): \(applicantAction)")
       try await handle(
         applicantAction: applicantAction,
         eventSource: eventSource,
-        applicationEvent: applicationEvent
+        applicationEvent: &applicationEvent
       )
     } else {
       participant._logger.trace("no applicant action for event \(event), skipping")
@@ -591,7 +592,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
   private func handle(
     applicantAction action: Applicant.Action,
     eventSource: ParticipantEventSource,
-    applicationEvent: ApplicationEvent?
+    applicationEvent: inout ApplicationEvent?
   ) async throws {
     var attributeEvent: AttributeEvent?
 
@@ -647,12 +648,14 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
         applicationEvent: mappedApplicationEvent
       )
     }
+
+    applicationEvent = mappedApplicationEvent
   }
 
   private func handle(
     registrarAction action: Registrar.Action,
     eventSource: ParticipantEventSource,
-    applicationEvent: UInt8?
+    applicationEvent: ApplicationEvent?
   ) async throws {
     guard let participant else { throw MRPError.internalError }
     switch action {
