@@ -563,7 +563,7 @@ struct NLMessage: ~Copyable {
   }
 
   func put(opaque value: UnsafePointer<some Any>, for attrtype: CInt) throws {
-    _ = try withUnsafeBytes(of: value) { value in
+    _ = try withUnsafeBytes(of: value.pointee) { value in
       try throwingErrno {
         nla_put(_msg, attrtype, Int32(value.count), value.baseAddress)
       }

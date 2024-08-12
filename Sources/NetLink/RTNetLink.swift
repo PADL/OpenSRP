@@ -227,12 +227,18 @@ public final class RTNLLinkBridge: RTNLLink {
     rtnl_link_bridge_has_ext_info(_obj) != 0
   }
 
+  private var _bridgeFlags: UInt16 {
+    var bridgeFlags: UInt16 = 0
+    if master == index { bridgeFlags |= UInt16(BRIDGE_FLAGS_SELF) }
+    return bridgeFlags
+  }
+
   public func add(vlans: Set<UInt16>, socket: NLSocket) async throws {
-    try await socket.addOrRemove(vlans: vlans, ifIndex: index, isAdd: true)
+    try await socket.addOrRemove(vlans: vlans, ifIndex: index, isAdd: true, flags: _bridgeFlags)
   }
 
   public func remove(vlans: Set<UInt16>, socket: NLSocket) async throws {
-    try await socket.addOrRemove(vlans: vlans, ifIndex: index, isAdd: false)
+    try await socket.addOrRemove(vlans: vlans, ifIndex: index, isAdd: false, flags: _bridgeFlags)
   }
 
   public var bridgePortState: UInt8 {
@@ -416,14 +422,22 @@ public extension NLSocket {
     try drop(membership: RTNLGRP_LINK)
   }
 
-  fileprivate func addOrRemove(vlans: Set<UInt16>, ifIndex: Int, isAdd: Bool) async throws {
-    let message = try NLMessage(socket: self, type: isAdd ? RTM_NEWLINK : RTM_DELLINK)
-    let attr = message.nestStart(attr: CInt(IFLA_AF_SPEC))
+  fileprivate func addOrRemove(
+    vlans: Set<UInt16>,
+    ifIndex: Int,
+    isAdd: Bool,
+    flags: UInt16 = 0
+  ) async throws {
+    let message = try NLMessage(socket: self, type: isAdd ? RTM_SETLINK : RTM_DELLINK)
     var hdr = ifinfomsg()
     hdr.ifi_index = Int32(ifIndex)
     hdr.ifi_family = UInt8(AF_BRIDGE)
     try withUnsafeBytes(of: &hdr) {
       try message.append(Array($0))
+    }
+    let attr = message.nestStart(attr: CInt(IFLA_AF_SPEC))
+    if flags != 0 {
+      try message.put(u16: flags, for: CInt(IFLA_BRIDGE_FLAGS))
     }
     for vid in vlans {
       var vlanInfo = bridge_vlan_info(flags: 0, vid: vid)

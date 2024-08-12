@@ -63,8 +63,8 @@ PlatformProducts = [
     targets: ["nlmonitor"]
   ),
   .executable(
-    name: "nlvlan",
-    targets: ["nlvlan"]
+    name: "nltool",
+    targets: ["nltool"]
   ),
   .executable(
     name: "portmon",
@@ -108,9 +108,9 @@ PlatformTargets = [
     path: "Examples/nlmonitor"
   ),
   .executableTarget(
-    name: "nlvlan",
-    dependencies: ["NetLink"],
-    path: "Examples/nlvlan"
+    name: "nltool",
+    dependencies: ["NetLink", .product(name: "IORingUtils", package: "IORingSwift")],
+    path: "Examples/nltool"
   ),
   .executableTarget(
     name: "portmon",
