@@ -308,20 +308,12 @@ public final class NLSocket: @unchecked Sendable {
   }
 
   private func onReadReady() {
-    // depending on the version of libnl, either -NLE_AGAIN is returned, or 0 is
-    // returned and EAGAIN is set in errno
-    repeat {
-      errno = 0
-      let r = nl_recvmsgs_default(_sk)
-      if r == -NLE_AGAIN || (r == 0 && errno == EAGAIN) {
-        continue
-      } else if r < 0 {
-        yield(sequence: 0, with: Result.failure(Errno(rawValue: -r)))
-        return
-      } else {
-        break
-      }
-    } while true
+    let r = nl_recvmsgs_default(_sk)
+    if r == -NLE_AGAIN {
+      errno = EAGAIN
+    } else if r < 0 {
+      yield(sequence: 0, with: Result.failure(Errno(rawValue: -r)))
+    }
   }
 
   public func useNextSequenceNumber() -> UInt32 {
