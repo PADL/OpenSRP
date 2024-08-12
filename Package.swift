@@ -63,6 +63,10 @@ PlatformProducts = [
     targets: ["nlmonitor"]
   ),
   .executable(
+    name: "nlvlan",
+    targets: ["nlvlan"]
+  ),
+  .executable(
     name: "portmon",
     targets: ["portmon"]
   ),
@@ -102,6 +106,11 @@ PlatformTargets = [
     name: "nlmonitor",
     dependencies: ["NetLink"],
     path: "Examples/nlmonitor"
+  ),
+  .executableTarget(
+    name: "nlvlan",
+    dependencies: ["NetLink"],
+    path: "Examples/nlvlan"
   ),
   .executableTarget(
     name: "portmon",
