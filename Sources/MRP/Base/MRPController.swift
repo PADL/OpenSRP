@@ -91,6 +91,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
     for port in ports {
       try? _didRemove(port: port)
     }
+    // FIXME: there appears to be a crash here
     _taskGroup?.cancelAll()
   }
 

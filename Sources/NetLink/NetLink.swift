@@ -196,7 +196,7 @@ private func NLSocket_ErrCB(
   let hdr = err.pointee.msg
   debugPrint("NLSocket_ErrCB: error \(err.pointee)")
   nlSocket.yield(sequence: hdr.nlmsg_seq, with: Result.failure(Errno(rawValue: -err.pointee.error)))
-  return CInt(NL_OK.rawValue)
+  return err.pointee.error
 }
 
 public final class NLSocket: @unchecked Sendable {
@@ -308,11 +308,20 @@ public final class NLSocket: @unchecked Sendable {
   }
 
   private func onReadReady() {
-    let r = nl_recvmsgs_default(_sk)
-    guard r >= 0 else {
-      yield(sequence: 0, with: Result.failure(Errno(rawValue: -r)))
-      return
-    }
+    // depending on the version of libnl, either -NLE_AGAIN is returned, or 0 is
+    // returned and EAGAIN is set in errno
+    repeat {
+      errno = 0
+      let r = nl_recvmsgs_default(_sk)
+      if r == -NLE_AGAIN || (r == 0 && errno == EAGAIN) {
+        continue
+      } else if r < 0 {
+        yield(sequence: 0, with: Result.failure(Errno(rawValue: -r)))
+        return
+      } else {
+        break
+      }
+    } while true
   }
 
   public func useNextSequenceNumber() -> UInt32 {
