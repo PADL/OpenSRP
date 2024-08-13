@@ -55,6 +55,8 @@ public enum ParticipantEventSource: Sendable {
   case administrativeControl
   // event source was transitive via MAP function
   case map
+  // event source was a preApplicantEventHandler/postApplicantEventHandler hook
+  case application
 }
 
 public final actor Participant<A: Application>: Equatable, Hashable {
@@ -435,6 +437,24 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     )
   }
 
+  public func forceLeave(
+    _ isIncluded: @Sendable (AttributeType, AttributeSubtype?, any Value)
+      -> Bool
+  ) async throws {
+    try await _apply { attributeValueState in
+      guard isIncluded(
+        attributeValueState.attributeType,
+        attributeValueState.attributeSubtype,
+        attributeValueState.value.value
+      ) else {
+        return
+      }
+
+      try await attributeValueState.handle(event: .rLv, eventSource: .application)
+      try await attributeValueState.onLeaveTimerExpired()
+    }
+  }
+
   // A Flush! event signals to the Registrar state machine that there is a
   // need to rapidly deregister information on the Port associated with the
   // state machine as a result of a topology change that has occurred in the
@@ -527,17 +547,20 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
     attributeSubtype = subtype
     self.value = value
     if participant._type != .applicantOnly {
-      registrar = Registrar(onLeaveTimerExpired: {
-        try await self.handle(
-          event: .leavetimer,
-          eventSource: .timer
-        )
-      })
+      registrar = Registrar(onLeaveTimerExpired: onLeaveTimerExpired)
     }
   }
 
   deinit {
     registrar?.stopLeaveTimer()
+  }
+
+  @Sendable
+  func onLeaveTimerExpired() async throws {
+    try await handle(
+      event: .leavetimer,
+      eventSource: .timer
+    )
   }
 
   func hash(into hasher: inout Hasher) {
@@ -576,7 +599,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
         attributeValue: value.value
       )
 
-      try participant.application?.preApplicantEventHandler(context: applicantEventContext)
+      try await participant.application?.preApplicantEventHandler(context: applicantEventContext)
       try await handle(
         applicantAction: applicantAction,
         participant: participant,

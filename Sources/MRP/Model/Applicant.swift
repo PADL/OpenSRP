@@ -296,7 +296,7 @@ private extension Applicant.State {
   }
 }
 
-public struct ApplicantEventContext<P: Port> {
+public struct ApplicantEventContext<P: Port>: Sendable {
   let port: P
   let event: ProtocolEvent
   let eventSource: ParticipantEventSource

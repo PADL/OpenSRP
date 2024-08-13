@@ -99,7 +99,7 @@ public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     .normalParticipant
   }
 
-  public func preApplicantEventHandler(context: ApplicantEventContext<P>) throws {}
+  public func preApplicantEventHandler(context: ApplicantEventContext<P>) async throws {}
   public func postApplicantEventHandler(context: ApplicantEventContext<P>) {}
 
   // On receipt of an ES_REGISTER_VLAN_MEMBER service primitive, the MVRP

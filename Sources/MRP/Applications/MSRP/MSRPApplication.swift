@@ -142,7 +142,34 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     throw MRPError.invalidMSRPDeclarationType
   }
 
-  public func preApplicantEventHandler(context: ApplicantEventContext<P>) throws {}
+  // If an MSRP message is received from a Port with an event value specifying
+  // the JoinIn or JoinMt message, and if the StreamID (35.2.2.8.2,
+  // 35.2.2.10.2), and Direction (35.2.1.2) all match those of an attribute
+  // already registered on that Port, and the Attribute Type (35.2.2.4) or
+  // FourPackedEvent (35.2.2.7.2) has changed, then the Bridge should behave as
+  // though an rLv! event (with immediate leavetimer expiration in the
+  // Registrar state table) was generated for the MAD in the Received MSRP
+  // Attribute Declarations before the rJoinIn! or rJoinMt! event for the
+  // attribute in the received message is processed
+  public func preApplicantEventHandler(context: ApplicantEventContext<P>) async throws {
+    guard context.event == .rJoinIn || context.event == .rJoinMt else { return }
+
+    let contextAttributeType = MSRPAttributeType(rawValue: context.attributeType)!
+    guard let contextDirection = contextAttributeType.direction else { return }
+
+    let contextStreamID = (context.attributeValue as! MSRPStreamIDRepresentable).streamID
+    let participant = try findParticipant(port: context.port)
+
+    try await participant.forceLeave { attributeType, attributeSubtype, attributeValue in
+      let attributeType = MSRPAttributeType(rawValue: attributeType)!
+      guard let direction = attributeType.direction else { return false }
+      let streamID = (attributeValue as! MSRPStreamIDRepresentable).streamID
+
+      return contextStreamID == streamID && contextDirection == direction &&
+        (contextAttributeType != attributeType || context.attributeSubtype != attributeSubtype)
+    }
+  }
+
   public func postApplicantEventHandler(context: ApplicantEventContext<P>) {}
 
   // On receipt of a REGISTER_STREAM.request the MSRP Participant shall issue a
@@ -290,11 +317,7 @@ extension MSRPApplication {
     failureInformation: MSRPFailure?,
     isNew: Bool,
     eventSource: ParticipantEventSource
-  ) async throws {
-    try withPortState(port: port) { portState in
-      try portState.register(declarationType: declarationType, for: streamID)
-    }
-  }
+  ) async throws {}
 
   // On receipt of a MAD_Join.indication service primitive (10.2, 10.3) with an
   // attribute_type of Listener (35.2.2.4), the MSRP application shall issue a
@@ -308,11 +331,7 @@ extension MSRPApplication {
     declarationType: MSRPDeclarationType,
     isNew: Bool,
     eventSource: ParticipantEventSource
-  ) async throws {
-    try withPortState(port: port) { portState in
-      try portState.register(declarationType: declarationType, for: streamID)
-    }
-  }
+  ) async throws {}
 
   func onJoinIndication(
     contextIdentifier: MAPContextIdentifier,
@@ -386,11 +405,7 @@ extension MSRPApplication {
     port: P,
     streamID: MSRPStreamID,
     eventSource: ParticipantEventSource
-  ) async throws {
-    try withPortState(port: port) { portState in
-      try portState.deregister(direction: .talker, for: streamID)
-    }
-  }
+  ) async throws {}
 
   // On receipt of a MAD_Leave.indication service primitive (10.2, 10.3) with
   // an attribute_type of Listener (35.2.2.4), the MSRP application shall issue
@@ -400,11 +415,7 @@ extension MSRPApplication {
     port: P,
     streamID: MSRPStreamID,
     eventSource: ParticipantEventSource
-  ) async throws {
-    try withPortState(port: port) { portState in
-      try portState.deregister(direction: .listener, for: streamID)
-    }
-  }
+  ) async throws {}
 
   func onLeaveIndication(
     contextIdentifier: MAPContextIdentifier,

@@ -102,7 +102,6 @@ public struct MSRPPortState<P: Port>: Sendable {
   let neighborProtocolVersion: MSRPProtocolVersion
   let talkerPruning: Bool
   let talkerVlanPruning: Bool
-  var streams: [MSRPStreamID: MSRPDeclarationType]
 
   var streamAge: UInt32 {
     guard let time = try? P.timeSinceEpoch() else {
@@ -120,21 +119,6 @@ public struct MSRPPortState<P: Port>: Sendable {
     neighborProtocolVersion = .v0
     talkerPruning = msrp._talkerPruning
     talkerVlanPruning = msrp._talkerPruning
-    streams = [:]
-  }
-
-  mutating func register(declarationType: MSRPDeclarationType, for streamID: MSRPStreamID) throws {
-    guard streams[streamID] == nil else {
-      throw MSRPFailure(systemID: 0, failureCode: .streamIDAlreadyInUse)
-    }
-    streams[streamID] = declarationType
-  }
-
-  mutating func deregister(direction: MSRPDirection, for streamID: MSRPStreamID) throws {
-    guard let declarationType = streams[streamID] else { return }
-    guard direction == declarationType.direction
-    else { throw MSRPFailure(systemID: 0, failureCode: .streamIDAlreadyInUse) }
-    streams[streamID] = nil
   }
 }
 

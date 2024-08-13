@@ -31,6 +31,19 @@ enum MSRPAttributeType: AttributeType, CaseIterable {
   static var validAttributeTypes: ClosedRange<AttributeType> {
     allCases.first!.rawValue...allCases.last!.rawValue
   }
+
+  var direction: MSRPDirection? {
+    switch self {
+    case .talkerAdvertise:
+      fallthrough
+    case .talkerFailed:
+      return .talker
+    case .listener:
+      return .listener
+    default:
+      return nil
+    }
+  }
 }
 
 enum MSRPAttributeSubtype: AttributeSubtype {
@@ -40,7 +53,11 @@ enum MSRPAttributeSubtype: AttributeSubtype {
   case readyFailed = 3
 }
 
-protocol MSRPTalkerValue: Value {
+protocol MSRPStreamIDRepresentable: Sendable {
+  var streamID: MSRPStreamID { get }
+}
+
+protocol MSRPTalkerValue: Value, MSRPStreamIDRepresentable {
   var streamID: MSRPStreamID { get }
   var dataFrameParameters: MSRPDataFrameParameters { get }
   var tSpec: MSRPTSpec { get }
@@ -58,7 +75,11 @@ private extension MSRPTalkerValue {
   }
 }
 
-struct MSRPTalkerAdvertiseValue: MSRPTalkerValue, Equatable {
+struct MSRPTalkerAdvertiseValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equatable {
+  static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.streamID == rhs.streamID
+  }
+
   let streamID: UInt64
   let dataFrameParameters: MSRPDataFrameParameters
   let tSpec: MSRPTSpec
@@ -112,7 +133,11 @@ struct MSRPTalkerAdvertiseValue: MSRPTalkerValue, Equatable {
   }
 }
 
-struct MSRPTalkerFailedValue: MSRPTalkerValue, Equatable {
+struct MSRPTalkerFailedValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equatable {
+  static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.streamID == rhs.streamID
+  }
+
   let streamID: UInt64
   let dataFrameParameters: MSRPDataFrameParameters
   let tSpec: MSRPTSpec
