@@ -65,7 +65,7 @@ struct MSRPTalkerAdvertiseValue: MSRPTalkerValue, Equatable {
   let priorityAndRank: MSRPPriorityAndRank
   let accumulatedLatency: UInt32
 
-  var index: Int { Int(streamID & 0x1FFF) }
+  var index: UInt64 { UInt64(streamID & 0x1FFF) }
 
   init(
     streamID: UInt64,
@@ -94,7 +94,7 @@ struct MSRPTalkerAdvertiseValue: MSRPTalkerValue, Equatable {
     accumulatedLatency = try deserializationContext.deserialize()
   }
 
-  init(firstValue: Self?, index: Int) throws {
+  init(firstValue: Self?, index: UInt64) throws {
     if let firstValue {
       try self.init(
         streamID: firstValue.streamID + UInt64(index),
@@ -121,7 +121,7 @@ struct MSRPTalkerFailedValue: MSRPTalkerValue, Equatable {
   let systemID: UInt64
   let failureCode: TSNFailureCode
 
-  var index: Int { Int(streamID & 0x1FFF) }
+  var index: UInt64 { streamID }
 
   init(
     streamID: UInt64,
@@ -158,7 +158,7 @@ struct MSRPTalkerFailedValue: MSRPTalkerValue, Equatable {
     failureCode = try TSNFailureCode(deserializationContext: &deserializationContext)
   }
 
-  init(firstValue: Self?, index: Int) throws {
+  init(firstValue: Self?, index: UInt64) throws {
     if let firstValue {
       try self.init(
         streamID: firstValue.streamID + UInt64(index),
@@ -181,7 +181,7 @@ struct MSRPTalkerFailedValue: MSRPTalkerValue, Equatable {
 struct MSRPListenerValue: Value, Equatable {
   let streamID: UInt64
 
-  var index: Int { Int(streamID & 0x1FFF) }
+  var index: UInt64 { streamID }
 
   init(
     streamID: UInt64
@@ -197,7 +197,7 @@ struct MSRPListenerValue: Value, Equatable {
     streamID = try deserializationContext.deserialize()
   }
 
-  init(firstValue: Self?, index: Int) throws {
+  init(firstValue: Self?, index: UInt64) throws {
     self.init(streamID: firstValue?.streamID ?? 0 + UInt64(index))
   }
 }
@@ -207,8 +207,8 @@ struct MSRPDomainValue: Value, Equatable {
   let srClassPriority: SRclassPriority
   let srClassVID: SRclassVID
 
-  var index: Int {
-    Int(srClassID.rawValue)
+  var index: UInt64 {
+    UInt64(srClassID.rawValue)
   }
 
   var vlan: VLAN {
@@ -244,8 +244,8 @@ struct MSRPDomainValue: Value, Equatable {
     self.srClassVID = srClassVID
   }
 
-  init(firstValue: MSRPDomainValue?, index: Int) throws {
-    let value = Int(firstValue?.srClassID.rawValue ?? 0) + index
+  init(firstValue: MSRPDomainValue?, index: UInt64) throws {
+    let value = UInt64(firstValue?.srClassID.rawValue ?? 0) + index
     guard value < 8 else {
       throw MRPError.invalidAttributeValue
     }

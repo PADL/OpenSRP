@@ -27,6 +27,7 @@ enum MRPError: Error {
   case invalidContextIdentifier
   case invalidFailureCode
   case invalidLeaveAllEvent
+  case invalidMSRPDeclarationType
   case invalidParticipantIdentifier
   case invalidSRclassID
   case invalidSRclassPriority

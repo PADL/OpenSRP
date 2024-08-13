@@ -55,7 +55,7 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
   let _latencyMaxFrameSize: UInt16
   let _srPVid: VLAN
   let _maxSRClasses: SRclassID
-  var _portParameters = ManagedCriticalState<[P.ID: MSRPPortParameters]>([:])
+  var _ports = ManagedCriticalState<[P.ID: MSRPPortState]>([:])
 
   public init(
     controller: MRPController<P>,
@@ -88,7 +88,7 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     fatalError()
   }
 
-  public func makeValue(for attributeType: AttributeType, at index: Int) throws -> any Value {
+  public func makeValue(for attributeType: AttributeType, at index: UInt64) throws -> any Value {
     guard let attributeType = MSRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }
     fatalError()
@@ -106,6 +106,10 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     -> AdministrativeControl
   {
     .normalParticipant
+  }
+
+  private func declarationType(for streamID: MSRPStreamID) throws -> MSRPDeclarationType {
+    throw MRPError.invalidMSRPDeclarationType
   }
 
   public struct FailureInformation {
@@ -132,7 +136,53 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     priorityAndRank: MSRPPriorityAndRank,
     accumulatedLatency: UInt32,
     failureInformation: FailureInformation? = nil
-  ) async throws {}
+  ) async throws {
+    let attributeValue: any Value
+
+    switch declarationType {
+    case .talkerAdvertise:
+      guard failureInformation == nil else {
+        throw MRPError.invalidMSRPDeclarationType
+      }
+      attributeValue = MSRPTalkerAdvertiseValue(
+        streamID: streamID,
+        dataFrameParameters: dataFrameParameters,
+        tSpec: tSpec,
+        priorityAndRank: priorityAndRank,
+        accumulatedLatency: accumulatedLatency
+      )
+    case .talkerFailed:
+      guard let failureInformation else {
+        throw MRPError.invalidMSRPDeclarationType
+      }
+      attributeValue = MSRPTalkerFailedValue(
+        streamID: streamID,
+        dataFrameParameters: dataFrameParameters,
+        tSpec: tSpec,
+        priorityAndRank: priorityAndRank,
+        accumulatedLatency: accumulatedLatency,
+        systemID: failureInformation.systemID,
+        failureCode: failureInformation.failureCode
+      )
+
+    case .listenerAskingFailed:
+      fallthrough
+    case .listenerReady:
+      fallthrough
+    case .listenerReadyFailed:
+      throw MRPError.invalidMSRPDeclarationType
+    }
+
+    try await join(
+      attributeType: (
+        failureInformation != nil ? MSRPAttributeType.talkerFailed : MSRPAttributeType
+          .talkerAdvertise
+      ).rawValue,
+      attributeValue: attributeValue,
+      isNew: true,
+      for: MAPBaseSpanningTreeContext
+    )
+  }
 
   // On receipt of a DEREGISTER_STREAM.request the MSRP Participant shall issue
   // a MAD_Leave.request service primitive (10.2, 10.3) with the attribute_type
@@ -141,7 +191,13 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
   // were in the associated REGISTER_STREAM.request primitive.
   public func deregisterStream(
     streamID: MSRPStreamID
-  ) async throws {}
+  ) async throws {
+    try await leave(
+      attributeType: try declarationType(for: streamID).attributeType.rawValue,
+      attributeValue: MSRPListenerValue(streamID: streamID),
+      for: MAPBaseSpanningTreeContext
+    )
+  }
 
   // On receipt of a REGISTER_ATTACH.request the MSRP Participant shall issue a
   // MAD_Join.request service primitive (10.2, 10.3). The attribute_type
@@ -151,7 +207,14 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
   public func registerAttach(
     streamID: MSRPStreamID,
     declarationType: MSRPDeclarationType
-  ) async throws {}
+  ) async throws {
+    try await join(
+      attributeType: declarationType.attributeType.rawValue,
+      attributeValue: MSRPListenerValue(streamID: streamID),
+      isNew: false,
+      for: MAPBaseSpanningTreeContext
+    )
+  }
 
   // On receipt of a DEREGISTER_ATTACH.request the MSRP Participant shall issue
   // a MAD_Leave.request service primitive (10.2, 10.3) with the attribute_type
@@ -160,7 +223,13 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
   // Type currently associated with the StreamID.
   public func deregisterAttach(
     streamID: MSRPStreamID
-  ) async throws {}
+  ) async throws {
+    try await leave(
+      attributeType: try declarationType(for: streamID).attributeType.rawValue,
+      attributeValue: MSRPListenerValue(streamID: streamID),
+      for: MAPBaseSpanningTreeContext
+    )
+  }
 }
 
 extension MSRPApplication {

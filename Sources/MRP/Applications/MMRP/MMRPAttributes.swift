@@ -40,11 +40,11 @@ public enum MMRPServiceRequirementValue: UInt8, Value, Equatable, Hashable {
     self = value
   }
 
-  public var index: Int {
-    Int(rawValue)
+  public var index: UInt64 {
+    UInt64(rawValue)
   }
 
-  public init(firstValue: Self?, index: Int) throws {
+  public init(firstValue: Self?, index: UInt64) throws {
     guard let value = Self(rawValue: (firstValue?.rawValue ?? 0) + UInt8(index)) else {
       throw MRPError.invalidAttributeValue
     }
@@ -68,12 +68,12 @@ struct MMRPMACVector: Value, Equatable, Hashable {
     _macAddress = UInt64(high << 16) | UInt64(low)
   }
 
-  var index: Int {
+  var index: UInt64 {
     precondition((_macAddress & 0xFFFF_0000_0000_0000) == 0)
-    return Int(_macAddress)
+    return _macAddress
   }
 
-  init(firstValue: MMRPMACVector?, index: Int) {
+  init(firstValue: MMRPMACVector?, index: UInt64) {
     _macAddress = (firstValue?._macAddress ?? 0) + UInt64(index)
   }
 

@@ -75,7 +75,7 @@ public protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
   func administrativeControl(for: AttributeType) throws -> AdministrativeControl
   func mapApplicationEvent(for context: ApplicationEventContext) throws -> ApplicationEvent
 
-  func makeValue(for attributeType: AttributeType, at index: Int) throws -> any Value
+  func makeValue(for attributeType: AttributeType, at index: UInt64) throws -> any Value
   func deserialize(
     attributeOfType attributeType: AttributeType,
     from deserializationContext: inout DeserializationContext

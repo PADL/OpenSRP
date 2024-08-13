@@ -144,13 +144,13 @@ struct MRPFlag: OptionSet, Sendable {
 // with the state machine.
 
 public protocol Value: SerDes, Equatable {
-  var index: Int { get }
+  var index: UInt64 { get }
 
-  init(firstValue: Self?, index: Int) throws
+  init(firstValue: Self?, index: UInt64) throws
 }
 
 extension Value {
-  init(index: Int) throws {
+  init(index: UInt64) throws {
     try self.init(firstValue: nil, index: index)
   }
 }
@@ -180,7 +180,7 @@ struct AnyValue: Value, Equatable, CustomStringConvertible {
     _value
   }
 
-  var index: Int {
+  var index: UInt64 {
     _value.index
   }
 
@@ -192,7 +192,7 @@ struct AnyValue: Value, Equatable, CustomStringConvertible {
     fatalError("cannot deserialize type-erased value")
   }
 
-  init(firstValue _: Self?, index _: Int) {
+  init(firstValue _: Self?, index _: UInt64) {
     fatalError("cannot init type-erased value")
   }
 
@@ -210,7 +210,7 @@ extension Value {
     }
   }
 
-  func makeValue(relativeTo index: Int) throws -> Self {
+  func makeValue(relativeTo index: UInt64) throws -> Self {
     try Self(index: index)
   }
 }

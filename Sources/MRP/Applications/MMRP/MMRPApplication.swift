@@ -89,7 +89,7 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     }
   }
 
-  public func makeValue(for attributeType: AttributeType, at index: Int) throws -> any Value {
+  public func makeValue(for attributeType: AttributeType, at index: UInt64) throws -> any Value {
     guard let attributeType = MMRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }
     switch attributeType {

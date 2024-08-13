@@ -356,7 +356,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
   // TODO: use a more efficient representation such as a bitmask
   private func _findAttributeValueState(
     attributeType: AttributeType,
-    index: Int
+    index: UInt64
   ) throws -> _AttributeValueState<A> {
     guard let application else { throw MRPError.internalError }
     let absoluteValue = try AnyValue(application.makeValue(for: attributeType, at: index))
@@ -395,7 +395,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
         // TODO: what is the correct policy for unknown attributes
         guard let attribute = try? _findAttributeValueState(
           attributeType: message.attributeType,
-          index: vectorAttribute.firstValue.index + i
+          index: vectorAttribute.firstValue.index + UInt64(i)
         ) else { continue }
         try await _handle(
           attributeEvent: packedEvents[i],
@@ -521,7 +521,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
   private var registrar: Registrar? // A per-Attribute Registrar state machine (10.7.8)
   let attributeType: AttributeType
   let value: AnyValue
-  var index: Int { value.index }
+  var index: UInt64 { value.index }
 
   var participant: P? { _participant.object }
 

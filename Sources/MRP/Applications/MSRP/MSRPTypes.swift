@@ -24,12 +24,27 @@ enum MSRPDirection {
   case listener
 }
 
-public enum MSRPDeclarationType {
+public enum MSRPDeclarationType: Sendable {
   case talkerAdvertise
   case talkerFailed
   case listenerAskingFailed
   case listenerReady
   case listenerReadyFailed
+
+  var attributeType: MSRPAttributeType {
+    switch self {
+    case .talkerAdvertise:
+      return .talkerAdvertise
+    case .talkerFailed:
+      return .talkerFailed
+    case .listenerAskingFailed:
+      fallthrough
+    case .listenerReady:
+      fallthrough
+    case .listenerReadyFailed:
+      return .listener
+    }
+  }
 }
 
 typealias MSRPTrafficClass = Int
@@ -41,14 +56,16 @@ enum MSRPProtocolVersion: ProtocolVersion {
   case v1 = 1
 }
 
-struct MSRPPortParameters {
-  let enabled: Bool
-  let tcMaxLatency: [MSRPTrafficClass: MSRPPortLatency]
-  let streamAge: UInt32
-  let srpDomainBoundaryPort: [SRclassID: Bool]
-  let neighborProtocolVersion: MSRPProtocolVersion
-  let talkerPruning: Bool
-  let talkerVlanPruning: Bool
+public struct MSRPPortState: Sendable {
+  var mediaType: MSRPPortMediaType
+  var enabled: Bool
+  var tcMaxLatency: [MSRPTrafficClass: MSRPPortLatency]
+  var streamAge: UInt32
+  var srpDomainBoundaryPort: [SRclassID: Bool]
+  var neighborProtocolVersion: MSRPProtocolVersion
+  var talkerPruning: Bool
+  var talkerVlanPruning: Bool
+  var streams: [MSRPStreamID: MSRPDeclarationType]
 }
 
 public enum TSNFailureCode: UInt8, Error, SerDes, Equatable {
@@ -129,9 +146,8 @@ public struct MSRPDataFrameParameters: Value, Equatable {
       UInt64(destinationAddress.5 << 16)
   }
 
-  public var index: Int {
-    // FIXME: broken on 32-bit systems
-    Int(bitPattern: UInt(_value))
+  public var index: UInt64 {
+    _value
   }
 
   public static func == (lhs: MSRPDataFrameParameters, rhs: MSRPDataFrameParameters) -> Bool {
@@ -182,7 +198,7 @@ public struct MSRPDataFrameParameters: Value, Equatable {
     self.init(0)
   }
 
-  public init(firstValue: Self?, index: Int) throws {
+  public init(firstValue: Self?, index: UInt64) throws {
     let value: UInt64
     if let firstValue {
       value = firstValue._value + UInt64(index)
@@ -221,7 +237,7 @@ public struct MSRPPriorityAndRank: SerDes, Equatable {
   }
 }
 
-public enum SRclassID: UInt8 {
+public enum SRclassID: UInt8, Sendable {
   case A = 6
   case B = 5
   case C = 4
