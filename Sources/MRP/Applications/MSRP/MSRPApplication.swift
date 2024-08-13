@@ -130,7 +130,7 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     throw MRPError.invalidMSRPDeclarationType
   }
 
-  public struct FailureInformation: Error, Equatable {
+  public struct Failure: Error, Equatable {
     let systemID: UInt64
     let failureCode: TSNFailureCode
 
@@ -153,7 +153,7 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     tSpec: MSRPTSpec,
     priorityAndRank: MSRPPriorityAndRank,
     accumulatedLatency: UInt32,
-    failureInformation: FailureInformation? = nil
+    failureInformation: Failure? = nil
   ) async throws {
     let attributeValue: any Value
 
@@ -282,7 +282,7 @@ extension MSRPApplication {
     tSpec: MSRPTSpec,
     priorityAndRank: MSRPPriorityAndRank,
     accumulatedLatency: UInt32,
-    failureInformation: FailureInformation?,
+    failureInformation: Failure?,
     isNew: Bool,
     eventSource: ParticipantEventSource
   ) async throws {}
@@ -340,7 +340,7 @@ extension MSRPApplication {
         tSpec: attributeValue.tSpec,
         priorityAndRank: attributeValue.priorityAndRank,
         accumulatedLatency: attributeValue.accumulatedLatency,
-        failureInformation: FailureInformation(
+        failureInformation: Failure(
           systemID: attributeValue.systemID,
           failureCode: attributeValue.failureCode
         ),
