@@ -146,16 +146,6 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     throw MRPError.invalidMSRPDeclarationType
   }
 
-  public struct Failure: Error, Equatable {
-    let systemID: UInt64
-    let failureCode: TSNFailureCode
-
-    public init(systemID: UInt64, failureCode: TSNFailureCode) {
-      self.systemID = systemID
-      self.failureCode = failureCode
-    }
-  }
-
   // On receipt of a REGISTER_STREAM.request the MSRP Participant shall issue a
   // MAD_Join.request service primitive (10.2, 10.3). The attribute_type (10.2)
   // parameter of the request shall carry the appropriate Talker Attribute Type
@@ -169,7 +159,7 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     tSpec: MSRPTSpec,
     priorityAndRank: MSRPPriorityAndRank,
     accumulatedLatency: UInt32,
-    failureInformation: Failure? = nil
+    failureInformation: MSRPFailure? = nil
   ) async throws {
     let attributeValue: any Value
 
@@ -298,10 +288,14 @@ extension MSRPApplication {
     tSpec: MSRPTSpec,
     priorityAndRank: MSRPPriorityAndRank,
     accumulatedLatency: UInt32,
-    failureInformation: Failure?,
+    failureInformation: MSRPFailure?,
     isNew: Bool,
     eventSource: ParticipantEventSource
-  ) async throws {}
+  ) async throws {
+    try withPortState(port: port) { portState in
+      try portState.register(declarationType: declarationType, for: streamID)
+    }
+  }
 
   // On receipt of a MAD_Join.indication service primitive (10.2, 10.3) with an
   // attribute_type of Listener (35.2.2.4), the MSRP application shall issue a
@@ -315,7 +309,11 @@ extension MSRPApplication {
     declarationType: MSRPDeclarationType,
     isNew: Bool,
     eventSource: ParticipantEventSource
-  ) async throws {}
+  ) async throws {
+    try withPortState(port: port) { portState in
+      try portState.register(declarationType: declarationType, for: streamID)
+    }
+  }
 
   func onJoinIndication(
     contextIdentifier: MAPContextIdentifier,
@@ -356,7 +354,7 @@ extension MSRPApplication {
         tSpec: attributeValue.tSpec,
         priorityAndRank: attributeValue.priorityAndRank,
         accumulatedLatency: attributeValue.accumulatedLatency,
-        failureInformation: Failure(
+        failureInformation: MSRPFailure(
           systemID: attributeValue.systemID,
           failureCode: attributeValue.failureCode
         ),
@@ -389,18 +387,25 @@ extension MSRPApplication {
     port: P,
     streamID: MSRPStreamID,
     eventSource: ParticipantEventSource
-  ) async throws {}
+  ) async throws {
+    try withPortState(port: port) { portState in
+      try portState.deregister(direction: .talker, for: streamID)
+    }
+  }
 
   // On receipt of a MAD_Leave.indication service primitive (10.2, 10.3) with
   // an attribute_type of Listener (35.2.2.4), the MSRP application shall issue
-  // a DEREGISTER_ATTACH.indication to the Talker application entity. The
-  // DEREGISTER_ATTACH.indication shall contain the StreamID.
+  // a DEREGISTER_ATTACH.indication to the Talker application entity.
   private func _onDeregisterAttachIndication(
     contextIdentifier: MAPContextIdentifier,
     port: P,
     streamID: MSRPStreamID,
     eventSource: ParticipantEventSource
-  ) async throws {}
+  ) async throws {
+    try withPortState(port: port) { portState in
+      try portState.deregister(direction: .listener, for: streamID)
+    }
+  }
 
   func onLeaveIndication(
     contextIdentifier: MAPContextIdentifier,

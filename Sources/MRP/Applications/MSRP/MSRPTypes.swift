@@ -46,6 +46,21 @@ public enum MSRPDeclarationType: Sendable {
     }
   }
 
+  var direction: MSRPDirection {
+    switch self {
+    case .talkerAdvertise:
+      fallthrough
+    case .talkerFailed:
+      return .talker
+    case .listenerAskingFailed:
+      fallthrough
+    case .listenerReady:
+      fallthrough
+    case .listenerReadyFailed:
+      return .listener
+    }
+  }
+
   init?(applicationEvent: ApplicationEvent?) throws {
     guard let applicationEvent,
           let applicationEvent = MSRPApplicationEvent(rawValue: applicationEvent)
@@ -107,6 +122,20 @@ public struct MSRPPortState<P: Port>: Sendable {
     talkerVlanPruning = msrp._talkerPruning
     streams = [:]
   }
+
+  mutating func register(declarationType: MSRPDeclarationType, for streamID: MSRPStreamID) throws {
+    guard streams[streamID] == nil else {
+      throw MSRPFailure(systemID: 0, failureCode: .streamIDAlreadyInUse)
+    }
+    streams[streamID] = declarationType
+  }
+
+  mutating func deregister(direction: MSRPDirection, for streamID: MSRPStreamID) throws {
+    guard let declarationType = streams[streamID] else { return }
+    guard direction == declarationType.direction
+    else { throw MSRPFailure(systemID: 0, failureCode: .streamIDAlreadyInUse) }
+    streams[streamID] = nil
+  }
 }
 
 public enum TSNFailureCode: UInt8, SerDes, Equatable {
@@ -145,6 +174,16 @@ public enum TSNFailureCode: UInt8, SerDes, Equatable {
       throw MRPError.invalidFailureCode
     }
     self = value
+  }
+}
+
+public struct MSRPFailure: Error, Equatable {
+  let systemID: UInt64
+  let failureCode: TSNFailureCode
+
+  public init(systemID: UInt64, failureCode: TSNFailureCode) {
+    self.systemID = systemID
+    self.failureCode = failureCode
   }
 }
 
