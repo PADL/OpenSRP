@@ -249,20 +249,22 @@ public final class RTNLLinkBridge: RTNLLink {
     return bridgeFlags
   }
 
-  public func add(vlans: Set<UInt16>, socket: NLSocket) async throws {
+  public func add(vlans: Set<UInt16>, flags: UInt16 = 0, socket: NLSocket) async throws {
     try await socket.addOrRemove(
       vlans: vlans,
       interfaceIndex: index,
-      flags: _bridgeFlags,
+      flags: flags,
+      moreFlags: _bridgeFlags,
       isAdd: true
     )
   }
 
-  public func remove(vlans: Set<UInt16>, socket: NLSocket) async throws {
+  public func remove(vlans: Set<UInt16>, flags: UInt16 = 0, socket: NLSocket) async throws {
     try await socket.addOrRemove(
       vlans: vlans,
       interfaceIndex: index,
-      flags: _bridgeFlags,
+      flags: flags,
+      moreFlags: _bridgeFlags,
       isAdd: false
     )
   }
@@ -482,6 +484,7 @@ public extension NLSocket {
     vlans: Set<UInt16>,
     interfaceIndex: Int,
     flags: UInt16 = 0,
+    moreFlags: UInt16 = 0,
     isAdd: Bool
   ) async throws {
     let message = try NLMessage(
@@ -491,11 +494,11 @@ public extension NLSocket {
     )
     try message.appendIfInfo(index: interfaceIndex)
     let attr = message.nestStart(attr: CInt(IFLA_AF_SPEC))
-    if flags != 0 {
-      try message.put(u16: flags, for: CInt(IFLA_BRIDGE_FLAGS))
+    if moreFlags != 0 {
+      try message.put(u16: moreFlags, for: CInt(IFLA_BRIDGE_FLAGS))
     }
     for vid in vlans {
-      var vlanInfo = bridge_vlan_info(flags: 0, vid: vid)
+      var vlanInfo = bridge_vlan_info(flags: flags, vid: vid)
       try message.put(opaque: &vlanInfo, for: CInt(IFLA_BRIDGE_VLAN_INFO))
     }
     message.nestEnd(attr: attr)

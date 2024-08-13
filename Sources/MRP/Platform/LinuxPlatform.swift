@@ -144,20 +144,36 @@ private extension LinuxPort {
     (_rtnl as? RTNLLinkBridge)?.bridgeTaggedVLANs
   }
 
+  var _untaggedVlans: Set<UInt16>? {
+    (_rtnl as? RTNLLinkBridge)?.bridgeUntaggedVLANs
+  }
+
   var _pvid: UInt16? {
     (_rtnl as? RTNLLinkBridge)?.bridgePVID
   }
 
-  func _add(vlans: Set<VLAN>) async throws {
+  func _add(vlan: VLAN) async throws {
+    var flags = Int32(0)
+
+    if _untaggedVlans?.contains(vlan.vid) ?? false {
+      // preserve untagging status, this may not be on spec but saves blowing away management
+      // interface
+      flags |= BRIDGE_VLAN_INFO_UNTAGGED
+    }
+    if _pvid == vlan.vid {
+      flags |= BRIDGE_VLAN_INFO_PVID
+    }
+
     try await (_rtnl as! RTNLLinkBridge).add(
-      vlans: Set(vlans.map(\.vid)),
+      vlans: Set([vlan.vid]),
+      flags: UInt16(flags),
       socket: _bridge!._nlLinkSocket
     )
   }
 
-  func _remove(vlans: Set<VLAN>) async throws {
+  func _remove(vlan: VLAN) async throws {
     try await (_rtnl as! RTNLLinkBridge).remove(
-      vlans: Set(vlans.map(\.vid)),
+      vlans: Set([vlan.vid]),
       socket: _bridge!._nlLinkSocket
     )
   }
@@ -391,12 +407,12 @@ Sendable {
     try _shutdown()
   }
 
-  private func _add(vlans: Set<VLAN>) async throws {
-    try await _bridgePort!._add(vlans: vlans)
+  private func _add(vlan: VLAN) async throws {
+    try await _bridgePort!._add(vlan: vlan)
   }
 
-  private func _remove(vlans: Set<VLAN>) async throws {
-    try await _bridgePort!._remove(vlans: vlans)
+  private func _remove(vlan: VLAN) async throws {
+    try await _bridgePort!._remove(vlan: vlan)
   }
 
   public func tx(
@@ -513,17 +529,17 @@ extension LinuxBridge: MMRPAwareBridge {
 
 extension LinuxBridge: MVRPAwareBridge {
   func register(vlan: VLAN, on ports: Set<P>) async throws {
-    try await _add(vlans: [vlan])
+    try await _add(vlan: vlan)
     for port in ports {
-      try await port._add(vlans: [vlan])
+      try await port._add(vlan: vlan)
     }
   }
 
   func deregister(vlan: VLAN, from ports: Set<P>) async throws {
     for port in ports {
-      try await port._remove(vlans: [vlan])
+      try await port._remove(vlan: vlan)
     }
-    try await _remove(vlans: [vlan])
+    try await _remove(vlan: vlan)
   }
 }
 
