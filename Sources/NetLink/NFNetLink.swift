@@ -151,4 +151,11 @@ public final class NFNLLog: Sendable {
   public var logMessages: AnyAsyncSequence<NFNLLogMessage> {
     _socket.notifications.map { $0 as! NFNLLogMessage }.eraseToAnyAsyncSequence()
   }
+
+  // FIXME: do this on sequence termination
+  public func delete() async throws {
+    try throwingErrno {
+      nfnl_log_delete(_socket._sk, _log._obj)
+    }
+  }
 }
