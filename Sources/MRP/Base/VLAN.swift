@@ -14,8 +14,9 @@
 // limitations under the License.
 //
 
-public struct VLAN: Hashable, Sendable, Identifiable {
+public struct VLAN: Hashable, Sendable, Identifiable, ExpressibleByIntegerLiteral {
   public typealias ID = UInt16
+  public typealias IntegerLiteralType = UInt16
 
   public var id: ID { vid }
   var vid: UInt16
@@ -26,6 +27,10 @@ public struct VLAN: Hashable, Sendable, Identifiable {
 
   public init(id: ID) {
     self.init(vid: id)
+  }
+
+  public init(integerLiteral value: UInt16) {
+    self.init(vid: value)
   }
 
   init(vid: UInt16) {

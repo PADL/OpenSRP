@@ -25,8 +25,12 @@ enum MRPError: Error {
   case invalidAttributeValue
   case invalidBridgeIdentity
   case invalidContextIdentifier
+  case invalidFailureCode
   case invalidLeaveAllEvent
   case invalidParticipantIdentifier
+  case invalidSRclassID
+  case invalidSRclassPriority
+  case invalidSRclassVID
   case internalError
   case participantNotFound
   case portAlreadyExists

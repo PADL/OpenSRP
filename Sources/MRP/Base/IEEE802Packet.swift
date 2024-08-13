@@ -20,7 +20,7 @@ public struct IEEE802Packet: Sendable, SerDes, CustomStringConvertible {
   public struct TCI: Sendable, SerDes {
     public var tci: UInt16
 
-    public enum PCP: UInt8 {
+    public enum PCP: UInt8, Sendable {
       case BK = 0
       case BE = 1
       case EE = 2

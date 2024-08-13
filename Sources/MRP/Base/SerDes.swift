@@ -60,7 +60,7 @@ public struct SerializationContext {
     serialize(uint32.bigEndianBytes, at: index)
   }
 
-  mutating func serialize(uint64: UInt32, at index: Int? = nil) {
+  mutating func serialize(uint64: UInt64, at index: Int? = nil) {
     serialize(uint64.bigEndianBytes, at: index)
   }
 
