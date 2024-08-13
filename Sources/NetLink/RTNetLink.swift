@@ -487,7 +487,7 @@ public extension NLSocket {
     let message = try NLMessage(
       socket: self,
       type: isAdd ? RTM_SETLINK : RTM_DELLINK,
-      flags: NLM_F_EXCL | NLM_F_CREATE
+      flags: (isAdd ? NLM_F_EXCL : 0) | NLM_F_CREATE
     )
     try message.appendIfInfo(index: interfaceIndex)
     let attr = message.nestStart(attr: CInt(IFLA_AF_SPEC))
