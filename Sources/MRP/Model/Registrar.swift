@@ -116,15 +116,18 @@ private extension Registrar.State {
     case .txLA:
       fallthrough
     case .ReDeclare:
-      precondition(self == .IN)
-      self = .LV
+      if self == .IN {
+        self = .LV
+      }
     case .Flush:
       if self != .MT {
         action = .Lv
       }
       self = .MT
     case .leavetimer:
-      precondition(self != .IN)
+      if self == .IN {
+        break
+      }
       if self == .LV || flags.contains(.operPointToPointMAC) {
         action = .Lv
       }
