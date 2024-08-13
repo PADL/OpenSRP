@@ -573,8 +573,6 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
         eventSource: eventSource,
         applicationEvent: &applicationEvent
       )
-    } else {
-      participant._logger.trace("no applicant action for event \(event), skipping")
     }
 
     if let registrarAction = registrar?.action(for: event, flags: smFlags) {
@@ -584,8 +582,6 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
         eventSource: eventSource,
         applicationEvent: applicationEvent
       )
-    } else {
-      participant._logger.trace("no registrar action for event \(event), skipping")
     }
   }
 
