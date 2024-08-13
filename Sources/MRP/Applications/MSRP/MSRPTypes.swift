@@ -45,6 +45,28 @@ public enum MSRPDeclarationType: Sendable {
       return .listener
     }
   }
+
+  init?(applicationEvent: ApplicationEvent?) throws {
+    guard let applicationEvent,
+          let applicationEvent = MSRPApplicationEvent(rawValue: applicationEvent)
+    else {
+      throw MRPError.invalidAttributeValue
+    }
+    self.init(applicationEvent: applicationEvent)
+  }
+
+  init?(applicationEvent: MSRPApplicationEvent) {
+    switch applicationEvent {
+    case .ignore:
+      return nil
+    case .askingFailed:
+      self = .listenerAskingFailed
+    case .ready:
+      self = .listenerReady
+    case .readyFailed:
+      self = .listenerReadyFailed
+    }
+  }
 }
 
 typealias MSRPTrafficClass = Int
@@ -68,7 +90,7 @@ public struct MSRPPortState: Sendable {
   var streams: [MSRPStreamID: MSRPDeclarationType]
 }
 
-public enum TSNFailureCode: UInt8, Error, SerDes, Equatable {
+public enum TSNFailureCode: UInt8, SerDes, Equatable {
   case insufficientBandwidth = 1
   case insufficientBridgeResources = 2
   case insufficientBandwidthForTrafficClass = 3

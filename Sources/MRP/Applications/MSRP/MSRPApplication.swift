@@ -85,13 +85,31 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
   ) throws -> any Value {
     guard let attributeType = MSRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }
-    fatalError()
+    switch attributeType {
+    case .talkerAdvertise:
+      return try MSRPTalkerAdvertiseValue(deserializationContext: &deserializationContext)
+    case .talkerFailed:
+      return try MSRPTalkerFailedValue(deserializationContext: &deserializationContext)
+    case .listener:
+      return try MSRPListenerValue(deserializationContext: &deserializationContext)
+    case .domain:
+      return try MSRPDomainValue(deserializationContext: &deserializationContext)
+    }
   }
 
   public func makeValue(for attributeType: AttributeType, at index: UInt64) throws -> any Value {
     guard let attributeType = MSRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }
-    fatalError()
+    switch attributeType {
+    case .talkerAdvertise:
+      return try MSRPTalkerAdvertiseValue(index: index)
+    case .talkerFailed:
+      return try MSRPTalkerFailedValue(index: index)
+    case .listener:
+      return try MSRPListenerValue(index: index)
+    case .domain:
+      return try MSRPDomainValue(index: index)
+    }
   }
 
   public func hasApplicationEvents(for attributeType: AttributeType) -> Bool {
@@ -112,7 +130,7 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     throw MRPError.invalidMSRPDeclarationType
   }
 
-  public struct FailureInformation {
+  public struct FailureInformation: Error, Equatable {
     let systemID: UInt64
     let failureCode: TSNFailureCode
 
@@ -279,6 +297,7 @@ extension MSRPApplication {
     port: P,
     streamID: MSRPStreamID,
     declarationType: MSRPDeclarationType,
+    isNew: Bool,
     eventSource: ParticipantEventSource
   ) async throws {}
 
@@ -291,8 +310,58 @@ extension MSRPApplication {
     eventSource: ParticipantEventSource,
     applicationEvent: ApplicationEvent?
   ) async throws {
-    guard let controller else { throw MRPError.internalError }
-    guard let bridge = controller.bridge as? any MSRPAwareBridge<P> else { return }
+    guard let attributeType = MSRPAttributeType(rawValue: attributeType)
+    else { throw MRPError.unknownAttributeType }
+
+    switch attributeType {
+    case .talkerAdvertise:
+      let attributeValue = (attributeValue as! MSRPTalkerAdvertiseValue)
+      try await _onRegisterStreamIndication(
+        contextIdentifier: contextIdentifier,
+        port: port,
+        streamID: attributeValue.streamID,
+        declarationType: .talkerAdvertise,
+        dataFrameParameters: attributeValue.dataFrameParameters,
+        tSpec: attributeValue.tSpec,
+        priorityAndRank: attributeValue.priorityAndRank,
+        accumulatedLatency: attributeValue.accumulatedLatency,
+        failureInformation: nil,
+        isNew: isNew,
+        eventSource: eventSource
+      )
+    case .talkerFailed:
+      let attributeValue = (attributeValue as! MSRPTalkerFailedValue)
+      try await _onRegisterStreamIndication(
+        contextIdentifier: contextIdentifier,
+        port: port,
+        streamID: attributeValue.streamID,
+        declarationType: .talkerAdvertise,
+        dataFrameParameters: attributeValue.dataFrameParameters,
+        tSpec: attributeValue.tSpec,
+        priorityAndRank: attributeValue.priorityAndRank,
+        accumulatedLatency: attributeValue.accumulatedLatency,
+        failureInformation: FailureInformation(
+          systemID: attributeValue.systemID,
+          failureCode: attributeValue.failureCode
+        ),
+        isNew: isNew,
+        eventSource: eventSource
+      )
+    case .listener:
+      let attributeValue = (attributeValue as! MSRPListenerValue)
+      guard let declarationType = try? MSRPDeclarationType(applicationEvent: applicationEvent)
+      else { return }
+      try await _onRegisterAttachIndication(
+        contextIdentifier: contextIdentifier,
+        port: port,
+        streamID: attributeValue.streamID,
+        declarationType: declarationType,
+        isNew: isNew,
+        eventSource: eventSource
+      )
+    case .domain:
+      break
+    }
   }
 
   // On receipt of a MAD_Leave.indication service primitive (10.2, 10.3) with
@@ -325,7 +394,33 @@ extension MSRPApplication {
     eventSource: ParticipantEventSource,
     applicationEvent: ApplicationEvent?
   ) async throws {
-    guard let controller else { throw MRPError.internalError }
-    guard let bridge = controller.bridge as? any MSRPAwareBridge<P> else { return }
+    guard let attributeType = MSRPAttributeType(rawValue: attributeType)
+    else { throw MRPError.unknownAttributeType }
+
+    switch attributeType {
+    case .talkerAdvertise:
+      try await _onDeregisterStreamIndication(
+        contextIdentifier: contextIdentifier,
+        port: port,
+        streamID: (attributeValue as! MSRPTalkerAdvertiseValue).streamID,
+        eventSource: eventSource
+      )
+    case .talkerFailed:
+      try await _onDeregisterStreamIndication(
+        contextIdentifier: contextIdentifier,
+        port: port,
+        streamID: (attributeValue as! MSRPTalkerFailedValue).streamID,
+        eventSource: eventSource
+      )
+    case .listener:
+      try await _onDeregisterAttachIndication(
+        contextIdentifier: contextIdentifier,
+        port: port,
+        streamID: (attributeValue as! MSRPListenerValue).streamID,
+        eventSource: eventSource
+      )
+    case .domain:
+      break
+    }
   }
 }

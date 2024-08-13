@@ -35,7 +35,7 @@ enum MSRPAttributeType: AttributeType, CaseIterable {
 
 enum MSRPApplicationEvent: ApplicationEvent {
   case ignore = 0
-  case askignFailed = 1
+  case askingFailed = 1
   case ready = 2
   case readyFailed = 3
 }
