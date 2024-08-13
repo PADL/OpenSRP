@@ -24,7 +24,7 @@ enum MSRPDirection {
   case listener
 }
 
-enum MSRPDeclarationType {
+public enum MSRPDeclarationType {
   case talkerAdvertise
   case talkerFailed
   case listenerAskingFailed
@@ -34,7 +34,7 @@ enum MSRPDeclarationType {
 
 typealias MSRPTrafficClass = Int
 typealias MSRPPortLatency = Int
-public typealias MSRPSRClass = UInt8
+public typealias MSRPStreamID = UInt64
 
 enum MSRPProtocolVersion: ProtocolVersion {
   case v0 = 0
@@ -45,13 +45,13 @@ struct MSRPPortParameters {
   let enabled: Bool
   let tcMaxLatency: [MSRPTrafficClass: MSRPPortLatency]
   let streamAge: UInt32
-  let srpDomainBoundaryPort: [MSRPSRClass: Bool]
+  let srpDomainBoundaryPort: [SRclassID: Bool]
   let neighborProtocolVersion: MSRPProtocolVersion
   let talkerPruning: Bool
   let talkerVlanPruning: Bool
 }
 
-enum TSNFailureCode: UInt8, Error, SerDes, Equatable {
+public enum TSNFailureCode: UInt8, Error, SerDes, Equatable {
   case insufficientBandwidth = 1
   case insufficientBridgeResources = 2
   case insufficientBandwidthForTrafficClass = 3
@@ -78,11 +78,11 @@ enum TSNFailureCode: UInt8, Error, SerDes, Equatable {
   case streamIDTypeNotSupportedForTransformation = 24
   case enhancedFeatureRequiresCNC = 25
 
-  func serialize(into serializationContext: inout SerializationContext) throws {
+  public func serialize(into serializationContext: inout SerializationContext) throws {
     serializationContext.serialize(uint8: rawValue)
   }
 
-  init(deserializationContext: inout DeserializationContext) throws {
+  public init(deserializationContext: inout DeserializationContext) throws {
     guard let value = Self(rawValue: try deserializationContext.deserialize()) else {
       throw MRPError.invalidFailureCode
     }
@@ -90,7 +90,7 @@ enum TSNFailureCode: UInt8, Error, SerDes, Equatable {
   }
 }
 
-struct TSpec: SerDes, Equatable {
+public struct MSRPTSpec: SerDes, Equatable {
   let maxFrameSize: UInt16
   let maxIntervalFrames: UInt16
 
@@ -103,12 +103,12 @@ struct TSpec: SerDes, Equatable {
     self.maxIntervalFrames = maxIntervalFrames
   }
 
-  func serialize(into serializationContext: inout SerializationContext) throws {
+  public func serialize(into serializationContext: inout SerializationContext) throws {
     serializationContext.serialize(uint16: maxFrameSize)
     serializationContext.serialize(uint16: maxIntervalFrames)
   }
 
-  init(deserializationContext: inout DeserializationContext) throws {
+  public init(deserializationContext: inout DeserializationContext) throws {
     try self.init(
       maxFrameSize: deserializationContext.deserialize(),
       maxIntervalFrames: deserializationContext.deserialize()
@@ -116,7 +116,7 @@ struct TSpec: SerDes, Equatable {
   }
 }
 
-struct DataFrameParameters: Value, Equatable {
+public struct MSRPDataFrameParameters: Value, Equatable {
   let destinationAddress: EUI48
   let vlanIdentifier: VLAN
 
@@ -129,17 +129,17 @@ struct DataFrameParameters: Value, Equatable {
       UInt64(destinationAddress.5 << 16)
   }
 
-  var index: Int {
+  public var index: Int {
     // FIXME: broken on 32-bit systems
     Int(bitPattern: UInt(_value))
   }
 
-  static func == (lhs: DataFrameParameters, rhs: DataFrameParameters) -> Bool {
+  public static func == (lhs: MSRPDataFrameParameters, rhs: MSRPDataFrameParameters) -> Bool {
     _isEqualMacAddress(lhs.destinationAddress, rhs.destinationAddress) && lhs.vlanIdentifier == rhs
       .vlanIdentifier
   }
 
-  func serialize(into serializationContext: inout SerializationContext) throws {
+  public func serialize(into serializationContext: inout SerializationContext) throws {
     serializationContext.serialize([
       destinationAddress.0,
       destinationAddress.1,
@@ -156,7 +156,7 @@ struct DataFrameParameters: Value, Equatable {
     self.vlanIdentifier = vlanIdentifier
   }
 
-  init(deserializationContext: inout DeserializationContext) throws {
+  public init(deserializationContext: inout DeserializationContext) throws {
     destinationAddress.0 = try deserializationContext.deserialize()
     destinationAddress.1 = try deserializationContext.deserialize()
     destinationAddress.2 = try deserializationContext.deserialize()
@@ -182,7 +182,7 @@ struct DataFrameParameters: Value, Equatable {
     self.init(0)
   }
 
-  init(firstValue: Self?, index: Int) throws {
+  public init(firstValue: Self?, index: Int) throws {
     let value: UInt64
     if let firstValue {
       value = firstValue._value + UInt64(index)
@@ -193,35 +193,35 @@ struct DataFrameParameters: Value, Equatable {
   }
 }
 
-struct PriorityAndRank: SerDes, Equatable {
+public struct MSRPPriorityAndRank: SerDes, Equatable {
   let value: UInt8
 
   init(_ value: UInt8 = 0) {
     self.value = value
   }
 
-  init(dataFramePriority: SRclassPriority, rank: Bool) {
+  public init(dataFramePriority: SRclassPriority, rank: Bool = false) {
     value = dataFramePriority.rawValue << 5 | (rank ? 0x10 : 0x00)
   }
 
-  init(deserializationContext: inout DeserializationContext) throws {
+  public init(deserializationContext: inout DeserializationContext) throws {
     value = try deserializationContext.deserialize()
   }
 
-  func serialize(into serializationContext: inout SerializationContext) throws {
+  public func serialize(into serializationContext: inout SerializationContext) throws {
     serializationContext.serialize(uint8: value)
   }
 
-  var dataFramePriority: SRclassPriority {
+  public var dataFramePriority: SRclassPriority {
     IEEE802Packet.TCI.PCP(rawValue: UInt8((value & 0xE0) >> 5))!
   }
 
-  var rank: Bool {
+  public var rank: Bool {
     value & 0x10 != 0
   }
 }
 
-enum SRclassID: UInt8 {
+public enum SRclassID: UInt8 {
   case A = 6
   case B = 5
   case C = 4
@@ -231,6 +231,6 @@ enum SRclassID: UInt8 {
   case G = 0
 }
 
-typealias SRclassPriority = IEEE802Packet.TCI.PCP
+public typealias SRclassPriority = IEEE802Packet.TCI.PCP
 
-typealias SRclassVID = VLAN.ID
+public typealias SRclassVID = VLAN.ID

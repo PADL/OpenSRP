@@ -41,10 +41,10 @@ enum MSRPApplicationEvent: ApplicationEvent {
 }
 
 protocol MSRPTalkerValue: Value {
-  var streamID: UInt64 { get }
-  var dataFrameParameters: DataFrameParameters { get }
-  var tSpec: TSpec { get }
-  var priorityAndRank: PriorityAndRank { get }
+  var streamID: MSRPStreamID { get }
+  var dataFrameParameters: MSRPDataFrameParameters { get }
+  var tSpec: MSRPTSpec { get }
+  var priorityAndRank: MSRPPriorityAndRank { get }
   var accumulatedLatency: UInt32 { get }
 }
 
@@ -60,18 +60,18 @@ private extension MSRPTalkerValue {
 
 struct MSRPTalkerAdvertiseValue: MSRPTalkerValue, Equatable {
   let streamID: UInt64
-  let dataFrameParameters: DataFrameParameters
-  let tSpec: TSpec
-  let priorityAndRank: PriorityAndRank
+  let dataFrameParameters: MSRPDataFrameParameters
+  let tSpec: MSRPTSpec
+  let priorityAndRank: MSRPPriorityAndRank
   let accumulatedLatency: UInt32
 
   var index: Int { Int(streamID & 0x1FFF) }
 
   init(
     streamID: UInt64,
-    dataFrameParameters: DataFrameParameters = DataFrameParameters(),
-    tSpec: TSpec = TSpec(),
-    priorityAndRank: PriorityAndRank = PriorityAndRank(),
+    dataFrameParameters: MSRPDataFrameParameters = MSRPDataFrameParameters(),
+    tSpec: MSRPTSpec = MSRPTSpec(),
+    priorityAndRank: MSRPPriorityAndRank = MSRPPriorityAndRank(),
     accumulatedLatency: UInt32 = 0
   ) {
     self.streamID = streamID
@@ -87,9 +87,10 @@ struct MSRPTalkerAdvertiseValue: MSRPTalkerValue, Equatable {
 
   public init(deserializationContext: inout DeserializationContext) throws {
     streamID = try deserializationContext.deserialize()
-    dataFrameParameters = try DataFrameParameters(deserializationContext: &deserializationContext)
-    tSpec = try TSpec(deserializationContext: &deserializationContext)
-    priorityAndRank = try PriorityAndRank(deserializationContext: &deserializationContext)
+    dataFrameParameters =
+      try MSRPDataFrameParameters(deserializationContext: &deserializationContext)
+    tSpec = try MSRPTSpec(deserializationContext: &deserializationContext)
+    priorityAndRank = try MSRPPriorityAndRank(deserializationContext: &deserializationContext)
     accumulatedLatency = try deserializationContext.deserialize()
   }
 
@@ -103,16 +104,19 @@ struct MSRPTalkerAdvertiseValue: MSRPTalkerValue, Equatable {
         accumulatedLatency: firstValue.accumulatedLatency
       )
     } else {
-      try self.init(streamID: UInt64(index), dataFrameParameters: DataFrameParameters(index: index))
+      try self.init(
+        streamID: UInt64(index),
+        dataFrameParameters: MSRPDataFrameParameters(index: index)
+      )
     }
   }
 }
 
 struct MSRPTalkerFailedValue: MSRPTalkerValue, Equatable {
   let streamID: UInt64
-  let dataFrameParameters: DataFrameParameters
-  let tSpec: TSpec
-  let priorityAndRank: PriorityAndRank
+  let dataFrameParameters: MSRPDataFrameParameters
+  let tSpec: MSRPTSpec
+  let priorityAndRank: MSRPPriorityAndRank
   let accumulatedLatency: UInt32
   let systemID: UInt64
   let failureCode: TSNFailureCode
@@ -121,9 +125,9 @@ struct MSRPTalkerFailedValue: MSRPTalkerValue, Equatable {
 
   init(
     streamID: UInt64,
-    dataFrameParameters: DataFrameParameters = DataFrameParameters(),
-    tSpec: TSpec = TSpec(),
-    priorityAndRank: PriorityAndRank = PriorityAndRank(),
+    dataFrameParameters: MSRPDataFrameParameters = MSRPDataFrameParameters(),
+    tSpec: MSRPTSpec = MSRPTSpec(),
+    priorityAndRank: MSRPPriorityAndRank = MSRPPriorityAndRank(),
     accumulatedLatency: UInt32 = 0,
     systemID: UInt64 = 0,
     failureCode: TSNFailureCode = .insufficientBandwidth
@@ -145,9 +149,10 @@ struct MSRPTalkerFailedValue: MSRPTalkerValue, Equatable {
 
   public init(deserializationContext: inout DeserializationContext) throws {
     streamID = try deserializationContext.deserialize()
-    dataFrameParameters = try DataFrameParameters(deserializationContext: &deserializationContext)
-    tSpec = try TSpec(deserializationContext: &deserializationContext)
-    priorityAndRank = try PriorityAndRank(deserializationContext: &deserializationContext)
+    dataFrameParameters =
+      try MSRPDataFrameParameters(deserializationContext: &deserializationContext)
+    tSpec = try MSRPTSpec(deserializationContext: &deserializationContext)
+    priorityAndRank = try MSRPPriorityAndRank(deserializationContext: &deserializationContext)
     accumulatedLatency = try deserializationContext.deserialize()
     systemID = try deserializationContext.deserialize()
     failureCode = try TSNFailureCode(deserializationContext: &deserializationContext)
@@ -165,7 +170,10 @@ struct MSRPTalkerFailedValue: MSRPTalkerValue, Equatable {
         failureCode: firstValue.failureCode
       )
     } else {
-      try self.init(streamID: UInt64(index), dataFrameParameters: DataFrameParameters(index: index))
+      try self.init(
+        streamID: UInt64(index),
+        dataFrameParameters: MSRPDataFrameParameters(index: index)
+      )
     }
   }
 }
