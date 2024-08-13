@@ -75,7 +75,7 @@ public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     guard let attributeType = MVRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }
     switch attributeType {
-    case .vidVector:
+    case .vid:
       return try VLAN(deserializationContext: &deserializationContext)
     }
   }
@@ -84,7 +84,7 @@ public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     guard let attributeType = MVRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }
     switch attributeType {
-    case .vidVector:
+    case .vid:
       return try VLAN(index: index)
     }
   }
@@ -111,7 +111,7 @@ public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationDel
   // ES_REGISTER_VLAN_MEMBER primitive.
   public func register(vlanMember: VLAN) async throws {
     try await join(
-      attributeType: MVRPAttributeType.vidVector.rawValue,
+      attributeType: MVRPAttributeType.vid.rawValue,
       attributeValue: vlanMember,
       isNew: false,
       for: MAPBaseSpanningTreeContext
@@ -126,7 +126,7 @@ public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationDel
   // ES_DEREGISTER_VLAN_MEMBER primitive.
   public func deregister(vlanMember: VLAN) async throws {
     try await leave(
-      attributeType: MVRPAttributeType.vidVector.rawValue,
+      attributeType: MVRPAttributeType.vid.rawValue,
       attributeValue: vlanMember,
       for: MAPBaseSpanningTreeContext
     )
@@ -173,7 +173,7 @@ extension MVRPApplication {
     guard let attributeType = MVRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }
     switch attributeType {
-    case .vidVector:
+    case .vid:
       let vlan = (attributeValue as! VLAN)
       guard !_vlanExclusions.contains(vlan) else { throw MRPError.doNotPropagateAttribute }
       let ports = await controller.context(for: contextIdentifier).filter {
@@ -211,7 +211,7 @@ extension MVRPApplication {
     guard let attributeType = MVRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }
     switch attributeType {
-    case .vidVector:
+    case .vid:
       let vlan = (attributeValue as! VLAN)
       guard !_vlanExclusions.contains(vlan) else { throw MRPError.doNotPropagateAttribute }
       let ports = await controller.context(for: contextIdentifier).filter {

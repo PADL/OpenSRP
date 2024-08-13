@@ -82,9 +82,9 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     guard let attributeType = MMRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }
     switch attributeType {
-    case .macVector:
-      return try MMRPMACVectorValue(deserializationContext: &deserializationContext)
-    case .serviceRequirementVector:
+    case .mac:
+      return try MMRPMACVector(deserializationContext: &deserializationContext)
+    case .serviceRequirement:
       return try MMRPServiceRequirementValue(deserializationContext: &deserializationContext)
     }
   }
@@ -93,9 +93,9 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     guard let attributeType = MMRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }
     switch attributeType {
-    case .macVector:
-      return try MMRPMACVectorValue(index: index)
-    case .serviceRequirementVector:
+    case .mac:
+      return try MMRPMACVector(index: index)
+    case .serviceRequirement:
       return try MMRPServiceRequirementValue(index: index)
     }
   }
@@ -116,8 +116,8 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationDel
 
   public func register(macAddress: EUI48) async throws {
     try await join(
-      attributeType: MMRPAttributeType.macVector.rawValue,
-      attributeValue: MMRPMACVectorValue(macAddress: macAddress),
+      attributeType: MMRPAttributeType.mac.rawValue,
+      attributeValue: MMRPMACVector(macAddress: macAddress),
       isNew: false,
       for: MAPBaseSpanningTreeContext
     )
@@ -125,8 +125,8 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationDel
 
   public func deregister(macAddress: EUI48) async throws {
     try await leave(
-      attributeType: MMRPAttributeType.macVector.rawValue,
-      attributeValue: MMRPMACVectorValue(macAddress: macAddress),
+      attributeType: MMRPAttributeType.mac.rawValue,
+      attributeValue: MMRPMACVector(macAddress: macAddress),
       for: MAPBaseSpanningTreeContext
     )
   }
@@ -135,7 +135,7 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     serviceRequirement requirementSpecification: MMRPServiceRequirementValue
   ) async throws {
     try await join(
-      attributeType: MMRPAttributeType.serviceRequirementVector.rawValue,
+      attributeType: MMRPAttributeType.serviceRequirement.rawValue,
       attributeValue: requirementSpecification,
       isNew: false,
       for: MAPBaseSpanningTreeContext
@@ -146,7 +146,7 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     serviceRequirement requirementSpecification: MMRPServiceRequirementValue
   ) async throws {
     try await leave(
-      attributeType: MMRPAttributeType.serviceRequirementVector.rawValue,
+      attributeType: MMRPAttributeType.serviceRequirement.rawValue,
       attributeValue: requirementSpecification,
       for: MAPBaseSpanningTreeContext
     )
@@ -193,15 +193,15 @@ extension MMRPApplication {
     guard let attributeType = MMRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }
     switch attributeType {
-    case .macVector:
-      let macAddress = (attributeValue as! MMRPMACVectorValue).macAddress
+    case .mac:
+      let macAddress = (attributeValue as! MMRPMACVector).macAddress
       guard _isMulticast(macAddress: macAddress) else { throw MRPError.invalidAttributeValue }
       _logger
         .info(
           "MMRP join indication from port \(port) address \(_macAddressToString(macAddress)) isNew \(isNew) source \(eventSource)"
         )
       try await bridge.register(groupAddress: macAddress, on: ports)
-    case .serviceRequirementVector:
+    case .serviceRequirement:
       try await bridge.register(
         serviceRequirement: attributeValue as! MMRPServiceRequirementValue,
         on: ports
@@ -232,15 +232,15 @@ extension MMRPApplication {
     guard let attributeType = MMRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }
     switch attributeType {
-    case .macVector:
-      let macAddress = (attributeValue as! MMRPMACVectorValue).macAddress
+    case .mac:
+      let macAddress = (attributeValue as! MMRPMACVector).macAddress
       guard _isMulticast(macAddress: macAddress) else { throw MRPError.invalidAttributeValue }
       _logger
         .info(
           "MMRP leave indication from port \(port) address \(_macAddressToString(macAddress)) source \(eventSource)"
         )
       try await bridge.deregister(groupAddress: macAddress, from: ports)
-    case .serviceRequirementVector:
+    case .serviceRequirement:
       try await bridge.deregister(
         serviceRequirement: attributeValue as! MMRPServiceRequirementValue,
         from: ports

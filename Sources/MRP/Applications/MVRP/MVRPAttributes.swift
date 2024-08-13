@@ -15,7 +15,7 @@
 //
 
 enum MVRPAttributeType: AttributeType, CaseIterable {
-  case vidVector = 1
+  case vid = 1
 
   static var validAttributeTypes: ClosedRange<AttributeType> {
     allCases.first!.rawValue...allCases.last!.rawValue

@@ -15,8 +15,8 @@
 //
 
 enum MMRPAttributeType: AttributeType, CaseIterable {
-  case serviceRequirementVector = 1
-  case macVector = 2
+  case serviceRequirement = 1
+  case mac = 2
 
   static var validAttributeTypes: ClosedRange<AttributeType> {
     allCases.first!.rawValue...allCases.last!.rawValue
@@ -53,7 +53,7 @@ public enum MMRPServiceRequirementValue: UInt8, Value, Equatable, Hashable {
   }
 }
 
-struct MMRPMACVectorValue: Value, Equatable, Hashable {
+struct MMRPMACVector: Value, Equatable, Hashable {
   private let _macAddress: UInt64
 
   func serialize(into serializationContext: inout SerializationContext) throws {
@@ -73,7 +73,7 @@ struct MMRPMACVectorValue: Value, Equatable, Hashable {
     return Int(_macAddress)
   }
 
-  init(firstValue: MMRPMACVectorValue?, index: Int) {
+  init(firstValue: MMRPMACVector?, index: Int) {
     _macAddress = (firstValue?._macAddress ?? 0) + UInt64(index)
   }
 

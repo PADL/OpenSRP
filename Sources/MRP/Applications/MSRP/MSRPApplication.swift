@@ -19,31 +19,11 @@ import Logging
 
 public let MSRPEtherType: UInt16 = 0x22EA
 
-enum MSRPPortMediaType {
-  case accessControlPort
-  case nonDMNSharedMediumPort
-}
-
-enum MSRPDirection {
-  case talker
-  case listener
-}
-
-enum MSRPDeclarationType {
-  case talkerAdvertise
-  case talkerFailed
-  case listenerAskingFailed
-  case listenerReady
-  case listenerReadyFailed
-}
-
-struct MSRPPortParameters {}
-
 protocol MSRPAwareBridge<P>: Bridge where P: Port {}
 
 public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDelegate,
   CustomStringConvertible,
-  Sendable where P == P
+  @unchecked Sendable where P == P
 {
   var _delegate: (any BaseApplicationDelegate<P>)? { self }
 
@@ -70,9 +50,28 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     ManagedCriticalState<[MAPContextIdentifier: Set<Participant<MSRPApplication<P>>>]>([:])
   let _logger: Logger
 
-  public init(controller: MRPController<P>) async throws {
+  let _talkerPruning: Bool
+  let _maxFanInPorts: Int
+  let _latencyMaxFrameSize: UInt16
+  let _srPVid: VLAN
+  let _maxSRClasses: MSRPSRClass
+  var _portParameters = ManagedCriticalState<[P.ID: MSRPPortParameters]>([:])
+
+  public init(
+    controller: MRPController<P>,
+    talkerPruning: Bool = false,
+    maxFanInPorts: Int = 0,
+    latencyMaxFrameSize: UInt16 = 2000,
+    srPVid: VLAN = VLAN(id: 2),
+    maxSRClasses: MSRPSRClass = 2
+  ) async throws {
     _controller = Weak(controller)
     _logger = controller.logger
+    _talkerPruning = talkerPruning
+    _maxFanInPorts = maxFanInPorts
+    _latencyMaxFrameSize = latencyMaxFrameSize
+    _srPVid = srPVid
+    _maxSRClasses = maxSRClasses
     try await controller.register(application: self)
   }
 

@@ -14,13 +14,28 @@
 // limitations under the License.
 //
 
-import Locking
-import Logging
-
 enum MSRPAttributeType: AttributeType, CaseIterable {
-  case a = 1
+  // Talker Advertise Vector (25 octets)
+  case talkerAdvertise = 1
+  // Talker Failed Vector (34 octets)
+  case talkerFailed = 2
+  // Listener Vector (8 octets)
+  case listener = 3
+  // Domain Vector (4 octets)
+  case domain = 4
+  // Talker Enhanced Vector (variable)
+  case talkerEnhanced = 5 // v1 only
+  // Listener Enhanced Vector (variable)
+  case listenerEnhanced = 6 // v1 only
 
   static var validAttributeTypes: ClosedRange<AttributeType> {
     allCases.first!.rawValue...allCases.last!.rawValue
   }
+}
+
+enum MSRPApplicationEvent: ApplicationEvent {
+  case ignore = 0
+  case askignFailed = 1
+  case ready = 2
+  case readyFailed = 3
 }
