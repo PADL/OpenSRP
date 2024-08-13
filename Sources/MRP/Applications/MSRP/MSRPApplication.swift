@@ -55,7 +55,7 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
   let _latencyMaxFrameSize: UInt16
   let _srPVid: VLAN
   let _maxSRClasses: SRclassID
-  var _ports = ManagedCriticalState<[P.ID: MSRPPortState]>([:])
+  var _ports = ManagedCriticalState<[P.ID: MSRPPortState<P>]>([:])
 
   public init(
     controller: MRPController<P>,
@@ -73,6 +73,22 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     _srPVid = srPVid
     _maxSRClasses = maxSRClasses
     try await controller.register(application: self)
+  }
+
+  fileprivate func withPortState<T>(
+    port: P,
+    body: (_: inout MSRPPortState<P>) throws -> T
+  ) rethrows -> T {
+    try _ports.withCriticalRegion {
+      if let index = $0.index(forKey: port.id) {
+        return try body(&$0.values[index])
+      } else {
+        var newPortState = try MSRPPortState(msrp: self, port: port)
+        let ret = try body(&newPortState)
+        $0[port.id] = newPortState
+        return ret
+      }
+    }
   }
 
   public var description: String {

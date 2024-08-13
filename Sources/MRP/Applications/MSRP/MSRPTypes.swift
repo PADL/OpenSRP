@@ -78,16 +78,35 @@ enum MSRPProtocolVersion: ProtocolVersion {
   case v1 = 1
 }
 
-public struct MSRPPortState: Sendable {
-  var mediaType: MSRPPortMediaType
+public struct MSRPPortState<P: Port>: Sendable {
+  let mediaType: MSRPPortMediaType
   var enabled: Bool
   var tcMaxLatency: [MSRPTrafficClass: MSRPPortLatency]
-  var streamAge: UInt32
+  let streamEpoch: UInt32
   var srpDomainBoundaryPort: [SRclassID: Bool]
-  var neighborProtocolVersion: MSRPProtocolVersion
-  var talkerPruning: Bool
-  var talkerVlanPruning: Bool
+  let neighborProtocolVersion: MSRPProtocolVersion
+  let talkerPruning: Bool
+  let talkerVlanPruning: Bool
   var streams: [MSRPStreamID: MSRPDeclarationType]
+
+  var streamAge: UInt32 {
+    guard let time = try? P.timeSinceEpoch() else {
+      return 0
+    }
+    return time - streamEpoch
+  }
+
+  init(msrp: MSRPApplication<P>, port: P) throws {
+    mediaType = .accessControlPort
+    enabled = port.isEnabled
+    tcMaxLatency = [:]
+    streamEpoch = try P.timeSinceEpoch()
+    srpDomainBoundaryPort = .init(uniqueKeysWithValues: SRclassID.allCases.map { ($0, false) })
+    neighborProtocolVersion = .v0
+    talkerPruning = msrp._talkerPruning
+    talkerVlanPruning = msrp._talkerPruning
+    streams = [:]
+  }
 }
 
 public enum TSNFailureCode: UInt8, SerDes, Equatable {
@@ -259,7 +278,7 @@ public struct MSRPPriorityAndRank: SerDes, Equatable {
   }
 }
 
-public enum SRclassID: UInt8, Sendable {
+public enum SRclassID: UInt8, Sendable, CaseIterable {
   case A = 6
   case B = 5
   case C = 4

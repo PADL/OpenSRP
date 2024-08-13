@@ -19,6 +19,7 @@ import XCTest
 @preconcurrency
 import AsyncExtensions
 import Logging
+import SystemPackage
 
 struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomStringConvertible {
   var id: Int
@@ -47,6 +48,14 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
 
   init(id: ID) {
     self.id = id
+  }
+
+  static func timeSinceEpoch() throws -> UInt32 {
+    var tv = timeval()
+    guard gettimeofday(&tv, nil) == 0 else {
+      throw Errno(rawValue: errno)
+    }
+    return UInt32(tv.tv_sec)
   }
 }
 

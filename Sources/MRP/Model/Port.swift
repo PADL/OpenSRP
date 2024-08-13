@@ -17,6 +17,8 @@
 import AsyncExtensions
 
 public protocol Port: Hashable, Sendable, Identifiable where ID: Hashable & Sendable {
+  static func timeSinceEpoch() throws -> UInt32
+
   var isOperational: Bool { get }
   var isEnabled: Bool { get }
   var isPointToPoint: Bool { get }

@@ -71,6 +71,14 @@ private func _makeLinkLayerAddressBytes(
 }
 
 public struct LinuxPort: Port, Sendable, CustomStringConvertible {
+  public static func timeSinceEpoch() throws -> UInt32 {
+    var tv = timeval()
+    guard gettimeofday(&tv, nil) == 0 else {
+      throw Errno(rawValue: errno)
+    }
+    return UInt32(tv.tv_sec)
+  }
+
   public typealias ID = Int
 
   public static func == (_ lhs: LinuxPort, _ rhs: LinuxPort) -> Bool {
