@@ -22,18 +22,7 @@ public enum AdministrativeControl {
   case nonParticipant // the state machine does not send any MRP messages
 }
 
-public typealias ApplicationEvent = UInt8
-
-public struct ApplicationEventContext {
-  let applicant: Applicant
-  let registrar: Registrar?
-  let action: Applicant.Action
-  let eventSource: ParticipantEventSource
-  let attributeEvent: AttributeEvent
-  let attributeType: AttributeType
-  let attributeValue: any Value
-  let applicationEvent: UInt8
-}
+public typealias AttributeSubtype = UInt8
 
 public protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
   associatedtype P: Port
@@ -57,6 +46,9 @@ public protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
   func didUpdate(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
   func didRemove(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
 
+  func preApplicantEventHandler(context: ApplicantEventContext<P>) throws
+  func postApplicantEventHandler(context: ApplicantEventContext<P>)
+
   // apply for all participants. if contextIdentifier is nil, then all participants are called
   // regardless of contextIdentifier.
   @discardableResult
@@ -71,9 +63,8 @@ public protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
     _ block: AsyncApplyFunction<T>
   ) async rethrows -> [T]
 
-  func hasApplicationEvents(for: AttributeType) -> Bool
+  func hasAttributeSubtype(for: AttributeType) -> Bool
   func administrativeControl(for: AttributeType) throws -> AdministrativeControl
-  func mapApplicationEvent(for context: ApplicationEventContext) throws -> ApplicationEvent
 
   func makeValue(for attributeType: AttributeType, at index: UInt64) throws -> any Value
   func deserialize(
@@ -85,19 +76,19 @@ public protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
     contextIdentifier: MAPContextIdentifier,
     port: P,
     attributeType: AttributeType,
+    attributeSubtype: AttributeSubtype?,
     attributeValue: V,
     isNew: Bool,
-    eventSource: ParticipantEventSource,
-    applicationEvent: ApplicationEvent?
+    eventSource: ParticipantEventSource
   ) async throws
 
   func leaveIndicated<V: Value>(
     contextIdentifier: MAPContextIdentifier,
     port: P,
     attributeType: AttributeType,
+    attributeSubtype: AttributeSubtype?,
     attributeValue: V,
-    eventSource: ParticipantEventSource,
-    applicationEvent: ApplicationEvent?
+    eventSource: ParticipantEventSource
   ) async throws
 }
 

@@ -89,12 +89,8 @@ public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     }
   }
 
-  public func hasApplicationEvents(for: AttributeType) -> Bool {
+  public func hasAttributeSubtype(for: AttributeType) -> Bool {
     false
-  }
-
-  public func mapApplicationEvent(for context: ApplicationEventContext) throws -> ApplicationEvent {
-    throw MRPError.unknownAttributeType
   }
 
   public func administrativeControl(for attributeType: AttributeType) throws
@@ -102,6 +98,9 @@ public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationDel
   {
     .normalParticipant
   }
+
+  public func preApplicantEventHandler(context: ApplicantEventContext<P>) throws {}
+  public func postApplicantEventHandler(context: ApplicantEventContext<P>) {}
 
   // On receipt of an ES_REGISTER_VLAN_MEMBER service primitive, the MVRP
   // Participant issues a MAD_Join.request service primitive (10.2, 10.3). The
@@ -163,10 +162,10 @@ extension MVRPApplication {
     contextIdentifier: MAPContextIdentifier,
     port: P,
     attributeType: AttributeType,
+    attributeSubtype: AttributeSubtype?,
     attributeValue: some Value,
     isNew: Bool,
-    eventSource: ParticipantEventSource,
-    applicationEvent: ApplicationEvent?
+    eventSource: ParticipantEventSource
   ) async throws {
     guard let controller else { throw MRPError.internalError }
     guard let bridge = controller.bridge as? any MVRPAwareBridge<P> else { return }
@@ -201,10 +200,9 @@ extension MVRPApplication {
     contextIdentifier: MAPContextIdentifier,
     port: P,
     attributeType: AttributeType,
+    attributeSubtype: AttributeSubtype?,
     attributeValue: some Value,
-    eventSource: ParticipantEventSource,
-    applicationEvent: ApplicationEvent?
-
+    eventSource: ParticipantEventSource
   ) async throws {
     guard let controller else { throw MRPError.internalError }
     guard let bridge = controller.bridge as? any MVRPAwareBridge<P> else { return }

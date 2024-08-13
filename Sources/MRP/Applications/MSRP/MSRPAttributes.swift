@@ -33,7 +33,7 @@ enum MSRPAttributeType: AttributeType, CaseIterable {
   }
 }
 
-enum MSRPApplicationEvent: ApplicationEvent {
+enum MSRPAttributeSubtype: AttributeSubtype {
   case ignore = 0
   case askingFailed = 1
   case ready = 2
@@ -65,7 +65,7 @@ struct MSRPTalkerAdvertiseValue: MSRPTalkerValue, Equatable {
   let priorityAndRank: MSRPPriorityAndRank
   let accumulatedLatency: UInt32
 
-  var index: UInt64 { UInt64(streamID & 0x1FFF) }
+  var index: UInt64 { streamID }
 
   init(
     streamID: UInt64,

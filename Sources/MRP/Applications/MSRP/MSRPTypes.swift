@@ -61,17 +61,17 @@ public enum MSRPDeclarationType: Sendable {
     }
   }
 
-  init?(applicationEvent: ApplicationEvent?) throws {
-    guard let applicationEvent,
-          let applicationEvent = MSRPApplicationEvent(rawValue: applicationEvent)
+  init?(attributeSubtype: AttributeSubtype?) throws {
+    guard let attributeSubtype,
+          let attributeSubtype = MSRPAttributeSubtype(rawValue: attributeSubtype)
     else {
       throw MRPError.invalidAttributeValue
     }
-    self.init(applicationEvent: applicationEvent)
+    self.init(attributeSubtype: attributeSubtype)
   }
 
-  init?(applicationEvent: MSRPApplicationEvent) {
-    switch applicationEvent {
+  init?(attributeSubtype: MSRPAttributeSubtype) {
+    switch attributeSubtype {
     case .ignore:
       return nil
     case .askingFailed:

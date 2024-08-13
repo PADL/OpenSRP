@@ -28,18 +28,18 @@ protocol BaseApplicationDelegate<P>: Sendable {
     contextIdentifier: MAPContextIdentifier,
     port: P,
     attributeType: AttributeType,
+    attributeSubtype: AttributeSubtype?,
     attributeValue: some Value,
     isNew: Bool,
-    eventSource: ParticipantEventSource,
-    applicationEvent: ApplicationEvent?
+    eventSource: ParticipantEventSource
   ) async throws
   func onLeaveIndication(
     contextIdentifier: MAPContextIdentifier,
     port: P,
     attributeType: AttributeType,
+    attributeSubtype: AttributeSubtype?,
     attributeValue: some Value,
-    eventSource: ParticipantEventSource,
-    applicationEvent: ApplicationEvent?
+    eventSource: ParticipantEventSource
   ) async throws
 }
 
@@ -184,10 +184,10 @@ extension BaseApplication {
     contextIdentifier: MAPContextIdentifier,
     port: P,
     attributeType: AttributeType,
+    attributeSubtype: AttributeSubtype?,
     attributeValue: some Value,
     isNew: Bool,
-    eventSource: ParticipantEventSource,
-    applicationEvent: ApplicationEvent?
+    eventSource: ParticipantEventSource
   ) async throws {
     precondition(!(attributeValue is AnyValue))
     do {
@@ -195,10 +195,10 @@ extension BaseApplication {
         contextIdentifier: contextIdentifier,
         port: port,
         attributeType: attributeType,
+        attributeSubtype: attributeSubtype,
         attributeValue: attributeValue,
         isNew: isNew,
-        eventSource: eventSource,
-        applicationEvent: applicationEvent
+        eventSource: eventSource
       )
     } catch MRPError.doNotPropagateAttribute {
       return
@@ -211,9 +211,9 @@ extension BaseApplication {
       try await participant.join(
         attributeType: attributeType,
         attributeValue: attributeValue,
+        attributeSubtype: attributeSubtype,
         isNew: isNew,
-        eventSource: .map,
-        applicationEvent: applicationEvent
+        eventSource: .map
       )
     }
   }
@@ -222,9 +222,9 @@ extension BaseApplication {
     contextIdentifier: MAPContextIdentifier,
     port: P,
     attributeType: AttributeType,
+    attributeSubtype: AttributeSubtype?,
     attributeValue: some Value,
-    eventSource: ParticipantEventSource,
-    applicationEvent: ApplicationEvent?
+    eventSource: ParticipantEventSource
   ) async throws {
     precondition(!(attributeValue is AnyValue))
     do {
@@ -232,9 +232,9 @@ extension BaseApplication {
         contextIdentifier: contextIdentifier,
         port: port,
         attributeType: attributeType,
+        attributeSubtype: attributeSubtype,
         attributeValue: attributeValue,
-        eventSource: eventSource,
-        applicationEvent: applicationEvent
+        eventSource: eventSource
       )
     } catch MRPError.doNotPropagateAttribute {
       return
@@ -247,8 +247,8 @@ extension BaseApplication {
       try await participant.leave(
         attributeType: attributeType,
         attributeValue: attributeValue,
-        eventSource: .map,
-        applicationEvent: applicationEvent
+        attributeSubtype: attributeSubtype,
+        eventSource: .map
       )
     }
   }

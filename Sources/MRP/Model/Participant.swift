@@ -73,7 +73,6 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     struct AttributeEvent {
       let attributeEvent: MRP.AttributeEvent
       let attributeValue: _AttributeValueState<A>
-      let applicationEvent: UInt8?
     }
 
     case attributeEvent(AttributeEvent)
@@ -213,19 +212,19 @@ public final actor Participant<A: Application>: Equatable, Hashable {
           let firstIndex = attributeEvents
             .firstIndex(where: { $0.attributeValue.index == valueIndexGroup[0] })!
           let attributeEvents = attributeEvents[firstIndex..<(firstIndex + valueIndexGroups.count)]
-          let applicationEvents: [ApplicationEvent]? = if application
-            .hasApplicationEvents(for: event.key)
-          {
-            attributeEvents.map(\.applicationEvent!)
+          let attributeSubtypes: [AttributeSubtype]?
+
+          if application.hasAttributeSubtype(for: event.key) {
+            attributeSubtypes = Array(attributeEvents.map { $0.attributeValue.attributeSubtype! })
           } else {
-            nil
+            attributeSubtypes = nil
           }
 
           return VectorAttribute<AnyValue>(
             leaveAllEvent: leaveAll ? .LeaveAll : .NullLeaveAllEvent,
             firstValue: attributeEvents[firstIndex].attributeValue.value,
             attributeEvents: Array(attributeEvents.map(\.attributeEvent)),
-            applicationEvents: applicationEvents
+            applicationEvents: attributeSubtypes
           )
         }
 
@@ -258,13 +257,11 @@ public final actor Participant<A: Application>: Equatable, Hashable {
 
   fileprivate func _txEnqueue(
     attributeEvent: AttributeEvent,
-    attributeValue: _AttributeValueState<A>,
-    applicationEvent: ApplicationEvent? = nil
+    attributeValue: _AttributeValueState<A>
   ) {
     let event = EnqueuedEvent.AttributeEvent(
       attributeEvent: attributeEvent,
-      attributeValue: attributeValue,
-      applicationEvent: applicationEvent
+      attributeValue: attributeValue
     )
     _txEnqueue(.attributeEvent(event))
   }
@@ -296,14 +293,12 @@ public final actor Participant<A: Application>: Equatable, Hashable {
 
   private func _apply(
     event: ProtocolEvent,
-    eventSource: ParticipantEventSource,
-    applicationEvent: ApplicationEvent? = nil
+    eventSource: ParticipantEventSource
   ) async throws {
     try await _apply { attributeValue in
       try await attributeValue.handle(
         event: event,
-        eventSource: eventSource,
-        applicationEvent: applicationEvent
+        eventSource: eventSource
       )
     }
   }
@@ -342,27 +337,26 @@ public final actor Participant<A: Application>: Equatable, Hashable {
   private func _handle(
     attributeEvent: AttributeEvent,
     with attributeValue: _AttributeValueState<A>,
-    eventSource: ParticipantEventSource,
-    applicationEvent: ApplicationEvent?
+    eventSource: ParticipantEventSource
   ) async throws {
     let protocolEvent = attributeEvent.protocolEvent
     try await attributeValue.handle(
       event: protocolEvent,
-      eventSource: eventSource,
-      applicationEvent: applicationEvent
+      eventSource: eventSource
     )
   }
 
   // TODO: use a more efficient representation such as a bitmask
   private func _findAttributeValueState(
     attributeType: AttributeType,
+    attributeSubtype: AttributeSubtype?,
     index: UInt64
   ) throws -> _AttributeValueState<A> {
     guard let application else { throw MRPError.internalError }
     let absoluteValue = try AnyValue(application.makeValue(for: attributeType, at: index))
 
     if let attributeValue = _attributes[attributeType]?.first(where: {
-      $0.value == absoluteValue
+      $0.value == absoluteValue && $0.attributeSubtype == attributeSubtype
     }) {
       return attributeValue
     }
@@ -370,6 +364,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     let attributeValue = _AttributeValueState(
       participant: self,
       type: attributeType,
+      subtype: attributeSubtype,
       value: absoluteValue
     )
     if let index = _attributes.index(forKey: attributeType) {
@@ -395,13 +390,13 @@ public final actor Participant<A: Application>: Equatable, Hashable {
         // TODO: what is the correct policy for unknown attributes
         guard let attribute = try? _findAttributeValueState(
           attributeType: message.attributeType,
+          attributeSubtype: vectorAttribute.applicationEvents?[i] ?? nil,
           index: vectorAttribute.firstValue.index + UInt64(i)
         ) else { continue }
         try await _handle(
           attributeEvent: packedEvents[i],
           with: attribute,
-          eventSource: eventSource,
-          applicationEvent: vectorAttribute.applicationEvents?[i] ?? nil
+          eventSource: eventSource
         )
       }
 
@@ -470,37 +465,37 @@ public final actor Participant<A: Application>: Equatable, Hashable {
   func join(
     attributeType: AttributeType,
     attributeValue: some Value,
+    attributeSubtype: AttributeSubtype? = nil,
     isNew: Bool,
-    eventSource: ParticipantEventSource,
-    applicationEvent: ApplicationEvent? = nil
+    eventSource: ParticipantEventSource
   ) async throws {
     let attribute = try _findAttributeValueState(
       attributeType: attributeType,
+      attributeSubtype: attributeSubtype,
       index: attributeValue.index
     )
     try await _handle(
       attributeEvent: isNew ? .New : .JoinMt,
       with: attribute,
-      eventSource: .administrativeControl,
-      applicationEvent: applicationEvent
+      eventSource: .administrativeControl
     )
   }
 
   func leave(
     attributeType: AttributeType,
     attributeValue: some Value,
-    eventSource: ParticipantEventSource,
-    applicationEvent: ApplicationEvent? = nil
+    attributeSubtype: AttributeSubtype? = nil,
+    eventSource: ParticipantEventSource
   ) async throws {
     let attribute = try _findAttributeValueState(
       attributeType: attributeType,
+      attributeSubtype: attributeSubtype,
       index: attributeValue.index
     )
     try await _handle(
       attributeEvent: .Lv,
       with: attribute,
-      eventSource: eventSource,
-      applicationEvent: applicationEvent
+      eventSource: eventSource
     )
   }
 }
@@ -520,21 +515,22 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
   private let applicant = Applicant() // A per-Attribute Applicant state machine (10.7.7)
   private var registrar: Registrar? // A per-Attribute Registrar state machine (10.7.8)
   let attributeType: AttributeType
+  let attributeSubtype: AttributeSubtype?
   let value: AnyValue
   var index: UInt64 { value.index }
 
   var participant: P? { _participant.object }
 
-  init(participant: P, type: AttributeType, value: AnyValue) {
+  init(participant: P, type: AttributeType, subtype: AttributeSubtype?, value: AnyValue) {
     _participant = Weak(participant)
     attributeType = type
+    attributeSubtype = subtype
     self.value = value
     if participant._type != .applicantOnly {
       registrar = Registrar(onLeaveTimerExpired: {
         try await self.handle(
           event: .leavetimer,
-          eventSource: .timer,
-          applicationEvent: nil
+          eventSource: .timer
         )
       })
     }
@@ -553,46 +549,59 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
 
   func handle(
     event: ProtocolEvent,
-    eventSource: ParticipantEventSource,
-    applicationEvent: ApplicationEvent?
+    eventSource: ParticipantEventSource
   ) async throws {
     guard let participant else { throw MRPError.internalError }
     let smFlags = try await participant._getSmFlags(for: attributeType)
 
     participant._logger
       .trace(
-        "handling protocol event \(event) for attribute \(attributeType) value \(value) flags \(smFlags) state A \(applicant) R \(registrar?.description ?? "-")"
+        "handling protocol event \(event) for attribute \(attributeType) subtype \(String(describing: attributeSubtype)) value \(value) flags \(smFlags) state A \(applicant) R \(registrar?.description ?? "-")"
       )
 
-    var applicationEvent = applicationEvent
     let applicantAction = applicant.action(for: event, flags: smFlags)
+
     if let applicantAction {
       participant._logger.trace("applicant action for event \(event): \(applicantAction)")
+
+      let applicantEventContext = ApplicantEventContext(
+        port: participant.port,
+        event: event,
+        eventSource: eventSource,
+        smFlags: smFlags,
+        applicant: applicant,
+        action: applicantAction,
+        attributeType: attributeType,
+        attributeSubtype: attributeSubtype,
+        attributeValue: value.value
+      )
+
+      try participant.application?.preApplicantEventHandler(context: applicantEventContext)
       try await handle(
         applicantAction: applicantAction,
-        eventSource: eventSource,
-        applicationEvent: &applicationEvent
+        participant: participant,
+        eventSource: eventSource
       )
+      participant.application?.postApplicantEventHandler(context: applicantEventContext)
     }
 
     if let registrarAction = registrar?.action(for: event, flags: smFlags) {
       participant._logger.trace("registrar action for event \(event): \(registrarAction)")
       try await handle(
         registrarAction: registrarAction,
-        eventSource: eventSource,
-        applicationEvent: applicationEvent
+        participant: participant,
+        eventSource: eventSource
       )
     }
   }
 
   private func handle(
     applicantAction action: Applicant.Action,
-    eventSource: ParticipantEventSource,
-    applicationEvent: inout ApplicationEvent?
+    participant: P,
+    eventSource: ParticipantEventSource
   ) async throws {
     var attributeEvent: AttributeEvent?
 
-    guard let participant else { throw MRPError.internalError }
     switch action {
     case .sN:
       // The AttributeEvent value New is encoded in the Vector as specified in
@@ -619,70 +628,48 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
       attributeEvent = (registrar.state == .IN) ? .In : .Mt
     }
 
-    let mappedApplicationEvent: ApplicationEvent?
-
-    if let application = participant.application, let applicationEvent {
-      let context = ApplicationEventContext(
-        applicant: applicant,
-        registrar: registrar,
-        action: action,
-        eventSource: eventSource,
-        attributeEvent: .In,
-        attributeType: attributeType,
-        attributeValue: value.value,
-        applicationEvent: applicationEvent
-      )
-      mappedApplicationEvent = try application.mapApplicationEvent(for: context)
-    } else {
-      mappedApplicationEvent = nil
-    }
-
     if let attributeEvent {
       await participant._txEnqueue(
         attributeEvent: attributeEvent,
-        attributeValue: self,
-        applicationEvent: mappedApplicationEvent
+        attributeValue: self
       )
     }
-
-    applicationEvent = mappedApplicationEvent
   }
 
   private func handle(
     registrarAction action: Registrar.Action,
-    eventSource: ParticipantEventSource,
-    applicationEvent: ApplicationEvent?
+    participant: P,
+    eventSource: ParticipantEventSource
   ) async throws {
-    guard let participant else { throw MRPError.internalError }
     switch action {
     case .New:
       try await participant.application?.joinIndicated(
         contextIdentifier: participant.contextIdentifier,
         port: participant.port,
         attributeType: attributeType,
+        attributeSubtype: attributeSubtype,
         attributeValue: value.value,
         isNew: true,
-        eventSource: eventSource,
-        applicationEvent: applicationEvent
+        eventSource: eventSource
       )
     case .Join:
       try await participant.application?.joinIndicated(
         contextIdentifier: participant.contextIdentifier,
         port: participant.port,
         attributeType: attributeType,
+        attributeSubtype: attributeSubtype,
         attributeValue: value.value,
         isNew: false,
-        eventSource: eventSource,
-        applicationEvent: applicationEvent
+        eventSource: eventSource
       )
     case .Lv:
       try await participant.application?.leaveIndicated(
         contextIdentifier: participant.contextIdentifier,
         port: participant.port,
         attributeType: attributeType,
+        attributeSubtype: attributeSubtype,
         attributeValue: value.value,
-        eventSource: eventSource,
-        applicationEvent: applicationEvent
+        eventSource: eventSource
       )
     }
   }

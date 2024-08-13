@@ -128,12 +128,8 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     }
   }
 
-  public func hasApplicationEvents(for attributeType: AttributeType) -> Bool {
+  public func hasAttributeSubtype(for attributeType: AttributeType) -> Bool {
     attributeType == MSRPAttributeType.listener.rawValue
-  }
-
-  public func mapApplicationEvent(for context: ApplicationEventContext) throws -> ApplicationEvent {
-    throw MRPError.unknownAttributeType
   }
 
   public func administrativeControl(for attributeType: AttributeType) throws
@@ -145,6 +141,9 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
   private func declarationType(for streamID: MSRPStreamID) throws -> MSRPDeclarationType {
     throw MRPError.invalidMSRPDeclarationType
   }
+
+  public func preApplicantEventHandler(context: ApplicantEventContext<P>) throws {}
+  public func postApplicantEventHandler(context: ApplicantEventContext<P>) {}
 
   // On receipt of a REGISTER_STREAM.request the MSRP Participant shall issue a
   // MAD_Join.request service primitive (10.2, 10.3). The attribute_type (10.2)
@@ -319,10 +318,10 @@ extension MSRPApplication {
     contextIdentifier: MAPContextIdentifier,
     port: P,
     attributeType: AttributeType,
+    attributeSubtype: AttributeSubtype?,
     attributeValue: some Value,
     isNew: Bool,
-    eventSource: ParticipantEventSource,
-    applicationEvent: ApplicationEvent?
+    eventSource: ParticipantEventSource
   ) async throws {
     guard let attributeType = MSRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }
@@ -363,7 +362,7 @@ extension MSRPApplication {
       )
     case .listener:
       let attributeValue = (attributeValue as! MSRPListenerValue)
-      guard let declarationType = try? MSRPDeclarationType(applicationEvent: applicationEvent)
+      guard let declarationType = try? MSRPDeclarationType(attributeSubtype: attributeSubtype)
       else { return }
       try await _onRegisterAttachIndication(
         contextIdentifier: contextIdentifier,
@@ -411,9 +410,9 @@ extension MSRPApplication {
     contextIdentifier: MAPContextIdentifier,
     port: P,
     attributeType: AttributeType,
+    attributeSubtype: AttributeSubtype?,
     attributeValue: some Value,
-    eventSource: ParticipantEventSource,
-    applicationEvent: ApplicationEvent?
+    eventSource: ParticipantEventSource
   ) async throws {
     guard let attributeType = MSRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }

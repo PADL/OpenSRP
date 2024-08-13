@@ -100,12 +100,8 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     }
   }
 
-  public func hasApplicationEvents(for: AttributeType) -> Bool {
+  public func hasAttributeSubtype(for: AttributeType) -> Bool {
     false
-  }
-
-  public func mapApplicationEvent(for context: ApplicationEventContext) throws -> ApplicationEvent {
-    throw MRPError.unknownAttributeType
   }
 
   public func administrativeControl(for attributeType: AttributeType) throws
@@ -113,6 +109,9 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationDel
   {
     .normalParticipant
   }
+
+  public func preApplicantEventHandler(context: ApplicantEventContext<P>) throws {}
+  public func postApplicantEventHandler(context: ApplicantEventContext<P>) {}
 
   public func register(macAddress: EUI48) async throws {
     try await join(
@@ -182,10 +181,10 @@ extension MMRPApplication {
     contextIdentifier: MAPContextIdentifier,
     port: P,
     attributeType: AttributeType,
+    attributeSubtype: AttributeSubtype?,
     attributeValue: some Value,
     isNew: Bool,
-    eventSource: ParticipantEventSource,
-    applicationEvent: ApplicationEvent?
+    eventSource: ParticipantEventSource
   ) async throws {
     guard let controller else { throw MRPError.internalError }
     guard let bridge = controller.bridge as? any MMRPAwareBridge<P> else { return }
@@ -222,9 +221,9 @@ extension MMRPApplication {
     contextIdentifier: MAPContextIdentifier,
     port: P,
     attributeType: AttributeType,
+    attributeSubtype: AttributeSubtype?,
     attributeValue: some Value,
-    eventSource: ParticipantEventSource,
-    applicationEvent: ApplicationEvent?
+    eventSource: ParticipantEventSource
   ) async throws {
     guard let controller else { throw MRPError.internalError }
     guard let bridge = controller.bridge as? any MMRPAwareBridge<P> else { return }

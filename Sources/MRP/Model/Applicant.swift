@@ -295,3 +295,15 @@ private extension Applicant.State {
     return action
   }
 }
+
+public struct ApplicantEventContext<P: Port> {
+  let port: P
+  let event: ProtocolEvent
+  let eventSource: ParticipantEventSource
+  let smFlags: StateMachineHandlerFlags
+  let applicant: Applicant
+  let action: Applicant.Action
+  let attributeType: AttributeType
+  let attributeSubtype: AttributeSubtype?
+  let attributeValue: any Value
+}
