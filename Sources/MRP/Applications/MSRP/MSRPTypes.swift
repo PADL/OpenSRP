@@ -258,7 +258,11 @@ public struct MSRPDataFrameParameters: Value, Equatable {
   }
 }
 
-public struct MSRPPriorityAndRank: SerDes, Equatable {
+public struct MSRPPriorityAndRank: SerDes, Equatable, Comparable {
+  public static func < (lhs: MSRPPriorityAndRank, rhs: MSRPPriorityAndRank) -> Bool {
+    lhs.value < rhs.value
+  }
+
   let value: UInt8
 
   init(_ value: UInt8 = 0) {

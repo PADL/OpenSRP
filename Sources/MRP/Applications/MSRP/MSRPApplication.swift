@@ -19,7 +19,11 @@ import Logging
 
 public let MSRPEtherType: UInt16 = 0x22EA
 
-protocol MSRPAwareBridge<P>: Bridge where P: Port {}
+protocol MSRPAwareBridge<P>: Bridge where P: Port {
+  func updateCBS(idleSlope: Int, sendSlope: Int, hiCredit: Int, loCredit: Int) async throws
+}
+
+extension MSRPAwareBridge {}
 
 private extension Port {
   var systemID: UInt64 {
@@ -33,9 +37,20 @@ public struct MSRPPortState<P: Port>: Sendable {
   var tcMaxLatency: [MSRPTrafficClass: MSRPPortLatency]
   let streamEpoch: UInt32
   var srpDomainBoundaryPort: [SRclassID: Bool]
+  // Table 6-5—Default SRP domain boundary port priority regeneration override values
+  var srClassPriorityMap: [SRclassID: SRclassPriority] = [
+    .A: SRclassPriority(rawValue: 3)!,
+    .B: SRclassPriority(rawValue: 2)!,
+  ]
   let neighborProtocolVersion: MSRPProtocolVersion
   let talkerPruning: Bool
   let talkerVlanPruning: Bool
+
+  func reverseMapSrClassPriority(priority: SRclassPriority) -> SRclassID? {
+    srClassPriorityMap.first(where: {
+      $0.value == priority
+    })?.key
+  }
 
   var streamAge: UInt32 {
     guard let time = try? P.timeSinceEpoch() else {
@@ -383,11 +398,17 @@ extension MSRPApplication {
   ) -> TSNFailureCode? {
     // analyse available bandwidth to determine if outbound port has enough resources
     // verify msrpMaxFanInports
-    // if it _is_ a domain bounary port for that SR class, then block with TalkerFailed(not AVB
-    // capable)
+
+    guard let srClassID = portState
+      .reverseMapSrClassPriority(priority: priorityAndRank.dataFramePriority),
+      portState.srpDomainBoundaryPort[srClassID] == false
+    else {
+      return .egressPortIsNotAvbCapable
+    }
+
     // stream rank (make streams comparable?) by comparing Rank, then streamAge, then streamID
     // determine totalFrameSize for a port
-    nil
+    return nil
   }
 
   // On receipt of a MAD_Join.indication service primitive (10.2, 10.3) with an
