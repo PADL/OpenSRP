@@ -587,7 +587,8 @@ extension MSRPApplication {
     isNew: Bool,
     eventSource: ParticipantEventSource
   ) async throws {
-    guard eventSource != .map
+    // 35.2.4 (d) A MAD_Join.indication adds a new attribute to MAD (with isNew TRUE)
+    guard isNew, eventSource != .map
     else { throw MRPError.doNotPropagateAttribute } // don't recursively invoke MAP
 
     guard let attributeType = MSRPAttributeType(rawValue: attributeType)

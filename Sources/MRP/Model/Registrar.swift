@@ -88,7 +88,7 @@ private extension Registrar.State {
       return nil
     }
     if (flags.contains(.registrationFixedNewPropagated) && event != .rNew) ||
-      flags.contains(.registrationFixedNewIgnored)
+      (flags.contains(.registrationFixedNewIgnored) && event == .rNew)
     {
       return nil
     }

@@ -396,7 +396,6 @@ public final actor Participant<A: Application>: Equatable, Hashable {
         throw MRPError.badVectorAttribute
       }
       for i in 0..<Int(vectorAttribute.numberOfValues) {
-        // TODO: what is the correct policy for unknown attributes
         guard let attribute = try? _findAttributeValueState(
           attributeType: message.attributeType,
           attributeSubtype: vectorAttribute.applicationEvents?[i] ?? nil,
