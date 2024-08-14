@@ -46,6 +46,21 @@ public enum MSRPDeclarationType: Sendable {
     }
   }
 
+  var attributeSubtype: MSRPAttributeSubtype? {
+    switch self {
+    case .talkerAdvertise:
+      fallthrough
+    case .talkerFailed:
+      return nil
+    case .listenerAskingFailed:
+      return .askingFailed
+    case .listenerReady:
+      return .ready
+    case .listenerReadyFailed:
+      return .readyFailed
+    }
+  }
+
   var direction: MSRPDirection {
     switch self {
     case .talkerAdvertise:

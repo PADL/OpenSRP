@@ -362,7 +362,10 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     let absoluteValue = try AnyValue(application.makeValue(for: attributeType, at: index))
 
     if let attributeValue = _attributes[attributeType]?.first(where: {
-      $0.value == absoluteValue && $0.attributeSubtype == attributeSubtype
+      if let attributeSubtype {
+        guard $0.attributeSubtype == attributeSubtype else { return false }
+      }
+      return $0.value == absoluteValue
     }) {
       return attributeValue
     }
@@ -457,6 +460,20 @@ public final actor Participant<A: Application>: Equatable, Hashable {
       try await attributeValueState.handle(event: .rLv, eventSource: .application)
       try await attributeValueState.onLeaveTimerExpired()
     }
+  }
+
+  public func findAttribute(
+    attributeType: AttributeType,
+    attributeSubtype: AttributeSubtype? = nil,
+    index: UInt64
+  ) -> (any Value, AttributeSubtype?)? {
+    let attributeValueState = try? _findAttributeValueState(
+      attributeType: attributeType,
+      attributeSubtype: attributeSubtype,
+      index: index
+    )
+    guard let attributeValueState else { return nil }
+    return (attributeValueState.value.value, attributeValueState.attributeSubtype)
   }
 
   // A Flush! event signals to the Registrar state machine that there is a

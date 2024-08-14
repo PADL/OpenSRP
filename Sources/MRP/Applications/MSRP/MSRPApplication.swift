@@ -482,6 +482,47 @@ extension MSRPApplication {
     throw MRPError.doNotPropagateAttribute // advise caller we have performed MAP ourselves
   }
 
+  private func _mergeListener(
+    declarationType firstDeclarationType: MSRPDeclarationType,
+    with secondDeclarationType: MSRPDeclarationType?
+  ) -> MSRPDeclarationType {
+    if firstDeclarationType == .listenerReady {
+      if secondDeclarationType == nil || secondDeclarationType == .listenerReady {
+        return .listenerReady
+      } else if secondDeclarationType == .listenerReadyFailed || secondDeclarationType ==
+        .listenerAskingFailed
+      {
+        return .listenerReadyFailed
+      }
+    } else if firstDeclarationType == .listenerAskingFailed {
+      if secondDeclarationType == .listenerReady || secondDeclarationType == .listenerReadyFailed {
+        return .listenerReadyFailed
+      } else if secondDeclarationType == nil || secondDeclarationType == .listenerAskingFailed {
+        return .listenerAskingFailed
+      }
+    }
+    return .listenerReadyFailed
+  }
+
+  private func _isTalkerRegistered(
+    for streamID: MSRPStreamID,
+    participant: Participant<MSRPApplication>
+  ) async -> Bool? {
+    if let _ = await participant.findAttribute(
+      attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
+      index: streamID
+    ) {
+      return true
+    } else if let _ = await participant.findAttribute(
+      attributeType: MSRPAttributeType.talkerFailed.rawValue,
+      index: streamID
+    ) {
+      return false
+    } else {
+      return nil
+    }
+  }
+
   // On receipt of a MAD_Join.indication service primitive (10.2, 10.3) with an
   // attribute_type of Listener (35.2.2.4), the MSRP application shall issue a
   // REGISTER_ATTACH.indication to the Talker application entity. The
@@ -494,7 +535,48 @@ extension MSRPApplication {
     declarationType: MSRPDeclarationType,
     isNew: Bool,
     eventSource: ParticipantEventSource
-  ) async throws {}
+  ) async throws {
+    try await apply(for: contextIdentifier) { participant in
+      if participant.port != port, let talkerRegistration = await _isTalkerRegistered(
+        for: streamID,
+        participant: participant
+      ) {
+        let mergedDeclarationType: MSRPDeclarationType
+
+        if talkerRegistration {
+          let portDeclarationType: MSRPDeclarationType?
+
+          if let portDeclaration = await participant.findAttribute(
+            attributeType: declarationType.attributeType.rawValue,
+            index: streamID
+          ) {
+            portDeclarationType = try? MSRPDeclarationType(attributeSubtype: portDeclaration.1)
+          } else {
+            portDeclarationType = nil
+          }
+
+          mergedDeclarationType = _mergeListener(
+            declarationType: declarationType,
+            with: portDeclarationType
+          )
+        } else {
+          mergedDeclarationType = .listenerAskingFailed
+        }
+
+        try await participant.join(
+          attributeType: MSRPAttributeType.listener.rawValue,
+          attributeValue: MSRPListenerValue(streamID: streamID),
+          attributeSubtype: mergedDeclarationType.attributeSubtype?.rawValue,
+          isNew: isNew,
+          eventSource: .map
+        )
+      }
+      // update dynamic reservation entries for _ALL_ ports (make this part of bridge aware
+      // protocol)
+    }
+
+    throw MRPError.doNotPropagateAttribute // advise caller we have performed MAP ourselves
+  }
 
   func onJoinIndication(
     contextIdentifier: MAPContextIdentifier,

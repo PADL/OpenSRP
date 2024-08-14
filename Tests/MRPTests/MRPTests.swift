@@ -45,6 +45,8 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
   var vlans: Set<MRP.VLAN> { [] }
 
   var macAddress: MRP.EUI48 { (0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF) }
+  
+  var latency: UInt32 { 0 }
 
   init(id: ID) {
     self.id = id
