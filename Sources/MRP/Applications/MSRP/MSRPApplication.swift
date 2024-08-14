@@ -202,7 +202,7 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
 
     let contextStreamID = (context.attributeValue as! MSRPStreamIDRepresentable).streamID
 
-    try await context.participant.forceLeave { attributeType, attributeSubtype, attributeValue in
+    try await context.participant.leaveNow { attributeType, attributeSubtype, attributeValue in
       let attributeType = MSRPAttributeType(rawValue: attributeType)!
       guard let direction = attributeType.direction else { return false }
       let streamID = (attributeValue as! MSRPStreamIDRepresentable).streamID
@@ -256,7 +256,6 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
         systemID: failureInformation.systemID,
         failureCode: failureInformation.failureCode
       )
-
     case .listenerAskingFailed:
       fallthrough
     case .listenerReady:
@@ -285,7 +284,7 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     streamID: MSRPStreamID
   ) async throws {
     try await leave(
-      attributeType: try declarationType(for: streamID).attributeType.rawValue,
+      attributeType: declarationType(for: streamID).attributeType.rawValue,
       attributeValue: MSRPListenerValue(streamID: streamID),
       for: MAPBaseSpanningTreeContext
     )
@@ -317,7 +316,7 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     streamID: MSRPStreamID
   ) async throws {
     try await leave(
-      attributeType: try declarationType(for: streamID).attributeType.rawValue,
+      attributeType: declarationType(for: streamID).attributeType.rawValue,
       attributeValue: MSRPListenerValue(streamID: streamID),
       for: MAPBaseSpanningTreeContext
     )
@@ -512,14 +511,14 @@ extension MSRPApplication {
       attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
       index: streamID
     ) {
-      return true
+      true
     } else if let _ = await participant.findAttribute(
       attributeType: MSRPAttributeType.talkerFailed.rawValue,
       index: streamID
     ) {
-      return false
+      false
     } else {
-      return nil
+      nil
     }
   }
 
@@ -544,15 +543,15 @@ extension MSRPApplication {
         let mergedDeclarationType: MSRPDeclarationType
 
         if talkerRegistration {
-          let portDeclarationType: MSRPDeclarationType?
-
-          if let portDeclaration = await participant.findAttribute(
-            attributeType: declarationType.attributeType.rawValue,
-            index: streamID
-          ) {
-            portDeclarationType = try? MSRPDeclarationType(attributeSubtype: portDeclaration.1)
+          let portDeclarationType: MSRPDeclarationType? = if let portDeclaration = await participant
+            .findAttribute(
+              attributeType: declarationType.attributeType.rawValue,
+              index: streamID
+            )
+          {
+            try? MSRPDeclarationType(attributeSubtype: portDeclaration.1)
           } else {
-            portDeclarationType = nil
+            nil
           }
 
           mergedDeclarationType = _mergeListener(

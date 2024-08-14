@@ -214,12 +214,12 @@ public final actor Participant<A: Application>: Equatable, Hashable {
           let firstIndex = attributeEvents
             .firstIndex(where: { $0.attributeValue.index == valueIndexGroup[0] })!
           let attributeEvents = attributeEvents[firstIndex..<(firstIndex + valueIndexGroups.count)]
-          let attributeSubtypes: [AttributeSubtype]?
-
-          if application.hasAttributeSubtype(for: event.key) {
-            attributeSubtypes = Array(attributeEvents.map { $0.attributeValue.attributeSubtype! })
+          let attributeSubtypes: [AttributeSubtype]? = if application
+            .hasAttributeSubtype(for: event.key)
+          {
+            Array(attributeEvents.map { $0.attributeValue.attributeSubtype! })
           } else {
-            attributeSubtypes = nil
+            nil
           }
 
           // here the first value needs to be the actual value from the attribute value state
@@ -324,6 +324,24 @@ public final actor Participant<A: Application>: Equatable, Hashable {
   private func _apply(
     attributeType: AttributeType? = nil,
     _ block: ParticipantApplyFunction<A>
+  ) rethrows {
+    if let attributeType {
+      guard let attributeValues = _attributes[attributeType] else { return }
+      for attributeValue in attributeValues {
+        try block(attributeValue)
+      }
+    } else {
+      for attribute in _attributes {
+        for attributeValue in attribute.value {
+          try block(attributeValue)
+        }
+      }
+    }
+  }
+
+  private func _apply(
+    attributeType: AttributeType? = nil,
+    _ block: AsyncParticipantApplyFunction<A>
   ) async rethrows {
     if let attributeType {
       guard let attributeValues = _attributes[attributeType] else { return }
@@ -382,6 +400,13 @@ public final actor Participant<A: Application>: Equatable, Hashable {
       _attributes[attributeType] = [attributeValue]
     }
     return attributeValue
+  }
+
+  fileprivate func _removeAttributeValueState(_ attributeValueState: _AttributeValueState<A>) {
+    guard let index = _attributes.index(forKey: attributeValueState.attributeType) else {
+      return
+    }
+    _attributes.values[index].remove(attributeValueState)
   }
 
   func rx(message: Message, sourceMacAddress: EUI48) async throws {
@@ -443,11 +468,11 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     )
   }
 
-  public func forceLeave(
+  public func leaveNow(
     _ isIncluded: @Sendable (AttributeType, AttributeSubtype?, any Value)
       -> Bool
   ) async throws {
-    try await _apply { attributeValueState in
+    await _apply { attributeValueState in
       guard isIncluded(
         attributeValueState.attributeType,
         attributeValueState.attributeSubtype,
@@ -456,8 +481,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
         return
       }
 
-      try await attributeValueState.handle(event: .rLv, eventSource: .application)
-      try await attributeValueState.onLeaveTimerExpired()
+      await _removeAttributeValueState(attributeValueState)
     }
   }
 
@@ -471,7 +495,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
       attributeSubtype: attributeSubtype,
       index: index
     )
-    guard let attributeValueState else { return nil }
+    guard let attributeValueState, attributeValueState.registrarState == .IN else { return nil }
     return (attributeValueState.value.value, attributeValueState.attributeSubtype)
   }
 
@@ -540,8 +564,11 @@ public final actor Participant<A: Application>: Equatable, Hashable {
   }
 }
 
-private typealias ParticipantApplyFunction<A: Application> =
+private typealias AsyncParticipantApplyFunction<A: Application> =
   @Sendable (_AttributeValueState<A>) async throws -> ()
+
+private typealias ParticipantApplyFunction<A: Application> =
+  @Sendable (_AttributeValueState<A>) throws -> ()
 
 private final class _AttributeValueState<A: Application>: @unchecked Sendable, Hashable,
   Equatable
@@ -561,6 +588,10 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
 
   var participant: P? { _participant.object }
 
+  var registrarState: Registrar.State? {
+    registrar?.state
+  }
+
   init(participant: P, type: AttributeType, subtype: AttributeSubtype?, value: AnyValue) {
     _participant = Weak(participant)
     attributeType = type
@@ -576,7 +607,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
   }
 
   @Sendable
-  func onLeaveTimerExpired() async throws {
+  private func onLeaveTimerExpired() async throws {
     try await handle(
       event: .leavetimer,
       eventSource: .timer
@@ -602,6 +633,26 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
         "handling protocol event \(event) for attribute \(attributeType) subtype \(String(describing: attributeSubtype)) value \(value) flags \(smFlags) state A \(applicant) R \(registrar?.description ?? "-")"
       )
 
+    try await _handleApplicant(
+      event: event,
+      participant: participant,
+      eventSource: eventSource,
+      smFlags: smFlags
+    )
+    try await _handleRegistrar(
+      event: event,
+      participant: participant,
+      eventSource: eventSource,
+      smFlags: smFlags
+    )
+  }
+
+  private func _handleApplicant(
+    event: ProtocolEvent,
+    participant: P,
+    eventSource: ParticipantEventSource,
+    smFlags: StateMachineHandlerFlags
+  ) async throws {
     let applicantAction = applicant.action(for: event, flags: smFlags)
 
     if let applicantAction {
@@ -620,25 +671,16 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
       )
 
       try await participant.application?.preApplicantEventHandler(context: applicantEventContext)
-      try await handle(
+      try await _handle(
         applicantAction: applicantAction,
         participant: participant,
         eventSource: eventSource
       )
       participant.application?.postApplicantEventHandler(context: applicantEventContext)
     }
-
-    if let registrarAction = registrar?.action(for: event, flags: smFlags) {
-      participant._logger.trace("registrar action for event \(event): \(registrarAction)")
-      try await handle(
-        registrarAction: registrarAction,
-        participant: participant,
-        eventSource: eventSource
-      )
-    }
   }
 
-  private func handle(
+  private func _handle(
     applicantAction action: Applicant.Action,
     participant: P,
     eventSource: ParticipantEventSource
@@ -679,7 +721,27 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
     }
   }
 
-  private func handle(
+  private func _handleRegistrar(
+    event: ProtocolEvent,
+    participant: P,
+    eventSource: ParticipantEventSource,
+    smFlags: StateMachineHandlerFlags
+  ) async throws {
+    if let registrarAction = registrar?.action(for: event, flags: smFlags) {
+      participant._logger.trace("registrar action for event \(event): \(registrarAction)")
+      try await _handle(
+        registrarAction: registrarAction,
+        participant: participant,
+        eventSource: eventSource
+      )
+
+      if registrar?.state == .MT {
+        await participant._removeAttributeValueState(self)
+      }
+    }
+  }
+
+  private func _handle(
     registrarAction action: Registrar.Action,
     participant: P,
     eventSource: ParticipantEventSource

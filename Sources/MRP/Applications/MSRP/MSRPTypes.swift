@@ -140,7 +140,7 @@ public enum TSNFailureCode: UInt8, SerDes, Equatable {
   }
 
   public init(deserializationContext: inout DeserializationContext) throws {
-    guard let value = Self(rawValue: try deserializationContext.deserialize()) else {
+    guard let value = try Self(rawValue: deserializationContext.deserialize()) else {
       throw MRPError.invalidFailureCode
     }
     self = value
@@ -249,11 +249,10 @@ public struct MSRPDataFrameParameters: Value, Equatable {
   }
 
   public init(firstValue: Self?, index: UInt64) throws {
-    let value: UInt64
-    if let firstValue {
-      value = firstValue._value + UInt64(index)
+    let value: UInt64 = if let firstValue {
+      firstValue._value + UInt64(index)
     } else {
-      value = UInt64(index)
+      UInt64(index)
     }
     self.init(value)
   }
