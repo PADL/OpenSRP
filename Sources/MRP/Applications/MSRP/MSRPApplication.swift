@@ -151,16 +151,17 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
   // Registrar state table) was generated for the MAD in the Received MSRP
   // Attribute Declarations before the rJoinIn! or rJoinMt! event for the
   // attribute in the received message is processed
-  public func preApplicantEventHandler(context: ApplicantEventContext<P>) async throws {
+  public func preApplicantEventHandler(
+    context: ApplicantEventContext<MSRPApplication>
+  ) async throws {
     guard context.event == .rJoinIn || context.event == .rJoinMt else { return }
 
     let contextAttributeType = MSRPAttributeType(rawValue: context.attributeType)!
     guard let contextDirection = contextAttributeType.direction else { return }
 
     let contextStreamID = (context.attributeValue as! MSRPStreamIDRepresentable).streamID
-    let participant = try findParticipant(port: context.port)
 
-    try await participant.forceLeave { attributeType, attributeSubtype, attributeValue in
+    try await context.participant.forceLeave { attributeType, attributeSubtype, attributeValue in
       let attributeType = MSRPAttributeType(rawValue: attributeType)!
       guard let direction = attributeType.direction else { return false }
       let streamID = (attributeValue as! MSRPStreamIDRepresentable).streamID
@@ -170,7 +171,7 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     }
   }
 
-  public func postApplicantEventHandler(context: ApplicantEventContext<P>) {}
+  public func postApplicantEventHandler(context: ApplicantEventContext<MSRPApplication>) {}
 
   // On receipt of a REGISTER_STREAM.request the MSRP Participant shall issue a
   // MAD_Join.request service primitive (10.2, 10.3). The attribute_type (10.2)

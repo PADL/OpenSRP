@@ -588,7 +588,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
       participant._logger.trace("applicant action for event \(event): \(applicantAction)")
 
       let applicantEventContext = ApplicantEventContext(
-        port: participant.port,
+        participant: participant,
         event: event,
         eventSource: eventSource,
         smFlags: smFlags,
