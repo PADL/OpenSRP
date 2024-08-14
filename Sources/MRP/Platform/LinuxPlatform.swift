@@ -145,6 +145,10 @@ public struct LinuxPort: Port, Sendable, CustomStringConvertible {
     guard let vlans = _vlans else { return [] }
     return Set(vlans.map { VLAN(id: $0) })
   }
+
+  public var latency: UInt32 {
+    0
+  }
 }
 
 private extension LinuxPort {

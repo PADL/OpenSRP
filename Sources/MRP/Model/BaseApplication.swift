@@ -180,6 +180,45 @@ extension BaseApplication {
     }
   }
 
+  func shouldPropagate(eventSource: ParticipantEventSource) -> Bool {
+    switch eventSource {
+    case .timer:
+      fallthrough
+    case .local:
+      fallthrough
+    case .peer:
+      return true
+    case .internal:
+      fallthrough // don't need to propagate this because application calls all participants
+    case .map:
+      return false // don't recursively call ourselves
+    case .application:
+      return true // FIXME: check whether we should propagate application withdrawals?
+    }
+  }
+
+  private func _propagateJoinIndicated(
+    contextIdentifier: MAPContextIdentifier,
+    port: P,
+    attributeType: AttributeType,
+    attributeSubtype: AttributeSubtype?,
+    attributeValue: some Value,
+    isNew: Bool,
+    eventSource: ParticipantEventSource
+  ) async throws {
+    guard shouldPropagate(eventSource: eventSource) else { return }
+    try await apply(for: contextIdentifier) { participant in
+      guard participant.port != port else { return }
+      try await participant.join(
+        attributeType: attributeType,
+        attributeValue: attributeValue,
+        attributeSubtype: attributeSubtype,
+        isNew: isNew,
+        eventSource: .map
+      )
+    }
+  }
+
   public func joinIndicated(
     contextIdentifier: MAPContextIdentifier,
     port: P,
@@ -205,14 +244,32 @@ extension BaseApplication {
     } catch {
       throw error
     }
-    guard eventSource != .map else { return } // don't recursively invoke MAP
+    try await _propagateJoinIndicated(
+      contextIdentifier: contextIdentifier,
+      port: port,
+      attributeType: attributeType,
+      attributeSubtype: attributeSubtype,
+      attributeValue: attributeValue,
+      isNew: isNew,
+      eventSource: eventSource
+    )
+  }
+
+  private func _propagateLeaveIndicated(
+    contextIdentifier: MAPContextIdentifier,
+    port: P,
+    attributeType: AttributeType,
+    attributeSubtype: AttributeSubtype?,
+    attributeValue: some Value,
+    eventSource: ParticipantEventSource
+  ) async throws {
+    guard shouldPropagate(eventSource: eventSource) else { return }
     try await apply(for: contextIdentifier) { participant in
       guard participant.port != port else { return }
-      try await participant.join(
+      try await participant.leave(
         attributeType: attributeType,
         attributeValue: attributeValue,
         attributeSubtype: attributeSubtype,
-        isNew: isNew,
         eventSource: .map
       )
     }
@@ -241,15 +298,13 @@ extension BaseApplication {
     } catch {
       throw error
     }
-    guard eventSource != .map else { return } // don't recursively invoke MAP
-    try await apply(for: contextIdentifier) { participant in
-      guard participant.port != port else { return }
-      try await participant.leave(
-        attributeType: attributeType,
-        attributeValue: attributeValue,
-        attributeSubtype: attributeSubtype,
-        eventSource: .map
-      )
-    }
+    try await _propagateLeaveIndicated(
+      contextIdentifier: contextIdentifier,
+      port: port,
+      attributeType: attributeType,
+      attributeSubtype: attributeSubtype,
+      attributeValue: attributeValue,
+      eventSource: eventSource
+    )
   }
 }

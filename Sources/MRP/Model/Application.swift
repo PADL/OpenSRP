@@ -112,10 +112,6 @@ extension Application {
     }
   }
 
-  func makeValue(for attributeType: AttributeType) throws -> any Value {
-    try makeValue(for: attributeType, at: 0)
-  }
-
   private func apply<T>(
     for contextIdentifier: MAPContextIdentifier,
     with arg: T,
@@ -164,8 +160,7 @@ extension Application {
       try await participant.join(
         attributeType: attributeType,
         attributeValue: attributeValue,
-        isNew: isNew,
-        eventSource: .administrativeControl
+        isNew: isNew
       )
     }
   }
@@ -178,8 +173,7 @@ extension Application {
     try await apply(for: contextIdentifier) { participant in
       try await participant.leave(
         attributeType: attributeType,
-        attributeValue: attributeValue,
-        eventSource: .administrativeControl
+        attributeValue: attributeValue
       )
     }
   }

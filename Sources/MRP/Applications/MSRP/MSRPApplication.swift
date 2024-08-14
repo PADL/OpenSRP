@@ -21,6 +21,46 @@ public let MSRPEtherType: UInt16 = 0x22EA
 
 protocol MSRPAwareBridge<P>: Bridge where P: Port {}
 
+private extension Port {
+  var systemID: UInt64 {
+    UInt64(macAddress.0 << 40) |
+      UInt64(macAddress.1 << 32) |
+      UInt64(macAddress.2 << 24) |
+      UInt64(macAddress.3 << 16) |
+      UInt64(macAddress.4 << 8) |
+      UInt64(macAddress.5 << 0)
+  }
+}
+
+public struct MSRPPortState<P: Port>: Sendable {
+  let mediaType: MSRPPortMediaType
+  var enabled: Bool
+  var tcMaxLatency: [MSRPTrafficClass: MSRPPortLatency]
+  let streamEpoch: UInt32
+  var srpDomainBoundaryPort: [SRclassID: Bool]
+  let neighborProtocolVersion: MSRPProtocolVersion
+  let talkerPruning: Bool
+  let talkerVlanPruning: Bool
+
+  var streamAge: UInt32 {
+    guard let time = try? P.timeSinceEpoch() else {
+      return 0
+    }
+    return time - streamEpoch
+  }
+
+  init(msrp: MSRPApplication<P>, port: P) throws {
+    mediaType = .accessControlPort
+    enabled = port.isEnabled
+    tcMaxLatency = [:]
+    streamEpoch = try P.timeSinceEpoch()
+    srpDomainBoundaryPort = .init(uniqueKeysWithValues: SRclassID.allCases.map { ($0, false) })
+    neighborProtocolVersion = .v0
+    talkerPruning = false
+    talkerVlanPruning = false
+  }
+}
+
 public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDelegate,
   CustomStringConvertible,
   @unchecked Sendable where P == P
@@ -75,6 +115,7 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     try await controller.register(application: self)
   }
 
+  @discardableResult
   fileprivate func withPortState<T>(
     port: P,
     body: (_: inout MSRPPortState<P>) throws -> T
@@ -301,6 +342,45 @@ extension MSRPApplication {
     with context: MAPContext<P>
   ) throws {}
 
+  private func _shouldPruneTalkerDeclaration(
+    port: P,
+    streamID: MSRPStreamID,
+    declarationType: MSRPDeclarationType,
+    dataFrameParameters: MSRPDataFrameParameters,
+    tSpec: MSRPTSpec,
+    priorityAndRank: MSRPPriorityAndRank,
+    accumulatedLatency: UInt32,
+    failureInformation: MSRPFailure?,
+    isNew: Bool,
+    eventSource: ParticipantEventSource
+  ) -> Bool {
+    //  if talkerPruning (overrides talkerPruningPerPort) is enabled, check MAC table (FDB?) before
+    //  forwarding (just do for multicast?)
+    //  if talkerVlanPruning then check vlans too
+
+    false
+  }
+
+  private func _canPropagateTalkerAdvertise(
+    port: P,
+    streamID: MSRPStreamID,
+    declarationType: MSRPDeclarationType,
+    dataFrameParameters: MSRPDataFrameParameters,
+    tSpec: MSRPTSpec,
+    priorityAndRank: MSRPPriorityAndRank,
+    accumulatedLatency: UInt32,
+    isNew: Bool,
+    eventSource: ParticipantEventSource
+  ) -> TSNFailureCode? {
+    // analyse available bandwidth to determine if outbound port has enough resources
+    // verify msrpMaxFanInports
+    // if it _is_ a domain bounary port for that SR class, then block with TalkerFailed(not AVB
+    // capable)
+    // stream rank (make streams comparable?) by comparing Rank, then streamAge, then streamID
+    // determine totalFrameSize for a port
+    nil
+  }
+
   // On receipt of a MAD_Join.indication service primitive (10.2, 10.3) with an
   // attribute_type of Talker Advertise, Talker Failed, or Talker Enhanced
   // (35.2.2.4), the MSRP application shall issue a REGISTER_STREAM.indication
@@ -318,7 +398,89 @@ extension MSRPApplication {
     failureInformation: MSRPFailure?,
     isNew: Bool,
     eventSource: ParticipantEventSource
-  ) async throws {}
+  ) async throws {
+    try await apply(for: contextIdentifier) { participant in
+      guard participant.port != port else { return }
+      guard !_shouldPruneTalkerDeclaration(
+        port: participant.port,
+        streamID: streamID,
+        declarationType: declarationType,
+        dataFrameParameters: dataFrameParameters,
+        tSpec: tSpec,
+        priorityAndRank: priorityAndRank,
+        accumulatedLatency: accumulatedLatency,
+        failureInformation: failureInformation,
+        isNew: isNew,
+        eventSource: eventSource
+      ) else {
+        return
+      }
+
+      let accumulatedLatency = accumulatedLatency + port.latency
+
+      if declarationType == .talkerAdvertise {
+        if let tsnFailureCode = _canPropagateTalkerAdvertise(
+          port: participant.port,
+          streamID: streamID,
+          declarationType: declarationType,
+          dataFrameParameters: dataFrameParameters,
+          tSpec: tSpec,
+          priorityAndRank: priorityAndRank,
+          accumulatedLatency: accumulatedLatency,
+          isNew: isNew,
+          eventSource: eventSource
+        ) {
+          let talkerFailed = MSRPTalkerFailedValue(
+            streamID: streamID,
+            dataFrameParameters: dataFrameParameters,
+            tSpec: tSpec,
+            priorityAndRank: priorityAndRank,
+            accumulatedLatency: accumulatedLatency,
+            systemID: port.systemID,
+            failureCode: tsnFailureCode
+          )
+          try await participant.join(
+            attributeType: MSRPAttributeType.talkerFailed.rawValue,
+            attributeValue: talkerFailed,
+            isNew: true,
+            eventSource: .map
+          )
+        } else {
+          let talkerAdvertise = MSRPTalkerAdvertiseValue(
+            streamID: streamID,
+            dataFrameParameters: dataFrameParameters,
+            tSpec: tSpec,
+            priorityAndRank: priorityAndRank,
+            accumulatedLatency: accumulatedLatency
+          )
+          try await participant.join(
+            attributeType: MSRPAttributeType.talkerFailed.rawValue,
+            attributeValue: talkerAdvertise,
+            isNew: false,
+            eventSource: .map
+          )
+        }
+      } else {
+        precondition(declarationType == .talkerFailed)
+        let talkerFailed = MSRPTalkerFailedValue(
+          streamID: streamID,
+          dataFrameParameters: dataFrameParameters,
+          tSpec: tSpec,
+          priorityAndRank: priorityAndRank,
+          accumulatedLatency: accumulatedLatency,
+          systemID: failureInformation!.systemID,
+          failureCode: failureInformation!.failureCode
+        )
+        try await participant.join(
+          attributeType: MSRPAttributeType.talkerFailed.rawValue,
+          attributeValue: talkerFailed,
+          isNew: false,
+          eventSource: .map
+        )
+      }
+    }
+    throw MRPError.doNotPropagateAttribute // advise caller we have performed MAP ourselves
+  }
 
   // On receipt of a MAD_Join.indication service primitive (10.2, 10.3) with an
   // attribute_type of Listener (35.2.2.4), the MSRP application shall issue a
@@ -343,6 +505,9 @@ extension MSRPApplication {
     isNew: Bool,
     eventSource: ParticipantEventSource
   ) async throws {
+    guard eventSource != .map
+    else { throw MRPError.doNotPropagateAttribute } // don't recursively invoke MAP
+
     guard let attributeType = MSRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }
 
@@ -393,7 +558,11 @@ extension MSRPApplication {
         eventSource: eventSource
       )
     case .domain:
-      break
+      let domain = (attributeValue as! MSRPDomainValue)
+      withPortState(port: port) {
+        $0.srpDomainBoundaryPort[domain.srClassID] = true
+      }
+      throw MRPError.doNotPropagateAttribute
     }
   }
 
@@ -426,6 +595,9 @@ extension MSRPApplication {
     attributeValue: some Value,
     eventSource: ParticipantEventSource
   ) async throws {
+    guard eventSource != .map
+    else { throw MRPError.doNotPropagateAttribute } // don't recursively invoke MAP
+
     guard let attributeType = MSRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }
 
@@ -452,7 +624,11 @@ extension MSRPApplication {
         eventSource: eventSource
       )
     case .domain:
-      break
+      let domain = (attributeValue as! MSRPDomainValue)
+      withPortState(port: port) {
+        $0.srpDomainBoundaryPort[domain.srClassID] = false
+      }
+      throw MRPError.doNotPropagateAttribute
     }
   }
 }

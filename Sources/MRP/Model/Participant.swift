@@ -52,7 +52,7 @@ public enum ParticipantEventSource: Sendable {
   // event source was a remote peer
   case peer
   // event source was explicit administrative control (e.g. TSN endpoint)
-  case administrativeControl
+  case `internal`
   // event source was transitive via MAP function
   case map
   // event source was a preApplicantEventHandler/postApplicantEventHandler hook
@@ -222,6 +222,9 @@ public final actor Participant<A: Application>: Equatable, Hashable {
             attributeSubtypes = nil
           }
 
+          // here the first value needs to be the actual value from the attribute value state
+          // so that information that cannot be recovered from the index can be correclty recovered
+
           return VectorAttribute<AnyValue>(
             leaveAllEvent: leaveAll ? .LeaveAll : .NullLeaveAllEvent,
             firstValue: attributeEvents[firstIndex].attributeValue.value,
@@ -233,7 +236,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
       if vectorAttributes.count == 0, leaveAll {
         let vectorAttribute = try VectorAttribute<AnyValue>(
           leaveAllEvent: .LeaveAll,
-          firstValue: AnyValue(application.makeValue(for: event.key)),
+          firstValue: AnyValue(application.makeValue(for: event.key, at: 0)),
           attributeEvents: [],
           applicationEvents: nil
         )
@@ -348,13 +351,14 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     )
   }
 
-  // TODO: use a more efficient representation such as a bitmask
   private func _findAttributeValueState(
     attributeType: AttributeType,
     attributeSubtype: AttributeSubtype?,
     index: UInt64
   ) throws -> _AttributeValueState<A> {
     guard let application else { throw MRPError.internalError }
+    // note: for MSRP, the index only captures the streamID, however this is sufficient for
+    // comparison because the equality operator will only compare the streamID propery.
     let absoluteValue = try AnyValue(application.makeValue(for: attributeType, at: index))
 
     if let attributeValue = _attributes[attributeType]?.first(where: {
@@ -465,8 +469,8 @@ public final actor Participant<A: Application>: Equatable, Hashable {
   // generated when the Port Role changes from either Root Port or Alternate
   // Port to Designated Port.
   func flush() async throws {
-    try await _apply(event: .Flush, eventSource: .administrativeControl)
-    try await _handleLeaveAll(event: .Flush, eventSource: .administrativeControl)
+    try await _apply(event: .Flush, eventSource: .internal)
+    try await _handleLeaveAll(event: .Flush, eventSource: .internal)
   }
 
   // A Re-declare! event signals to the Applicant and Registrar state machines
@@ -479,7 +483,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
   // instance, this event is generated when the Port Role changes from
   // Designated Port to either Root Port or Alternate Port.
   func redeclare() async throws {
-    try await _apply(event: .ReDeclare, eventSource: .administrativeControl)
+    try await _apply(event: .ReDeclare, eventSource: .internal)
   }
 
   func join(
@@ -487,7 +491,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     attributeValue: some Value,
     attributeSubtype: AttributeSubtype? = nil,
     isNew: Bool,
-    eventSource: ParticipantEventSource
+    eventSource: ParticipantEventSource = .internal
   ) async throws {
     let attribute = try _findAttributeValueState(
       attributeType: attributeType,
@@ -497,7 +501,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     try await _handle(
       attributeEvent: isNew ? .New : .JoinMt,
       with: attribute,
-      eventSource: .administrativeControl
+      eventSource: eventSource
     )
   }
 
@@ -505,7 +509,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     attributeType: AttributeType,
     attributeValue: some Value,
     attributeSubtype: AttributeSubtype? = nil,
-    eventSource: ParticipantEventSource
+    eventSource: ParticipantEventSource = .internal
   ) async throws {
     let attribute = try _findAttributeValueState(
       attributeType: attributeType,

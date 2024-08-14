@@ -93,35 +93,6 @@ enum MSRPProtocolVersion: ProtocolVersion {
   case v1 = 1
 }
 
-public struct MSRPPortState<P: Port>: Sendable {
-  let mediaType: MSRPPortMediaType
-  var enabled: Bool
-  var tcMaxLatency: [MSRPTrafficClass: MSRPPortLatency]
-  let streamEpoch: UInt32
-  var srpDomainBoundaryPort: [SRclassID: Bool]
-  let neighborProtocolVersion: MSRPProtocolVersion
-  let talkerPruning: Bool
-  let talkerVlanPruning: Bool
-
-  var streamAge: UInt32 {
-    guard let time = try? P.timeSinceEpoch() else {
-      return 0
-    }
-    return time - streamEpoch
-  }
-
-  init(msrp: MSRPApplication<P>, port: P) throws {
-    mediaType = .accessControlPort
-    enabled = port.isEnabled
-    tcMaxLatency = [:]
-    streamEpoch = try P.timeSinceEpoch()
-    srpDomainBoundaryPort = .init(uniqueKeysWithValues: SRclassID.allCases.map { ($0, false) })
-    neighborProtocolVersion = .v0
-    talkerPruning = msrp._talkerPruning
-    talkerVlanPruning = msrp._talkerPruning
-  }
-}
-
 public enum TSNFailureCode: UInt8, SerDes, Equatable {
   case insufficientBandwidth = 1
   case insufficientBridgeResources = 2
