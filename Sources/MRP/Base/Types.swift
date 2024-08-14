@@ -46,6 +46,18 @@ struct OperationalStatistics {
 
 public typealias EUI48 = (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8)
 
+extension UInt64 {
+  init(eui48: EUI48) {
+    self =
+      UInt64(eui48.0 << 40) |
+      UInt64(eui48.1 << 32) |
+      UInt64(eui48.2 << 24) |
+      UInt64(eui48.3 << 16) |
+      UInt64(eui48.4 << 8) |
+      UInt64(eui48.5 << 0)
+  }
+}
+
 // used by MVRP and MMRP (forwarded by bridges that do not support application protocol)
 @_spi(SwiftMRPPrivate)
 public let CustomerBridgeMRPGroupAddress: EUI48 = (0x01, 0x80, 0xC2, 0x00, 0x00, 0x21)

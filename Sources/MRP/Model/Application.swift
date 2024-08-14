@@ -152,6 +152,7 @@ extension Application {
 
   func join(
     attributeType: AttributeType,
+    attributeSubtype: AttributeSubtype? = nil,
     attributeValue: some Value,
     isNew: Bool,
     for contextIdentifier: MAPContextIdentifier
@@ -159,6 +160,7 @@ extension Application {
     try await apply(for: contextIdentifier) { participant in
       try await participant.join(
         attributeType: attributeType,
+        attributeSubtype: attributeSubtype,
         attributeValue: attributeValue,
         isNew: isNew
       )
@@ -167,12 +169,14 @@ extension Application {
 
   func leave(
     attributeType: AttributeType,
+    attributeSubtype: AttributeSubtype? = nil,
     attributeValue: some Value,
     for contextIdentifier: MAPContextIdentifier
   ) async throws {
     try await apply(for: contextIdentifier) { participant in
       try await participant.leave(
         attributeType: attributeType,
+        attributeSubtype: attributeSubtype,
         attributeValue: attributeValue
       )
     }

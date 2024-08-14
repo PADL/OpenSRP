@@ -489,14 +489,14 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     attributeType: AttributeType,
     attributeSubtype: AttributeSubtype? = nil,
     index: UInt64
-  ) -> (any Value, AttributeSubtype?)? {
+  ) -> (AttributeSubtype?, any Value)? {
     let attributeValueState = try? _findAttributeValueState(
       attributeType: attributeType,
       attributeSubtype: attributeSubtype,
       index: index
     )
     guard let attributeValueState, attributeValueState.registrarState == .IN else { return nil }
-    return (attributeValueState.value.value, attributeValueState.attributeSubtype)
+    return (attributeValueState.attributeSubtype, attributeValueState.value.value)
   }
 
   // A Flush! event signals to the Registrar state machine that there is a
@@ -528,8 +528,8 @@ public final actor Participant<A: Application>: Equatable, Hashable {
 
   func join(
     attributeType: AttributeType,
-    attributeValue: some Value,
     attributeSubtype: AttributeSubtype? = nil,
+    attributeValue: some Value,
     isNew: Bool,
     eventSource: ParticipantEventSource = .internal
   ) async throws {
@@ -547,8 +547,8 @@ public final actor Participant<A: Application>: Equatable, Hashable {
 
   func leave(
     attributeType: AttributeType,
-    attributeValue: some Value,
     attributeSubtype: AttributeSubtype? = nil,
+    attributeValue: some Value,
     eventSource: ParticipantEventSource = .internal
   ) async throws {
     let attribute = try _findAttributeValueState(

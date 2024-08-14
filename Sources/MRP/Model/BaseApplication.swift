@@ -211,8 +211,8 @@ extension BaseApplication {
       guard participant.port != port else { return }
       try await participant.join(
         attributeType: attributeType,
-        attributeValue: attributeValue,
         attributeSubtype: attributeSubtype,
+        attributeValue: attributeValue,
         isNew: isNew,
         eventSource: .map
       )
@@ -268,8 +268,8 @@ extension BaseApplication {
       guard participant.port != port else { return }
       try await participant.leave(
         attributeType: attributeType,
-        attributeValue: attributeValue,
         attributeSubtype: attributeSubtype,
+        attributeValue: attributeValue,
         eventSource: .map
       )
     }

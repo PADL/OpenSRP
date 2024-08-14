@@ -23,12 +23,7 @@ protocol MSRPAwareBridge<P>: Bridge where P: Port {}
 
 private extension Port {
   var systemID: UInt64 {
-    UInt64(macAddress.0 << 40) |
-      UInt64(macAddress.1 << 32) |
-      UInt64(macAddress.2 << 24) |
-      UInt64(macAddress.3 << 16) |
-      UInt64(macAddress.4 << 8) |
-      UInt64(macAddress.5 << 0)
+    UInt64(eui48: macAddress)
   }
 }
 
@@ -96,6 +91,7 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
   let _srPVid: VLAN
   let _maxSRClasses: SRclassID
   var _ports = ManagedCriticalState<[P.ID: MSRPPortState<P>]>([:])
+  let _mmrp: MMRPApplication<P>?
 
   public init(
     controller: MRPController<P>,
@@ -112,6 +108,7 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     _latencyMaxFrameSize = latencyMaxFrameSize
     _srPVid = srPVid
     _maxSRClasses = maxSRClasses
+    _mmrp = try? await controller.application(for: MMRPEtherType)
     try await controller.register(application: self)
   }
 
@@ -343,25 +340,38 @@ extension MSRPApplication {
 
   private func _shouldPruneTalkerDeclaration(
     port: P,
+    portState: MSRPPortState<P>,
     streamID: MSRPStreamID,
     declarationType: MSRPDeclarationType,
     dataFrameParameters: MSRPDataFrameParameters,
     tSpec: MSRPTSpec,
     priorityAndRank: MSRPPriorityAndRank,
     accumulatedLatency: UInt32,
-    failureInformation: MSRPFailure?,
     isNew: Bool,
     eventSource: ParticipantEventSource
-  ) -> Bool {
-    //  if talkerPruning (overrides talkerPruningPerPort) is enabled, check MAC table (FDB?) before
-    //  forwarding (just do for multicast?)
-    //  if talkerVlanPruning then check vlans too
+  ) async -> Bool {
+    if _talkerPruning || portState.talkerPruning {
+      // FIXME: we need to examine unicast addresses too
+      if _isMulticast(macAddress: dataFrameParameters.destinationAddress),
+         let mmrpParticipant = try? _mmrp?.findParticipant(port: port),
+         await mmrpParticipant.findAttribute(
+           attributeType: MMRPAttributeType.mac.rawValue,
+           index: UInt64(eui48: dataFrameParameters.destinationAddress)
+         ) == nil
+      {
+        return true
+      }
+    }
+    if portState.talkerVlanPruning {
+      guard port.vlans.contains(dataFrameParameters.vlanIdentifier) else { return true }
+    }
 
-    false
+    return false
   }
 
   private func _canPropagateTalkerAdvertise(
     port: P,
+    portState: MSRPPortState<P>,
     streamID: MSRPStreamID,
     declarationType: MSRPDeclarationType,
     dataFrameParameters: MSRPDataFrameParameters,
@@ -398,17 +408,24 @@ extension MSRPApplication {
     isNew: Bool,
     eventSource: ParticipantEventSource
   ) async throws {
+    var portState: MSRPPortState<P>!
+
+    withPortState(port: port) {
+      portState = $0
+    }
+
     try await apply(for: contextIdentifier) { participant in
       guard participant.port != port else { return }
-      guard !_shouldPruneTalkerDeclaration(
+
+      guard await !_shouldPruneTalkerDeclaration(
         port: participant.port,
+        portState: portState,
         streamID: streamID,
         declarationType: declarationType,
         dataFrameParameters: dataFrameParameters,
         tSpec: tSpec,
         priorityAndRank: priorityAndRank,
         accumulatedLatency: accumulatedLatency,
-        failureInformation: failureInformation,
         isNew: isNew,
         eventSource: eventSource
       ) else {
@@ -420,6 +437,7 @@ extension MSRPApplication {
       if declarationType == .talkerAdvertise {
         if let tsnFailureCode = _canPropagateTalkerAdvertise(
           port: participant.port,
+          portState: portState,
           streamID: streamID,
           declarationType: declarationType,
           dataFrameParameters: dataFrameParameters,
@@ -503,7 +521,7 @@ extension MSRPApplication {
     return .listenerReadyFailed
   }
 
-  private func _isTalkerRegistered(
+  private func _findTalkerRegistration(
     for streamID: MSRPStreamID,
     participant: Participant<MSRPApplication>
   ) async -> Bool? {
@@ -536,7 +554,7 @@ extension MSRPApplication {
     eventSource: ParticipantEventSource
   ) async throws {
     try await apply(for: contextIdentifier) { participant in
-      if participant.port != port, let talkerRegistration = await _isTalkerRegistered(
+      if participant.port != port, let talkerRegistration = await _findTalkerRegistration(
         for: streamID,
         participant: participant
       ) {
@@ -549,7 +567,7 @@ extension MSRPApplication {
               index: streamID
             )
           {
-            try? MSRPDeclarationType(attributeSubtype: portDeclaration.1)
+            try? MSRPDeclarationType(attributeSubtype: portDeclaration.0)
           } else {
             nil
           }
@@ -564,8 +582,8 @@ extension MSRPApplication {
 
         try await participant.join(
           attributeType: MSRPAttributeType.listener.rawValue,
-          attributeValue: MSRPListenerValue(streamID: streamID),
           attributeSubtype: mergedDeclarationType.attributeSubtype?.rawValue,
+          attributeValue: MSRPListenerValue(streamID: streamID),
           isNew: isNew,
           eventSource: .map
         )
@@ -657,7 +675,30 @@ extension MSRPApplication {
     port: P,
     streamID: MSRPStreamID,
     eventSource: ParticipantEventSource
-  ) async throws {}
+  ) async throws {
+    // In the case where there is a Talker attribute and Listener attribute(s)
+    // registered within a Bridge for a StreamID and a MAD_Leave.request is
+    // received for the Talker attribute, the Bridge shall act as a proxy for the
+    // Listener(s) and automatically generate a MAD_Leave.request back toward the
+    // Talker for those Listener attributes. This is a special case of the
+    // behavior described in 35.2.4.4.1.
+    guard let talkerParticipant = try? findParticipant(port: port) else { return }
+    try await apply { participant in
+      guard let listenerAttribute = await participant.findAttribute(
+        attributeType: MSRPAttributeType.listener.rawValue,
+        index: streamID
+      ) else {
+        return
+      }
+      try await talkerParticipant.leave(
+        attributeType: MSRPAttributeType.listener.rawValue,
+        attributeSubtype: listenerAttribute.0,
+        attributeValue: listenerAttribute.1,
+        eventSource: .map
+      )
+    }
+    // FIXME: check normal propagation should still occur
+  }
 
   // On receipt of a MAD_Leave.indication service primitive (10.2, 10.3) with
   // an attribute_type of Listener (35.2.2.4), the MSRP application shall issue
@@ -666,8 +707,15 @@ extension MSRPApplication {
     contextIdentifier: MAPContextIdentifier,
     port: P,
     streamID: MSRPStreamID,
+    declarationType: MSRPDeclarationType,
     eventSource: ParticipantEventSource
-  ) async throws {}
+  ) async throws {
+    // On receipt of a MAD_Leave.indication for a Listener Declaration, if the
+    // StreamID of the Declaration matches a Stream that the Talker is
+    // transmitting, then the Talker shall stop the transmission for this
+    // Stream, if it is transmitting.
+    // FIXME: check normal propagation should still occur
+  }
 
   func onLeaveIndication(
     contextIdentifier: MAPContextIdentifier,
@@ -699,10 +747,13 @@ extension MSRPApplication {
         eventSource: eventSource
       )
     case .listener:
+      guard let declarationType = try? MSRPDeclarationType(attributeSubtype: attributeSubtype)
+      else { return }
       try await _onDeregisterAttachIndication(
         contextIdentifier: contextIdentifier,
         port: port,
         streamID: (attributeValue as! MSRPListenerValue).streamID,
+        declarationType: declarationType,
         eventSource: eventSource
       )
     case .domain:
