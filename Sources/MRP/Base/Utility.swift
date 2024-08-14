@@ -78,6 +78,8 @@ public extension Sequence {
   }
 }
 
-func ceil(_ numerator: Int, _ demominator: Int) -> Int {
-  (numerator + (demominator - 1)) / demominator
+extension Int {
+  static func ceil(_ numerator: Self, _ demominator: Self) -> Self {
+    (numerator + (demominator - 1)) / demominator
+  }
 }

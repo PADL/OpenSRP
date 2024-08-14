@@ -80,12 +80,12 @@ public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     }
   }
 
-  public func makeValue(for attributeType: AttributeType, at index: UInt64) throws -> any Value {
+  public func makeNullValue(for attributeType: AttributeType) throws -> any Value {
     guard let attributeType = MVRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }
     switch attributeType {
     case .vid:
-      return try VLAN(index: index)
+      return try VLAN(index: 0)
     }
   }
 

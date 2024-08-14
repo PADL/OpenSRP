@@ -20,10 +20,14 @@ import Logging
 public let MSRPEtherType: UInt16 = 0x22EA
 
 protocol MSRPAwareBridge<P>: Bridge where P: Port {
-  func updateCBS(idleSlope: Int, sendSlope: Int, hiCredit: Int, loCredit: Int) async throws
+  func updateCBS(
+    queueID: Int,
+    idleSlope: Int,
+    sendSlope: Int,
+    hiCredit: Int,
+    loCredit: Int
+  ) async throws
 }
-
-extension MSRPAwareBridge {}
 
 private extension Port {
   var systemID: UInt64 {
@@ -166,18 +170,18 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     }
   }
 
-  public func makeValue(for attributeType: AttributeType, at index: UInt64) throws -> any Value {
+  public func makeNullValue(for attributeType: AttributeType) throws -> any Value {
     guard let attributeType = MSRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }
     switch attributeType {
     case .talkerAdvertise:
-      return try MSRPTalkerAdvertiseValue(index: index)
+      return try MSRPTalkerAdvertiseValue(index: 0)
     case .talkerFailed:
-      return try MSRPTalkerFailedValue(index: index)
+      return try MSRPTalkerFailedValue(index: 0)
     case .listener:
-      return try MSRPListenerValue(index: index)
+      return try MSRPListenerValue(index: 0)
     case .domain:
-      return try MSRPDomainValue(index: index)
+      return try MSRPDomainValue(index: 0)
     }
   }
 
@@ -371,7 +375,7 @@ extension MSRPApplication {
          let mmrpParticipant = try? _mmrp?.findParticipant(port: port),
          await mmrpParticipant.findAttribute(
            attributeType: MMRPAttributeType.mac.rawValue,
-           index: UInt64(eui48: dataFrameParameters.destinationAddress)
+           matching: .matchEqual(MMRPMACValue(macAddress: dataFrameParameters.destinationAddress))
          ) == nil
       {
         return true
@@ -548,12 +552,12 @@ extension MSRPApplication {
   ) async -> Bool? {
     if let _ = await participant.findAttribute(
       attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
-      index: streamID
+      matching: .matchIndex(MSRPTalkerAdvertiseValue(streamID: streamID))
     ) {
       true
     } else if let _ = await participant.findAttribute(
       attributeType: MSRPAttributeType.talkerFailed.rawValue,
-      index: streamID
+      matching: .matchIndex(MSRPTalkerFailedValue(streamID: streamID))
     ) {
       false
     } else {
@@ -585,7 +589,7 @@ extension MSRPApplication {
           let portDeclarationType: MSRPDeclarationType? = if let portDeclaration = await participant
             .findAttribute(
               attributeType: declarationType.attributeType.rawValue,
-              index: streamID
+              matching: .matchAnyIndex(streamID) // this will match any kind of talker attribute
             )
           {
             try? MSRPDeclarationType(attributeSubtype: portDeclaration.0)
@@ -707,7 +711,7 @@ extension MSRPApplication {
     try await apply { participant in
       guard let listenerAttribute = await participant.findAttribute(
         attributeType: MSRPAttributeType.listener.rawValue,
-        index: streamID
+        matching: .matchEqual(MSRPListenerValue(streamID: streamID))
       ) else {
         return
       }

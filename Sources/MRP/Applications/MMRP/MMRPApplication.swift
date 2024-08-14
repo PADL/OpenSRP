@@ -83,20 +83,20 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     else { throw MRPError.unknownAttributeType }
     switch attributeType {
     case .mac:
-      return try MMRPMACVector(deserializationContext: &deserializationContext)
+      return try MMRPMACValue(deserializationContext: &deserializationContext)
     case .serviceRequirement:
       return try MMRPServiceRequirementValue(deserializationContext: &deserializationContext)
     }
   }
 
-  public func makeValue(for attributeType: AttributeType, at index: UInt64) throws -> any Value {
+  public func makeNullValue(for attributeType: AttributeType) throws -> any Value {
     guard let attributeType = MMRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }
     switch attributeType {
     case .mac:
-      return try MMRPMACVector(index: index)
+      return MMRPMACValue(index: 0)
     case .serviceRequirement:
-      return try MMRPServiceRequirementValue(index: index)
+      return try MMRPServiceRequirementValue(index: 0)
     }
   }
 
@@ -118,7 +118,7 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationDel
   public func register(macAddress: EUI48) async throws {
     try await join(
       attributeType: MMRPAttributeType.mac.rawValue,
-      attributeValue: MMRPMACVector(macAddress: macAddress),
+      attributeValue: MMRPMACValue(macAddress: macAddress),
       isNew: false,
       for: MAPBaseSpanningTreeContext
     )
@@ -127,7 +127,7 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationDel
   public func deregister(macAddress: EUI48) async throws {
     try await leave(
       attributeType: MMRPAttributeType.mac.rawValue,
-      attributeValue: MMRPMACVector(macAddress: macAddress),
+      attributeValue: MMRPMACValue(macAddress: macAddress),
       for: MAPBaseSpanningTreeContext
     )
   }
@@ -195,7 +195,7 @@ extension MMRPApplication {
     else { throw MRPError.unknownAttributeType }
     switch attributeType {
     case .mac:
-      let macAddress = (attributeValue as! MMRPMACVector).macAddress
+      let macAddress = (attributeValue as! MMRPMACValue).macAddress
       guard _isMulticast(macAddress: macAddress) else { throw MRPError.invalidAttributeValue }
       _logger
         .info(
@@ -234,7 +234,7 @@ extension MMRPApplication {
     else { throw MRPError.unknownAttributeType }
     switch attributeType {
     case .mac:
-      let macAddress = (attributeValue as! MMRPMACVector).macAddress
+      let macAddress = (attributeValue as! MMRPMACValue).macAddress
       guard _isMulticast(macAddress: macAddress) else { throw MRPError.invalidAttributeValue }
       _logger
         .info(

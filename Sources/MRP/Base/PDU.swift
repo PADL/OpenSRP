@@ -266,7 +266,7 @@ struct VectorAttribute<V: Value>: Sendable, Equatable {
       from: &deserializationContext
     ))
 
-    let numberOfValueOctets = ceil(Int(vectorHeader.numberOfValues), 3)
+    let numberOfValueOctets = Int.ceil(Int(vectorHeader.numberOfValues), 3)
     let threePacketEvents = try Array(
       deserializationContext
         .deserialize(count: numberOfValueOctets)
@@ -275,7 +275,7 @@ struct VectorAttribute<V: Value>: Sendable, Equatable {
     let fourPackedEvents: [UInt8]?
 
     if application.hasAttributeSubtype(for: attributeType) {
-      let numberOfValueOctets = ceil(Int(vectorHeader.numberOfValues), 4)
+      let numberOfValueOctets = Int.ceil(Int(vectorHeader.numberOfValues), 4)
       fourPackedEvents = try Array(deserializationContext.deserialize(count: numberOfValueOctets))
     } else {
       fourPackedEvents = nil

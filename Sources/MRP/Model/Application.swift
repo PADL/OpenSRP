@@ -66,7 +66,7 @@ public protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
   func hasAttributeSubtype(for: AttributeType) -> Bool
   func administrativeControl(for: AttributeType) throws -> AdministrativeControl
 
-  func makeValue(for attributeType: AttributeType, at index: UInt64) throws -> any Value
+  func makeNullValue(for attributeType: AttributeType) throws -> any Value
   func deserialize(
     attributeOfType attributeType: AttributeType,
     from deserializationContext: inout DeserializationContext

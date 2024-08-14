@@ -76,10 +76,6 @@ private extension MSRPTalkerValue {
 }
 
 struct MSRPTalkerAdvertiseValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equatable {
-  static func == (lhs: Self, rhs: Self) -> Bool {
-    lhs.streamID == rhs.streamID
-  }
-
   let streamID: UInt64
   let dataFrameParameters: MSRPDataFrameParameters
   let tSpec: MSRPTSpec
@@ -134,10 +130,6 @@ struct MSRPTalkerAdvertiseValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equ
 }
 
 struct MSRPTalkerFailedValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equatable {
-  static func == (lhs: Self, rhs: Self) -> Bool {
-    lhs.streamID == rhs.streamID
-  }
-
   let streamID: UInt64
   let dataFrameParameters: MSRPDataFrameParameters
   let tSpec: MSRPTSpec
