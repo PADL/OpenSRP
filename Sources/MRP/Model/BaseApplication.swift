@@ -24,13 +24,13 @@ protocol BaseApplication: Application where P == P {
   var _participants: ManagedCriticalState<MAPParticipantDictionary> { get }
 }
 
-protocol BaseApplicationContextDelegate<P>: BaseApplication {
+protocol BaseApplicationContextObserver<P>: BaseApplication {
   func onContextAdded(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
   func onContextUpdated(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
   func onContextRemoved(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
 }
 
-protocol BaseApplicationEventDelegate<P>: BaseApplication {
+protocol BaseApplicationEventObserver<P>: BaseApplication {
   func onJoinIndication(
     contextIdentifier: MAPContextIdentifier,
     port: P,
@@ -129,8 +129,8 @@ extension BaseApplication {
   ) async throws {
     guard nonBaseContextsSupported || contextIdentifier == MAPBaseSpanningTreeContext
     else { return }
-    guard let delegate = self as? any BaseApplicationContextDelegate<P> else { return }
-    try delegate.onContextAdded(contextIdentifier: contextIdentifier, with: context)
+    guard let observer = self as? any BaseApplicationContextObserver<P> else { return }
+    try observer.onContextAdded(contextIdentifier: contextIdentifier, with: context)
     for port in context {
       guard (try? findParticipant(for: contextIdentifier, port: port)) == nil
       else {
@@ -153,8 +153,8 @@ extension BaseApplication {
   ) throws {
     guard nonBaseContextsSupported || contextIdentifier == MAPBaseSpanningTreeContext
     else { return }
-    guard let delegate = self as? any BaseApplicationContextDelegate<P> else { return }
-    try delegate.onContextUpdated(contextIdentifier: contextIdentifier, with: context)
+    guard let observer = self as? any BaseApplicationContextObserver<P> else { return }
+    try observer.onContextUpdated(contextIdentifier: contextIdentifier, with: context)
     for port in context {
       let participant = try findParticipant(
         for: contextIdentifier,
@@ -170,8 +170,8 @@ extension BaseApplication {
   ) throws {
     guard nonBaseContextsSupported || contextIdentifier == MAPBaseSpanningTreeContext
     else { return }
-    guard let delegate = self as? any BaseApplicationContextDelegate<P> else { return }
-    try delegate.onContextRemoved(contextIdentifier: contextIdentifier, with: context)
+    guard let observer = self as? any BaseApplicationContextObserver<P> else { return }
+    try observer.onContextRemoved(contextIdentifier: contextIdentifier, with: context)
     for port in context {
       let participant = try findParticipant(
         for: contextIdentifier,
@@ -232,8 +232,8 @@ extension BaseApplication {
   ) async throws {
     precondition(!(attributeValue is AnyValue))
     do {
-      if let delegate = self as? any BaseApplicationEventDelegate<P> {
-        try await delegate.onJoinIndication(
+      if let observer = self as? any BaseApplicationEventObserver<P> {
+        try await observer.onJoinIndication(
           contextIdentifier: contextIdentifier,
           port: port,
           attributeType: attributeType,
@@ -287,8 +287,8 @@ extension BaseApplication {
   ) async throws {
     precondition(!(attributeValue is AnyValue))
     do {
-      if let delegate = self as? any BaseApplicationEventDelegate<P> {
-        try await delegate.onLeaveIndication(
+      if let observer = self as? any BaseApplicationEventObserver<P> {
+        try await observer.onLeaveIndication(
           contextIdentifier: contextIdentifier,
           port: port,
           attributeType: attributeType,

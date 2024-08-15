@@ -79,7 +79,7 @@ public struct MSRPPortState<P: Port>: Sendable {
   }
 }
 
-public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationEventDelegate,
+public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationEventObserver,
   CustomStringConvertible,
   @unchecked Sendable where P == P
 {

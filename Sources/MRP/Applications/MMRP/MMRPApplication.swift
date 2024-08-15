@@ -33,7 +33,7 @@ protocol MMRPAwareBridge<P>: Bridge where P: Port {
   ) async throws
 }
 
-public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationEventDelegate,
+public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationEventObserver,
   CustomStringConvertible,
   Sendable where P == P
 {

@@ -24,7 +24,7 @@ protocol MVRPAwareBridge<P>: Bridge where P: Port {
   func deregister(vlan: VLAN, from ports: Set<P>) async throws
 }
 
-public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationEventDelegate,
+public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationEventObserver,
   CustomStringConvertible,
   Sendable where P == P
 {
