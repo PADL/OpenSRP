@@ -112,7 +112,7 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
   let _maxFanInPorts: Int
   let _latencyMaxFrameSize: UInt16
   let _srPVid: VLAN
-  let _maxSRClasses: SRclassID
+  let _maxSRClass: SRclassID
   var _ports = ManagedCriticalState<[P.ID: MSRPPortState<P>]>([:])
   let _mmrp: MMRPApplication<P>?
 
@@ -122,7 +122,7 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     maxFanInPorts: Int = 0,
     latencyMaxFrameSize: UInt16 = 2000,
     srPVid: VLAN = VLAN(id: 2),
-    maxSRClasses: SRclassID = .B
+    maxSRClass: SRclassID = .B
   ) async throws {
     _controller = Weak(controller)
     _logger = controller.logger
@@ -130,7 +130,7 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     _maxFanInPorts = maxFanInPorts
     _latencyMaxFrameSize = latencyMaxFrameSize
     _srPVid = srPVid
-    _maxSRClasses = maxSRClasses
+    _maxSRClass = maxSRClass
     _mmrp = try? await controller.application(for: MMRPEtherType)
     try await controller.register(application: self)
   }
@@ -392,7 +392,13 @@ extension MSRPApplication {
     return false
   }
 
-  private func _canPropagateTalkerAdvertise(
+  private func _checkAvailableBandwidth() throws {}
+
+  private func _verifyMaxFanInPorts() throws {}
+
+  private func _rankStream() throws {}
+
+  private func _bridgeTalker(
     port: P,
     portState: MSRPPortState<P>,
     streamID: MSRPStreamID,
@@ -403,20 +409,19 @@ extension MSRPApplication {
     accumulatedLatency: UInt32,
     isNew: Bool,
     eventSource: ParticipantEventSource
-  ) -> TSNFailureCode? {
-    // analyse available bandwidth to determine if outbound port has enough resources
-    // verify msrpMaxFanInports
-
-    guard let srClassID = portState
-      .reverseMapSrClassPriority(priority: priorityAndRank.dataFramePriority),
-      portState.srpDomainBoundaryPort[srClassID] == false
-    else {
-      return .egressPortIsNotAvbCapable
+  ) async throws {
+    do {
+      guard let srClassID = portState
+        .reverseMapSrClassPriority(priority: priorityAndRank.dataFramePriority),
+        portState.srpDomainBoundaryPort[srClassID] == false
+      else {
+        throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
+      }
+    } catch let error as MSRPFailure {
+      throw error
+    } catch {
+      throw MSRPFailure(systemID: port.systemID, failureCode: .outOfMSRPResources)
     }
-
-    // stream rank (make streams comparable?) by comparing Rank, then streamAge, then streamID
-    // determine totalFrameSize for a port
-    return nil
   }
 
   // On receipt of a MAD_Join.indication service primitive (10.2, 10.3) with an
@@ -464,34 +469,19 @@ extension MSRPApplication {
       let accumulatedLatency = accumulatedLatency + UInt32(port.latency)
 
       if declarationType == .talkerAdvertise {
-        if let tsnFailureCode = _canPropagateTalkerAdvertise(
-          port: participant.port,
-          portState: portState,
-          streamID: streamID,
-          declarationType: declarationType,
-          dataFrameParameters: dataFrameParameters,
-          tSpec: tSpec,
-          priorityAndRank: priorityAndRank,
-          accumulatedLatency: accumulatedLatency,
-          isNew: isNew,
-          eventSource: eventSource
-        ) {
-          let talkerFailed = MSRPTalkerFailedValue(
+        do {
+          try await _bridgeTalker(
+            port: participant.port,
+            portState: portState,
             streamID: streamID,
+            declarationType: declarationType,
             dataFrameParameters: dataFrameParameters,
             tSpec: tSpec,
             priorityAndRank: priorityAndRank,
             accumulatedLatency: accumulatedLatency,
-            systemID: port.systemID,
-            failureCode: tsnFailureCode
+            isNew: isNew,
+            eventSource: eventSource
           )
-          try await participant.join(
-            attributeType: MSRPAttributeType.talkerFailed.rawValue,
-            attributeValue: talkerFailed,
-            isNew: true,
-            eventSource: .map
-          )
-        } else {
           let talkerAdvertise = MSRPTalkerAdvertiseValue(
             streamID: streamID,
             dataFrameParameters: dataFrameParameters,
@@ -503,6 +493,22 @@ extension MSRPApplication {
             attributeType: MSRPAttributeType.talkerFailed.rawValue,
             attributeValue: talkerAdvertise,
             isNew: false,
+            eventSource: .map
+          )
+        } catch let error as MSRPFailure {
+          let talkerFailed = MSRPTalkerFailedValue(
+            streamID: streamID,
+            dataFrameParameters: dataFrameParameters,
+            tSpec: tSpec,
+            priorityAndRank: priorityAndRank,
+            accumulatedLatency: accumulatedLatency,
+            systemID: error.systemID,
+            failureCode: error.failureCode
+          )
+          try await participant.join(
+            attributeType: MSRPAttributeType.talkerFailed.rawValue,
+            attributeValue: talkerFailed,
+            isNew: true,
             eventSource: .map
           )
         }
@@ -553,17 +559,17 @@ extension MSRPApplication {
   private func _findTalkerRegistration(
     for streamID: MSRPStreamID,
     participant: Participant<MSRPApplication>
-  ) async -> Bool? {
-    if let _ = await participant.findAttribute(
+  ) async -> (MSRPDeclarationType, any MSRPTalkerValue)? {
+    if let value = await participant.findAttribute(
       attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
       matching: .matchIndex(MSRPTalkerAdvertiseValue(streamID: streamID))
     ) {
-      true
-    } else if let _ = await participant.findAttribute(
+      try! (MSRPDeclarationType(attributeSubtype: value.0)!, value.1 as! any MSRPTalkerValue)
+    } else if let value = await participant.findAttribute(
       attributeType: MSRPAttributeType.talkerFailed.rawValue,
       matching: .matchIndex(MSRPTalkerFailedValue(streamID: streamID))
     ) {
-      false
+      try! (MSRPDeclarationType(attributeSubtype: value.0)!, value.1 as! any MSRPTalkerValue)
     } else {
       nil
     }
@@ -583,31 +589,21 @@ extension MSRPApplication {
     eventSource: ParticipantEventSource
   ) async throws {
     try await apply(for: contextIdentifier) { participant in
-      if participant.port != port, let talkerRegistration = await _findTalkerRegistration(
-        for: streamID,
-        participant: participant
-      ) {
-        let mergedDeclarationType: MSRPDeclarationType
-
-        if talkerRegistration {
-          let portDeclarationType: MSRPDeclarationType? = if let portDeclaration = await participant
-            .findAttribute(
-              attributeType: declarationType.attributeType.rawValue,
-              matching: .matchAnyIndex(streamID) // this will match any kind of talker attribute
+      if participant.port != port,
+         let (portDeclarationType, talkerRegistration) = await _findTalkerRegistration(
+           for: streamID,
+           participant: participant
+         )
+      {
+        let mergedDeclarationType: MSRPDeclarationType =
+          if talkerRegistration is MSRPTalkerAdvertiseValue {
+            _mergeListener(
+              declarationType: declarationType,
+              with: portDeclarationType
             )
-          {
-            try? MSRPDeclarationType(attributeSubtype: portDeclaration.0)
           } else {
-            nil
+            .listenerAskingFailed
           }
-
-          mergedDeclarationType = _mergeListener(
-            declarationType: declarationType,
-            with: portDeclarationType
-          )
-        } else {
-          mergedDeclarationType = .listenerAskingFailed
-        }
 
         try await participant.join(
           attributeType: MSRPAttributeType.listener.rawValue,
@@ -617,8 +613,6 @@ extension MSRPApplication {
           eventSource: .map
         )
       }
-      // update dynamic reservation entries for _ALL_ ports (make this part of bridge aware
-      // protocol)
     }
 
     throw MRPError.doNotPropagateAttribute // advise caller we have performed MAP ourselves

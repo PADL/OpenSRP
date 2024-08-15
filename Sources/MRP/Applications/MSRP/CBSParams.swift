@@ -35,6 +35,12 @@ import Darwin
 import Glibc
 #endif
 
+let AAF_OVERHEAD = 24 // AVTP stream header
+let CVF_H264_OVERHEAD = 30 // AVTP stream header + H264 ts field + FU-A headers
+let VLAN_OVERHEAD = 4 // VLAN tag
+let L2_OVERHEAD = 18 // Ethernet header + CRC
+let L1_OVERHEAD = 20 // Preamble + frame delimiter + interpacket gap
+
 private func calcClassACredits(
   idleslopeA: Int,
   sendslopeA: Int,
