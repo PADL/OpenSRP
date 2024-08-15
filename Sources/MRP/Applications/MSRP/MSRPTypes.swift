@@ -99,7 +99,6 @@ public enum MSRPDeclarationType: Sendable {
   }
 }
 
-typealias MSRPTrafficClass = Int
 typealias MSRPPortLatency = Int
 public typealias MSRPStreamID = UInt64
 

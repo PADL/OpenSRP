@@ -19,20 +19,28 @@ import AsyncExtensions
 public protocol Port: Hashable, Sendable, Identifiable where ID: Hashable & Sendable {
   static func timeSinceEpoch() throws -> UInt32
 
+  var id: ID { get }
+  var name: String { get }
+
   var isOperational: Bool { get }
   var isEnabled: Bool { get }
   var isPointToPoint: Bool { get }
 
-  var name: String { get }
-  var id: ID { get }
+  var macAddress: EUI48 { get }
+
   var pvid: UInt16? { get }
   var vlans: Set<VLAN> { get }
-  var mtu: Int { get }
-  var latency: Int { get }
-  var linkSpeed: Int { get }
-  var isAvbCapable: Bool { get }
 
-  var macAddress: EUI48 { get }
+  // MTU in octets
+  var mtu: Int { get }
+
+  // link speed in kbps
+  var linkSpeed: Int { get }
+}
+
+public protocol AVBPort: Port {
+  var isAvbCapable: Bool { get }
+  func getPortTcMaxLatency(for: SRclassPriority) -> Int
 }
 
 public enum PortNotification<P: Port>: Sendable {

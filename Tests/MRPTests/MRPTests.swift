@@ -48,11 +48,7 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
 
   var mtu: Int { 1500 }
 
-  var latency: Int { 0 }
-
   var linkSpeed: Int { 1_000_000 }
-
-  var isAvbCapable: Bool { true }
 
   init(id: ID) {
     self.id = id

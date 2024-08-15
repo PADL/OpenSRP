@@ -19,7 +19,7 @@ import Logging
 
 public let MSRPEtherType: UInt16 = 0x22EA
 
-protocol MSRPAwareBridge<P>: Bridge where P: Port {
+public protocol MSRPAwareBridge<P>: Bridge where P: AVBPort {
   func adjustCreditBasedShaper(
     portID: P.ID,
     priority: SRclassPriority,
@@ -36,10 +36,9 @@ private extension Port {
   }
 }
 
-public struct MSRPPortState<P: Port>: Sendable {
+public struct MSRPPortState<P: AVBPort>: Sendable {
   let mediaType: MSRPPortMediaType
-  var enabled: Bool
-  var tcMaxLatency: [MSRPTrafficClass: MSRPPortLatency]
+  var msrpPortEnabledStatus: Bool
   let streamEpoch: UInt32
   var srpDomainBoundaryPort: [SRclassID: Bool]
   // Table 6-5—Default SRP domain boundary port priority regeneration override values
@@ -47,7 +46,7 @@ public struct MSRPPortState<P: Port>: Sendable {
     .A: SRclassPriority.CA,
     .B: SRclassPriority.EE,
   ]
-  let neighborProtocolVersion: MSRPProtocolVersion
+  let neighborProtocolVersion: MSRPProtocolVersion = .v0
   let talkerPruning: Bool
   let talkerVlanPruning: Bool
 
@@ -66,20 +65,18 @@ public struct MSRPPortState<P: Port>: Sendable {
 
   init(msrp: MSRPApplication<P>, port: P) throws {
     mediaType = .accessControlPort
-    enabled = port.isAvbCapable
-    tcMaxLatency = [:]
+    msrpPortEnabledStatus = port.isAvbCapable
     streamEpoch = try P.timeSinceEpoch()
     srpDomainBoundaryPort = .init(uniqueKeysWithValues: SRclassID.allCases.map { (
       $0,
       !port.isAvbCapable
     ) })
-    neighborProtocolVersion = .v0
     talkerPruning = false
     talkerVlanPruning = false
   }
 }
 
-public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationEventObserver,
+public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventObserver,
   ApplicationEventHandler, CustomStringConvertible, @unchecked Sendable where P == P
 {
   // for now, we only operate in the Base Spanning Tree Context
@@ -139,7 +136,7 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationEve
   ) rethrows -> T {
     try _ports.withCriticalRegion {
       if let index = $0.index(forKey: port.id) {
-        $0.values[index].enabled = port.isAvbCapable
+        $0.values[index].msrpPortEnabledStatus = port.isAvbCapable
         return try body(&$0.values[index])
       } else {
         var newPortState = try MSRPPortState(msrp: self, port: port)
@@ -456,7 +453,8 @@ extension MSRPApplication {
         return
       }
 
-      let accumulatedLatency = accumulatedLatency + UInt32(port.latency)
+      let accumulatedLatency = accumulatedLatency +
+        UInt32(port.getPortTcMaxLatency(for: priorityAndRank.dataFramePriority))
 
       if declarationType == .talkerAdvertise {
         do {
@@ -648,6 +646,7 @@ extension MSRPApplication {
     }
 
     try await bridge.adjustCreditBasedShaper(
+      application: self,
       port: participant.port,
       portState: portState,
       streams: streams

@@ -41,75 +41,83 @@ private let VLAN_OVERHEAD = 4 // VLAN tag
 private let L2_OVERHEAD = 18 // Ethernet header + CRC
 private let L1_OVERHEAD = 20 // Preamble + frame delimiter + interpacket gap
 
-private func calcClassACredits(
-  idleslopeA: Int,
-  sendslopeA: Int,
-  linkSpeed: Int,
-  frameNonSr: Int,
-  maxFrameSizeA: Int
-) -> (Int, Int) {
-  // According to 802.1Q-2014 spec, Annex L, hiCredit and
-  // loCredit for SR class A are calculated following the
-  // equations L-10 and L-12, respectively.
-  let hicredit = Int(ceil(Double(idleslopeA) * Double(frameNonSr) / Double(linkSpeed)))
-  let locredit = Int(ceil(Double(sendslopeA) * Double(maxFrameSizeA) / Double(linkSpeed)))
-  return (hicredit, locredit)
-}
-
-private func calcClassBCredits(
-  idleslopeA: Int,
-  idleslopeB: Int,
-  sendslopeB: Int,
-  linkSpeed: Int,
-  frameNonSr: Int,
-  maxFrameSizeA: Int,
-  maxFrameSizeB: Int
-) -> (Int, Int) {
-  let hicredit = Int(ceil(
-    Double(idleslopeB) *
-      (
-        (Double(frameNonSr) / Double(linkSpeed - idleslopeA)) +
-          (Double(maxFrameSizeA) / Double(linkSpeed))
-      )
-  ))
-  let locredit = Int(ceil(Double(sendslopeB) * Double(maxFrameSizeB) / Double(linkSpeed)))
-  return (hicredit, locredit)
-}
-
-private func calcSrClassParams(
-  streams: [SRclassID: [MSRPTSpec]],
-  srClassID: SRclassID
-) throws -> (Int, Int) {
-  var idleslope = 0
-  var maxFrameSize = 0
-
-  for stream in streams[srClassID] ?? [] {
-    let frameSize = stream.maxFrameSize
-    let classMeasurementInterval: Int
-
-    switch srClassID {
-    case .A:
-      classMeasurementInterval = 125
-    case .B:
-      classMeasurementInterval = 250
-    default:
-      throw MRPError.invalidSRclassID
-    }
-
-    let maxFrameRate = Int(stream.maxIntervalFrames) * (1_000_000 / classMeasurementInterval)
-    idleslope += maxFrameRate * Int(frameSize) * 8 / 1000
-    maxFrameSize = max(maxFrameSize, Int(frameSize))
-  }
-  return (maxFrameSize, Int(ceil(Double(idleslope))))
-}
-
 extension MSRPAwareBridge {
+  private func calcClassACredits(
+    idleslopeA: Int,
+    sendslopeA: Int,
+    linkSpeed: Int,
+    frameNonSr: Int,
+    maxFrameSizeA: Int
+  ) -> (Int, Int) {
+    // According to 802.1Q-2014 spec, Annex L, hiCredit and
+    // loCredit for SR class A are calculated following the
+    // equations L-10 and L-12, respectively.
+    let hicredit = Int(ceil(Double(idleslopeA) * Double(frameNonSr) / Double(linkSpeed)))
+    let locredit = Int(ceil(Double(sendslopeA) * Double(maxFrameSizeA) / Double(linkSpeed)))
+    return (hicredit, locredit)
+  }
+
+  private func calcClassBCredits(
+    idleslopeA: Int,
+    idleslopeB: Int,
+    sendslopeB: Int,
+    linkSpeed: Int,
+    frameNonSr: Int,
+    maxFrameSizeA: Int,
+    maxFrameSizeB: Int
+  ) -> (Int, Int) {
+    let hicredit = Int(ceil(
+      Double(idleslopeB) *
+        (
+          (Double(frameNonSr) / Double(linkSpeed - idleslopeA)) +
+            (Double(maxFrameSizeA) / Double(linkSpeed))
+        )
+    ))
+    let locredit = Int(ceil(Double(sendslopeB) * Double(maxFrameSizeB) / Double(linkSpeed)))
+    return (hicredit, locredit)
+  }
+
+  private func calcSrClassParams(
+    application: MSRPApplication<P>,
+    portState: MSRPPortState<P>,
+    streams: [SRclassID: [MSRPTSpec]],
+    srClassID: SRclassID
+  ) throws -> (Int, Int) {
+    var idleslope = 0
+    var maxFrameSize = 0
+
+    for stream in streams[srClassID] ?? [] {
+      let frameSize = min(stream.maxFrameSize, application._latencyMaxFrameSize)
+      let classMeasurementInterval: Int
+
+      switch srClassID {
+      case .A:
+        classMeasurementInterval = 125
+      case .B:
+        classMeasurementInterval = 250
+      default:
+        throw MRPError.invalidSRclassID
+      }
+
+      let maxFrameRate = Int(stream.maxIntervalFrames) * (1_000_000 / classMeasurementInterval)
+      idleslope += maxFrameRate * Int(frameSize) * 8 / 1000
+      maxFrameSize = max(maxFrameSize, Int(frameSize))
+    }
+    return (maxFrameSize, Int(ceil(Double(idleslope))))
+  }
+
   func adjustCreditBasedShaper(
+    application: MSRPApplication<P>,
     port: P,
     portState: MSRPPortState<P>,
     streams: [SRclassID: [MSRPTSpec]]
   ) async throws {
-    let (maxFrameSizeA, idleslopeA) = try! calcSrClassParams(streams: streams, srClassID: .A)
+    let (maxFrameSizeA, idleslopeA) = try! calcSrClassParams(
+      application: application,
+      portState: portState,
+      streams: streams,
+      srClassID: .A
+    )
     let sendslopeA = idleslopeA - port.linkSpeed
     let (hicreditA, locreditA) = calcClassACredits(
       idleslopeA: idleslopeA,
@@ -128,7 +136,12 @@ extension MSRPAwareBridge {
       loCredit: locreditA
     )
 
-    let (maxFrameSizeB, idleslopeB) = try! calcSrClassParams(streams: streams, srClassID: .B)
+    let (maxFrameSizeB, idleslopeB) = try! calcSrClassParams(
+      application: application,
+      portState: portState,
+      streams: streams,
+      srClassID: .B
+    )
     let sendslopeB = idleslopeB - port.linkSpeed
     let (hicreditB, locreditB) = calcClassBCredits(
       idleslopeA: idleslopeA,
