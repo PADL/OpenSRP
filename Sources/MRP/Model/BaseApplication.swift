@@ -17,13 +17,20 @@
 import Locking
 import Logging
 
-protocol BaseApplicationDelegate<P>: Sendable {
-  associatedtype P: Port
+protocol BaseApplication: Application where P == P {
+  typealias MAPParticipantDictionary = [MAPContextIdentifier: Set<Participant<Self>>]
 
+  var _controller: Weak<MRPController<P>> { get }
+  var _participants: ManagedCriticalState<MAPParticipantDictionary> { get }
+}
+
+protocol BaseApplicationContextDelegate<P>: BaseApplication {
   func onContextAdded(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
   func onContextUpdated(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
   func onContextRemoved(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
+}
 
+protocol BaseApplicationEventDelegate<P>: BaseApplication {
   func onJoinIndication(
     contextIdentifier: MAPContextIdentifier,
     port: P,
@@ -41,14 +48,6 @@ protocol BaseApplicationDelegate<P>: Sendable {
     attributeValue: some Value,
     eventSource: ParticipantEventSource
   ) async throws
-}
-
-protocol BaseApplication: Application where P == P {
-  typealias MAPParticipantDictionary = [MAPContextIdentifier: Set<Participant<Self>>]
-
-  var _controller: Weak<MRPController<P>> { get }
-  var _participants: ManagedCriticalState<MAPParticipantDictionary> { get }
-  var _delegate: (any BaseApplicationDelegate<P>)? { get }
 }
 
 extension BaseApplication {
@@ -130,7 +129,8 @@ extension BaseApplication {
   ) async throws {
     guard nonBaseContextsSupported || contextIdentifier == MAPBaseSpanningTreeContext
     else { return }
-    try _delegate?.onContextAdded(contextIdentifier: contextIdentifier, with: context)
+    guard let delegate = self as? any BaseApplicationContextDelegate<P> else { return }
+    try delegate.onContextAdded(contextIdentifier: contextIdentifier, with: context)
     for port in context {
       guard (try? findParticipant(for: contextIdentifier, port: port)) == nil
       else {
@@ -153,7 +153,8 @@ extension BaseApplication {
   ) throws {
     guard nonBaseContextsSupported || contextIdentifier == MAPBaseSpanningTreeContext
     else { return }
-    try _delegate?.onContextUpdated(contextIdentifier: contextIdentifier, with: context)
+    guard let delegate = self as? any BaseApplicationContextDelegate<P> else { return }
+    try delegate.onContextUpdated(contextIdentifier: contextIdentifier, with: context)
     for port in context {
       let participant = try findParticipant(
         for: contextIdentifier,
@@ -169,7 +170,8 @@ extension BaseApplication {
   ) throws {
     guard nonBaseContextsSupported || contextIdentifier == MAPBaseSpanningTreeContext
     else { return }
-    try _delegate?.onContextRemoved(contextIdentifier: contextIdentifier, with: context)
+    guard let delegate = self as? any BaseApplicationContextDelegate<P> else { return }
+    try delegate.onContextRemoved(contextIdentifier: contextIdentifier, with: context)
     for port in context {
       let participant = try findParticipant(
         for: contextIdentifier,
@@ -230,19 +232,19 @@ extension BaseApplication {
   ) async throws {
     precondition(!(attributeValue is AnyValue))
     do {
-      try await _delegate?.onJoinIndication(
-        contextIdentifier: contextIdentifier,
-        port: port,
-        attributeType: attributeType,
-        attributeSubtype: attributeSubtype,
-        attributeValue: attributeValue,
-        isNew: isNew,
-        eventSource: eventSource
-      )
+      if let delegate = self as? any BaseApplicationEventDelegate<P> {
+        try await delegate.onJoinIndication(
+          contextIdentifier: contextIdentifier,
+          port: port,
+          attributeType: attributeType,
+          attributeSubtype: attributeSubtype,
+          attributeValue: attributeValue,
+          isNew: isNew,
+          eventSource: eventSource
+        )
+      }
     } catch MRPError.doNotPropagateAttribute {
       return
-    } catch {
-      throw error
     }
     try await _propagateJoinIndicated(
       contextIdentifier: contextIdentifier,
@@ -285,18 +287,18 @@ extension BaseApplication {
   ) async throws {
     precondition(!(attributeValue is AnyValue))
     do {
-      try await _delegate?.onLeaveIndication(
-        contextIdentifier: contextIdentifier,
-        port: port,
-        attributeType: attributeType,
-        attributeSubtype: attributeSubtype,
-        attributeValue: attributeValue,
-        eventSource: eventSource
-      )
+      if let delegate = self as? any BaseApplicationEventDelegate<P> {
+        try await delegate.onLeaveIndication(
+          contextIdentifier: contextIdentifier,
+          port: port,
+          attributeType: attributeType,
+          attributeSubtype: attributeSubtype,
+          attributeValue: attributeValue,
+          eventSource: eventSource
+        )
+      }
     } catch MRPError.doNotPropagateAttribute {
       return
-    } catch {
-      throw error
     }
     try await _propagateLeaveIndicated(
       contextIdentifier: contextIdentifier,

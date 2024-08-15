@@ -33,12 +33,10 @@ protocol MMRPAwareBridge<P>: Bridge where P: Port {
   ) async throws
 }
 
-public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationDelegate,
+public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationEventDelegate,
   CustomStringConvertible,
   Sendable where P == P
 {
-  var _delegate: (any BaseApplicationDelegate<P>)? { self }
-
   // for now, we only operate in the Base Spanning Tree Context
   public var nonBaseContextsSupported: Bool { false }
 
@@ -155,23 +153,6 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationDel
 }
 
 extension MMRPApplication {
-  // these are not called because only the base spanning tree context is supported
-  // at present
-  func onContextAdded(
-    contextIdentifier: MAPContextIdentifier,
-    with context: MAPContext<P>
-  ) throws {}
-
-  func onContextUpdated(
-    contextIdentifier: MAPContextIdentifier,
-    with context: MAPContext<P>
-  ) throws {}
-
-  func onContextRemoved(
-    contextIdentifier: MAPContextIdentifier,
-    with context: MAPContext<P>
-  ) throws {}
-
   // On receipt of a MAD_Join.indication, the MMRP application element
   // specifies the Port associated with the MMRP Participant as Forwarding in
   // the Port Map field of the MAC Address Registration Entry (8.8.4) for the

@@ -79,12 +79,10 @@ public struct MSRPPortState<P: Port>: Sendable {
   }
 }
 
-public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDelegate,
+public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationEventDelegate,
   CustomStringConvertible,
   @unchecked Sendable where P == P
 {
-  var _delegate: (any BaseApplicationDelegate<P>)? { self }
-
   // for now, we only operate in the Base Spanning Tree Context
   public var nonBaseContextsSupported: Bool { false }
 
@@ -345,23 +343,6 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
 }
 
 extension MSRPApplication {
-  // these are not called because only the base spanning tree context is supported
-  // at present
-  func onContextAdded(
-    contextIdentifier: MAPContextIdentifier,
-    with context: MAPContext<P>
-  ) throws {}
-
-  func onContextUpdated(
-    contextIdentifier: MAPContextIdentifier,
-    with context: MAPContext<P>
-  ) throws {}
-
-  func onContextRemoved(
-    contextIdentifier: MAPContextIdentifier,
-    with context: MAPContext<P>
-  ) throws {}
-
   private func _shouldPruneTalkerDeclaration(
     port: P,
     portState: MSRPPortState<P>,
@@ -393,13 +374,20 @@ extension MSRPApplication {
     return false
   }
 
-  private func _checkAvailableBandwidth() throws {}
+  private func _checkAvailableBandwidth() throws {
+    // find all the talkers on the port
+    // calculate how much bandwidth they're using
+    // check if it exceeds the link speed (remember to multiply by some constant for reservation)
+    // SR Class A reserves up to 75% of bandwidth. The upper limit is not configurable.
+    // SR Class B reserves all the bandwidth that is not used by SR Class A. SR Class B can occupy
+    // total of 75%, if no SR class A is reserved.
+  }
 
   private func _verifyMaxFanInPorts() throws {}
 
   private func _rankStream() throws {}
 
-  private func _bridgeTalker(
+  private func _canBridgeTalker(
     port: P,
     portState: MSRPPortState<P>,
     streamID: MSRPStreamID,
@@ -449,6 +437,8 @@ extension MSRPApplication {
       portState = $0
     }
 
+    // Summary: propagate Talker declarations to _other_ ports
+
     try await apply(for: contextIdentifier) { participant in
       guard participant.port != port else { return }
 
@@ -471,7 +461,7 @@ extension MSRPApplication {
 
       if declarationType == .talkerAdvertise {
         do {
-          try await _bridgeTalker(
+          try await _canBridgeTalker(
             port: participant.port,
             portState: portState,
             streamID: streamID,
@@ -559,8 +549,8 @@ extension MSRPApplication {
 
   private func _findTalkerRegistration(
     for streamID: MSRPStreamID
-  ) async throws -> (any MSRPTalkerValue)? {
-    var talkerRegistration: (any MSRPTalkerValue)?
+  ) async throws -> (Participant<MSRPApplication>, any MSRPTalkerValue)? {
+    var talkerRegistration: (Participant<MSRPApplication>, any MSRPTalkerValue)?
 
     await apply { participant in
       guard talkerRegistration == nil else { return }
@@ -568,12 +558,12 @@ extension MSRPApplication {
         attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
         matching: .matchIndex(MSRPTalkerAdvertiseValue(streamID: streamID))
       ) {
-        talkerRegistration = value.1 as? (any MSRPTalkerValue)
+        talkerRegistration = (participant, value.1 as! (any MSRPTalkerValue))
       } else if let value = await participant.findAttribute(
         attributeType: MSRPAttributeType.talkerFailed.rawValue,
         matching: .matchIndex(MSRPTalkerFailedValue(streamID: streamID))
       ) {
-        talkerRegistration = value.1 as? (any MSRPTalkerValue)
+        talkerRegistration = (participant, value.1 as! (any MSRPTalkerValue))
       }
     }
 
@@ -682,15 +672,15 @@ extension MSRPApplication {
       throw MRPError.doNotPropagateAttribute
     }
 
-    let participant = try findParticipant(for: contextIdentifier, port: port)
+    // participant should be talker port
     let mergedDeclarationType = try await _mergeListenerDeclarations(
       contextIdentifier: contextIdentifier,
       port: port,
       streamID: streamID,
       declarationType: declarationType,
-      talkerRegistration: talkerRegistration
+      talkerRegistration: talkerRegistration.1
     )
-    try await participant.join(
+    try await talkerRegistration.0.join(
       attributeType: MSRPAttributeType.listener.rawValue,
       attributeSubtype: mergedDeclarationType.attributeSubtype!.rawValue,
       attributeValue: MSRPListenerValue(streamID: streamID),
@@ -707,27 +697,27 @@ extension MSRPApplication {
     if mergedDeclarationType != .listenerAskingFailed {
       // increase (if necessary) bandwidth first before updating dynamic reservation entries
       try await _updateOperIdleSlope(
-        participant: participant,
+        participant: talkerRegistration.0,
         portState: portState,
         streamID: streamID,
         declarationType: mergedDeclarationType,
-        talkerRegistration: talkerRegistration
+        talkerRegistration: talkerRegistration.1
       )
     }
     try await _updateDynamicReservationEntries(
-      participant: participant,
+      participant: talkerRegistration.0,
       portState: portState,
       streamID: streamID,
       declarationType: mergedDeclarationType,
-      talkerRegistration: talkerRegistration
+      talkerRegistration: talkerRegistration.1
     )
     if mergedDeclarationType == .listenerAskingFailed {
       try await _updateOperIdleSlope(
-        participant: participant,
+        participant: talkerRegistration.0,
         portState: portState,
         streamID: streamID,
         declarationType: mergedDeclarationType,
-        talkerRegistration: talkerRegistration
+        talkerRegistration: talkerRegistration.1
       )
     }
 

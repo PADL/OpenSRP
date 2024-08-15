@@ -24,12 +24,10 @@ protocol MVRPAwareBridge<P>: Bridge where P: Port {
   func deregister(vlan: VLAN, from ports: Set<P>) async throws
 }
 
-public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationDelegate,
+public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationEventDelegate,
   CustomStringConvertible,
   Sendable where P == P
 {
-  var _delegate: (any BaseApplicationDelegate<P>)? { self }
-
   // for now, we only operate in the Base Spanning Tree Context
   public var nonBaseContextsSupported: Bool { false }
 
@@ -135,23 +133,6 @@ public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationDel
 }
 
 extension MVRPApplication {
-  // these are not called because only the base spanning tree context is supported
-  // at present
-  func onContextAdded(
-    contextIdentifier: MAPContextIdentifier,
-    with context: MAPContext<P>
-  ) throws {}
-
-  func onContextUpdated(
-    contextIdentifier: MAPContextIdentifier,
-    with context: MAPContext<P>
-  ) throws {}
-
-  func onContextRemoved(
-    contextIdentifier: MAPContextIdentifier,
-    with context: MAPContext<P>
-  ) throws {}
-
   // On receipt of a MAD_Join.indication whose attribute_type is equal to the
   // value of the VID Vector Attribute Type (11.2.3.1.6), the MVRP application
   // element indicates the reception Port as Registered in the Port Map of the
