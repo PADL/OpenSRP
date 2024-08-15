@@ -614,7 +614,7 @@ extension MSRPApplication {
   }
 
   private func _updateDynamicReservationEntries(
-    port: P,
+    participant: Participant<MSRPApplication>,
     portState: MSRPPortState<P>,
     streamID: MSRPStreamID,
     declarationType: MSRPDeclarationType,
@@ -630,12 +630,40 @@ extension MSRPApplication {
   }
 
   private func _updateOperIdleSlope(
-    port: P,
+    participant: Participant<MSRPApplication>,
     portState: MSRPPortState<P>,
     streamID: MSRPStreamID,
     declarationType: MSRPDeclarationType,
     talkerRegistration: any MSRPTalkerValue
-  ) async throws {}
+  ) async throws {
+    guard let controller, let bridge = controller.bridge as? any MSRPAwareBridge<P> else {
+      return
+    }
+
+    let talkers = await participant.findAttributes(
+      attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
+      matching: .matchAny
+    )
+
+    var streams = [SRclassID: [MSRPTSpec]]()
+
+    for talker in talkers.map({ $0.1 as! MSRPTalkerAdvertiseValue }) {
+      guard let classID = portState
+        .reverseMapSrClassPriority(priority: talker.priorityAndRank.dataFramePriority)
+      else { continue }
+      if let index = streams.index(forKey: classID) {
+        streams.values[index].append(talker.tSpec)
+      } else {
+        streams[classID] = [talker.tSpec]
+      }
+    }
+
+    try await bridge.adjustCreditBasedShaper(
+      port: participant.port,
+      portState: portState,
+      streams: streams
+    )
+  }
 
   // On receipt of a MAD_Join.indication service primitive (10.2, 10.3) with an
   // attribute_type of Listener (35.2.2.4), the MSRP application shall issue a
@@ -679,7 +707,7 @@ extension MSRPApplication {
     if mergedDeclarationType != .listenerAskingFailed {
       // increase (if necessary) bandwidth first before updating dynamic reservation entries
       try await _updateOperIdleSlope(
-        port: port,
+        participant: participant,
         portState: portState,
         streamID: streamID,
         declarationType: mergedDeclarationType,
@@ -687,7 +715,7 @@ extension MSRPApplication {
       )
     }
     try await _updateDynamicReservationEntries(
-      port: port,
+      participant: participant,
       portState: portState,
       streamID: streamID,
       declarationType: mergedDeclarationType,
@@ -695,7 +723,7 @@ extension MSRPApplication {
     )
     if mergedDeclarationType == .listenerAskingFailed {
       try await _updateOperIdleSlope(
-        port: port,
+        participant: participant,
         portState: portState,
         streamID: streamID,
         declarationType: mergedDeclarationType,
