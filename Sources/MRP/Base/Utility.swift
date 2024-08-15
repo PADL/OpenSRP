@@ -30,17 +30,6 @@ extension Weak: Equatable where T: Equatable {
   }
 }
 
-// https://stackoverflow.com/questions/52019449/best-way-to-loop-through-array-and-group-consecutive-numbers-in-another-array-sw
-extension BidirectionalCollection where Element: BinaryInteger, Index == Int {
-  var consecutivelyGrouped: [[Element]] {
-    reduce(into: []) {
-      $0.last?.last?.advanced(by: 1) == $1 ?
-        $0[index(before: $0.endIndex)].append($1) :
-        $0.append([$1])
-    }
-  }
-}
-
 // https://stackoverflow.com/questions/25329186/safe-bounds-checked-array-lookup-in-swift-through-optional-bindings
 extension Collection {
   /// Returns the element at the specified index if it is within bounds, otherwise nil.

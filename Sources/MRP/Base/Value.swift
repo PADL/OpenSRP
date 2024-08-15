@@ -86,6 +86,6 @@ extension Value {
   }
 
   func makeValue(relativeTo index: UInt64) throws -> Self {
-    try Self(index: index)
+    try Self(firstValue: self, index: index)
   }
 }

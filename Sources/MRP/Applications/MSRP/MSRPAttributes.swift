@@ -114,7 +114,7 @@ struct MSRPTalkerAdvertiseValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equ
   init(firstValue: Self?, index: UInt64) throws {
     if let firstValue {
       try self.init(
-        streamID: firstValue.streamID + UInt64(index),
+        streamID: firstValue.streamID + index,
         dataFrameParameters: firstValue.dataFrameParameters.makeValue(relativeTo: index),
         tSpec: firstValue.tSpec,
         priorityAndRank: firstValue.priorityAndRank,

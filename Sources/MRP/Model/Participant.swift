@@ -118,8 +118,8 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     contextIdentifier.hash(into: &hasher)
   }
 
-  private enum EnqueuedEvent {
-    struct AttributeEvent {
+  fileprivate enum EnqueuedEvent {
+    struct AttributeEvent: Equatable {
       let attributeEvent: MRP.AttributeEvent
       let attributeValue: _AttributeValueState<A>
     }
@@ -248,18 +248,10 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     matching filter: AttributeValueFilter? = nil,
     _ block: AsyncParticipantApplyFunction<A>
   ) async rethrows {
-    if let attributeType {
-      guard let attributeValues = _attributes[attributeType] else { return }
-      for attributeValue in attributeValues {
-        if let filter, !attributeValue.matches(filter) { continue }
+    for attribute in _attributes {
+      for attributeValue in attribute.value {
+        if let filter, !attributeValue.matches(attributeType: attributeType, filter) { continue }
         try await block(attributeValue)
-      }
-    } else {
-      for attribute in _attributes {
-        for attributeValue in attribute.value {
-          if let filter, !attributeValue.matches(filter) { continue }
-          try await block(attributeValue)
-        }
       }
     }
   }
@@ -281,7 +273,9 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     matching filter: AttributeValueFilter,
     createIfMissing: Bool = true
   ) throws -> _AttributeValueState<A> {
-    if let attributeValue = _attributes[attributeType]?.first(where: { $0.matches(filter) }) {
+    if let attributeValue = _attributes[attributeType]?
+      .first(where: { $0.matches(attributeType: attributeType, filter) })
+    {
       return attributeValue
     }
 
@@ -347,31 +341,32 @@ public final actor Participant<A: Application>: Equatable, Hashable {
 
     var messages = [Message]()
 
-    for event in events {
-      let leaveAll = event.value.contains(where: \.isLeaveAll)
-      let attributeEvents = event.value.filter { !$0.isLeaveAll }.map(\.unsafeAttributeEvent)
+    for (attributeType, eventValue) in events {
+      let leaveAll = eventValue.contains(where: \.isLeaveAll)
+      let attributeEvents = eventValue.filter { !$0.isLeaveAll }.map(\.unsafeAttributeEvent)
         .sorted(by: {
           $0.attributeValue.index < $1.attributeValue.index
         })
-      let valueIndexGroups = attributeEvents.map(\.attributeValue.index).consecutivelyGrouped
+      let attributeEventChunks: [[EnqueuedEvent.AttributeEvent]] = attributeEvents
+        .reduce(into: []) {
+          try? $0.last?.last?.attributeValue.advanced(by: 1) == $1.attributeValue ?
+            $0[$0.index(before: $0.endIndex)].append($1) : $0.append([$1])
+        }
 
-      var vectorAttributes: [VectorAttribute<AnyValue>] = valueIndexGroups
-        .map { valueIndexGroup in
-          let firstIndex = attributeEvents
-            .firstIndex(where: { $0.attributeValue.index == valueIndexGroup[0] })!
-          let attributeEvents = attributeEvents[firstIndex..<(firstIndex + valueIndexGroups.count)]
+      var vectorAttributes: [VectorAttribute<AnyValue>] = attributeEventChunks
+        .map { attributeEventChunk in
           let attributeSubtypes: [AttributeSubtype]? = if application
-            .hasAttributeSubtype(for: event.key)
+            .hasAttributeSubtype(for: attributeType)
           {
-            Array(attributeEvents.map { $0.attributeValue.attributeSubtype! })
+            Array(attributeEventChunk.map { $0.attributeValue.attributeSubtype! })
           } else {
             nil
           }
 
           return VectorAttribute<AnyValue>(
             leaveAllEvent: leaveAll ? .LeaveAll : .NullLeaveAllEvent,
-            firstValue: attributeEvents[firstIndex].attributeValue.value,
-            attributeEvents: Array(attributeEvents.map(\.attributeEvent)),
+            firstValue: attributeEventChunk.first!.attributeValue.value,
+            attributeEvents: Array(attributeEventChunk.map(\.attributeEvent)),
             applicationEvents: attributeSubtypes
           )
         }
@@ -379,14 +374,14 @@ public final actor Participant<A: Application>: Equatable, Hashable {
       if vectorAttributes.count == 0, leaveAll {
         let vectorAttribute = try VectorAttribute<AnyValue>(
           leaveAllEvent: .LeaveAll,
-          firstValue: AnyValue(application.makeNullValue(for: event.key)),
+          firstValue: AnyValue(application.makeNullValue(for: attributeType)),
           attributeEvents: [],
           applicationEvents: nil
         )
         vectorAttributes.append(vectorAttribute)
       }
 
-      messages.append(Message(attributeType: event.key, attributeList: vectorAttributes))
+      messages.append(Message(attributeType: attributeType, attributeList: vectorAttributes))
     }
 
     _logger.trace("packed events \(events) into \(messages)")
@@ -594,12 +589,13 @@ private typealias AsyncParticipantApplyFunction<A: Application> =
 private typealias ParticipantApplyFunction<A: Application> =
   @Sendable (_AttributeValueState<A>) throws -> ()
 
-private final class _AttributeValueState<A: Application>: @unchecked Sendable, Hashable,
-  Equatable
-{
+private final class _AttributeValueState<A: Application>: @unchecked
+Sendable, Hashable, Equatable {
   typealias P = Participant<A>
   static func == (lhs: _AttributeValueState<A>, rhs: _AttributeValueState<A>) -> Bool {
-    lhs.attributeType == rhs.attributeType && lhs.value == rhs.value
+    lhs.attributeType == rhs.attributeType &&
+      lhs.attributeSubtype == rhs.attributeSubtype &&
+      lhs.value == rhs.value
   }
 
   private let _participant: Weak<P>
@@ -616,6 +612,19 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
     registrar?.state
   }
 
+  private init(
+    participant: Weak<P>,
+    type: AttributeType,
+    subtype: AttributeSubtype?,
+    value: AnyValue
+  ) {
+    _participant = participant
+    registrar = nil
+    attributeType = type
+    attributeSubtype = subtype
+    self.value = value
+  }
+
   init(participant: P, type: AttributeType, subtype: AttributeSubtype?, value: AnyValue) {
     _participant = Weak(participant)
     attributeType = type
@@ -624,20 +633,6 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
     if participant._type != .applicantOnly {
       registrar = Registrar(onLeaveTimerExpired: onLeaveTimerExpired)
     }
-  }
-
-  func matches(_ filter: AttributeValueFilter) -> Bool {
-    if let filterSubtype = filter._subtype {
-      guard attributeSubtype == filterSubtype else { return false }
-    }
-
-    if let filterValue = try? filter._value {
-      guard value == filterValue else { return false }
-    } else if case let .matchAnyIndex(filterIndex) = filter {
-      guard self.index == filterIndex else { return false }
-    }
-
-    return true
   }
 
   deinit {
@@ -657,6 +652,39 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
     if let serialized = try? value.serialized() {
       serialized.hash(into: &hasher)
     }
+  }
+
+  func matches(
+    attributeType filterAttributeType: AttributeType?,
+    _ filter: AttributeValueFilter
+  ) -> Bool {
+    do {
+      if let filterAttributeType {
+        guard attributeType == filterAttributeType else { return false }
+      }
+      if let filterSubtype = filter._subtype {
+        guard attributeSubtype == filterSubtype else { return false }
+      }
+
+      if let filterValue = try filter._value {
+        guard value == filterValue else { return false }
+      } else if case let .matchAnyIndex(filterIndex) = filter {
+        guard value.index == filterIndex else { return false }
+      }
+
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  func advanced(by offset: Int) throws -> Self {
+    try Self(
+      participant: _participant,
+      type: attributeType,
+      subtype: attributeSubtype,
+      value: value.makeValue(relativeTo: UInt64(offset))
+    )
   }
 
   func handle(
