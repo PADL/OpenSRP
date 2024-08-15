@@ -23,8 +23,8 @@ public struct IEEE802Packet: Sendable, SerDes, CustomStringConvertible {
     public enum PCP: UInt8, Sendable {
       case BK = 0
       case BE = 1
-      case EE = 2
-      case CA = 3
+      case EE = 2 // class B
+      case CA = 3 // class A
       case VI = 4
       case VO = 5
       case IC = 6

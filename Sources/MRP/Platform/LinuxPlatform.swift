@@ -157,6 +157,10 @@ public struct LinuxPort: Port, Sendable, CustomStringConvertible {
   public var latency: Int {
     0
   }
+
+  public var isAvbCapable: Bool {
+    true
+  }
 }
 
 private extension LinuxPort {

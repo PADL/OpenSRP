@@ -35,11 +35,6 @@ import Darwin
 import Glibc
 #endif
 
-private let AAF_OVERHEAD = 24 // AVTP stream header
-private let VLAN_OVERHEAD = 4 // VLAN tag
-private let L2_OVERHEAD = 18 // Ethernet header + CRC
-private let L1_OVERHEAD = 20 // Preamble + frame delimiter + interpacket gap
-
 private func calcClassACredits(
   idleslopeA: Int,
   sendslopeA: Int,
@@ -75,29 +70,77 @@ private func calcClassBCredits(
   return (hicredit, locredit)
 }
 
-private func calcFrameSize(packetSize: Int) -> Int {
-  packetSize + AAF_OVERHEAD + VLAN_OVERHEAD + L2_OVERHEAD + L1_OVERHEAD
-}
-
-private func calcSrClassParams(packetSize: Int, packetRate: Int) -> (Int, Int) {
+private func calcSrClassParams(
+  streams: [SRclassID: [MSRPTSpec]],
+  srClassID: SRclassID
+) throws -> (Int, Int) {
   var idleslope = 0
   var maxFrameSize = 0
-  let frameSize = calcFrameSize(packetSize: packetSize)
-  idleslope += packetRate * frameSize * 8 / 1000
-  maxFrameSize = max(maxFrameSize, frameSize)
+
+  for stream in streams[srClassID] ?? [] {
+    let frameSize = stream.maxFrameSize
+    let classMeasurementInterval: Int
+
+    switch srClassID {
+    case .A:
+      classMeasurementInterval = 125
+    case .B:
+      classMeasurementInterval = 250
+    default:
+      throw MRPError.invalidSRclassID
+    }
+
+    let maxFrameRate = Int(stream.maxIntervalFrames) * (1_000_000 / classMeasurementInterval)
+    idleslope += maxFrameRate * Int(frameSize) * 8 / 1000
+    maxFrameSize = max(maxFrameSize, Int(frameSize))
+  }
   return (maxFrameSize, Int(ceil(Double(idleslope))))
 }
 
-//   func updateCBS(idleSlope: Int, sendSlope: Int, hiCredit: Int, loCredit: Int) async throws
-
 extension MSRPAwareBridge {
-  func updateCBS(
+  func adjustCreditBasedShaper(
     port: P,
-    packetParameters: [SRclassID: (Int, Int)]
-  ) async throws {}
+    portState: MSRPPortState<P>,
+    streams: [SRclassID: [MSRPTSpec]]
+  ) async throws {
+    let (maxFrameSizeA, idleslopeA) = try! calcSrClassParams(streams: streams, srClassID: .A)
+    let sendslopeA = idleslopeA - port.linkSpeed
+    let (hicreditA, locreditA) = calcClassACredits(
+      idleslopeA: idleslopeA,
+      sendslopeA: sendslopeA,
+      linkSpeed: port.linkSpeed,
+      frameNonSr: port.mtu,
+      maxFrameSizeA: maxFrameSizeA
+    )
+
+    try await adjustCreditBasedShaper(
+      portID: port.id,
+      priority: portState.srClassPriorityMap[.A] ?? .CA,
+      idleSlope: idleslopeA,
+      sendSlope: sendslopeA,
+      hiCredit: hicreditA,
+      loCredit: locreditA
+    )
+
+    let (maxFrameSizeB, idleslopeB) = try! calcSrClassParams(streams: streams, srClassID: .B)
+    let sendslopeB = idleslopeB - port.linkSpeed
+    let (hicreditB, locreditB) = calcClassBCredits(
+      idleslopeA: idleslopeA,
+      idleslopeB: idleslopeB,
+      sendslopeB: sendslopeB,
+      linkSpeed: port.linkSpeed,
+      frameNonSr: port.mtu,
+      maxFrameSizeA: maxFrameSizeA,
+      maxFrameSizeB: maxFrameSizeB
+    )
+
+    try await adjustCreditBasedShaper(
+      portID: port.id,
+      priority: portState.srClassPriorityMap[.B] ?? .EE,
+      idleSlope: idleslopeB,
+      sendSlope: sendslopeB,
+      hiCredit: hicreditB,
+      loCredit: locreditB
+    )
+  }
 }
-
-extension Port {}
-
-//   func updateCBS(queueID: Int, idleSlope: Int, sendSlope: Int, hiCredit: Int, loCredit: Int)
-//   async throws

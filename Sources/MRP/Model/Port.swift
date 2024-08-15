@@ -30,6 +30,7 @@ public protocol Port: Hashable, Sendable, Identifiable where ID: Hashable & Send
   var mtu: Int { get }
   var latency: Int { get }
   var linkSpeed: Int { get }
+  var isAvbCapable: Bool { get }
 
   var macAddress: EUI48 { get }
 }

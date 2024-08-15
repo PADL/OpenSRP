@@ -44,8 +44,8 @@ public struct MSRPPortState<P: Port>: Sendable {
   var srpDomainBoundaryPort: [SRclassID: Bool]
   // Table 6-5—Default SRP domain boundary port priority regeneration override values
   var srClassPriorityMap: [SRclassID: SRclassPriority] = [
-    .A: SRclassPriority(rawValue: 3)!,
-    .B: SRclassPriority(rawValue: 2)!,
+    .A: SRclassPriority.CA,
+    .B: SRclassPriority.EE,
   ]
   let neighborProtocolVersion: MSRPProtocolVersion
   let talkerPruning: Bool
@@ -66,10 +66,13 @@ public struct MSRPPortState<P: Port>: Sendable {
 
   init(msrp: MSRPApplication<P>, port: P) throws {
     mediaType = .accessControlPort
-    enabled = port.isEnabled
+    enabled = port.isAvbCapable
     tcMaxLatency = [:]
     streamEpoch = try P.timeSinceEpoch()
-    srpDomainBoundaryPort = .init(uniqueKeysWithValues: SRclassID.allCases.map { ($0, false) })
+    srpDomainBoundaryPort = .init(uniqueKeysWithValues: SRclassID.allCases.map { (
+      $0,
+      !port.isAvbCapable
+    ) })
     neighborProtocolVersion = .v0
     talkerPruning = false
     talkerVlanPruning = false
