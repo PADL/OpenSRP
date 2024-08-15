@@ -46,9 +46,6 @@ public protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
   func didUpdate(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
   func didRemove(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
 
-  func preApplicantEventHandler(context: EventContext<Self>) async throws
-  func postApplicantEventHandler(context: EventContext<Self>)
-
   // apply for all participants. if contextIdentifier is nil, then all participants are called
   // regardless of contextIdentifier.
   @discardableResult
@@ -213,4 +210,11 @@ extension Application {
   func redeclare(for contextIdentifier: MAPContextIdentifier) async throws {
     try await apply(for: contextIdentifier) { try await $0.redeclare() }
   }
+}
+
+public protocol ApplicationEventHandler<A>: Application {
+  associatedtype A: Application
+
+  func preApplicantEventHandler(context: EventContext<A>) async throws
+  func postApplicantEventHandler(context: EventContext<A>)
 }

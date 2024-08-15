@@ -80,8 +80,7 @@ public struct MSRPPortState<P: Port>: Sendable {
 }
 
 public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationEventObserver,
-  CustomStringConvertible,
-  @unchecked Sendable where P == P
+  ApplicationEventHandler, CustomStringConvertible, @unchecked Sendable where P == P
 {
   // for now, we only operate in the Base Spanning Tree Context
   public var nonBaseContextsSupported: Bool { false }

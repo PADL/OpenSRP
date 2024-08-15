@@ -97,11 +97,6 @@ public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationEve
     .normalParticipant
   }
 
-  public func preApplicantEventHandler(
-    context: EventContext<MVRPApplication>
-  ) async throws {}
-  public func postApplicantEventHandler(context: EventContext<MVRPApplication>) {}
-
   // On receipt of an ES_REGISTER_VLAN_MEMBER service primitive, the MVRP
   // Participant issues a MAD_Join.request service primitive (10.2, 10.3). The
   // attribute_type parameter of the request carries the value of the VID

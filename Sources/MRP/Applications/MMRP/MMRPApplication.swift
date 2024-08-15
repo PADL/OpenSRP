@@ -108,11 +108,6 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationEve
     .normalParticipant
   }
 
-  public func preApplicantEventHandler(
-    context: EventContext<MMRPApplication>
-  ) async throws {}
-  public func postApplicantEventHandler(context: EventContext<MMRPApplication>) {}
-
   public func register(macAddress: EUI48) async throws {
     try await join(
       attributeType: MMRPAttributeType.mac.rawValue,

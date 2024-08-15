@@ -753,9 +753,11 @@ Sendable, Hashable, Equatable {
     if let applicantAction {
       context.participant._logger
         .trace("applicant action for event \(context.event): \(applicantAction)")
-      try await context.participant.application?.preApplicantEventHandler(context: context)
+      let applicationEventHandler = context.participant
+        .application as? any ApplicationEventHandler<A>
+      try await applicationEventHandler?.preApplicantEventHandler(context: context)
       try await _handle(applicantAction: applicantAction, context: context)
-      context.participant.application?.postApplicantEventHandler(context: context)
+      applicationEventHandler?.postApplicantEventHandler(context: context)
     }
   }
 
