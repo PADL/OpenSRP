@@ -36,7 +36,6 @@ import Glibc
 #endif
 
 private let AAF_OVERHEAD = 24 // AVTP stream header
-private let CVF_H264_OVERHEAD = 30 // AVTP stream header + H264 ts field + FU-A headers
 private let VLAN_OVERHEAD = 4 // VLAN tag
 private let L2_OVERHEAD = 18 // Ethernet header + CRC
 private let L1_OVERHEAD = 20 // Preamble + frame delimiter + interpacket gap
@@ -93,10 +92,7 @@ private func calcSrClassParams(packetSize: Int, packetRate: Int) -> (Int, Int) {
 
 extension MSRPAwareBridge {
   func updateCBS(
-    portID: P.ID,
-    queueID: Int,
-    linkSpeed: Int = 1_000_000, // in kbps
-    frameNonSr: Int = 1542, // port MTU
+    port: P,
     packetParameters: [SRclassID: (Int, Int)]
   ) async throws {}
 }

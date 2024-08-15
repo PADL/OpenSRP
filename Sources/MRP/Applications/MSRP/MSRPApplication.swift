@@ -20,8 +20,9 @@ import Logging
 public let MSRPEtherType: UInt16 = 0x22EA
 
 protocol MSRPAwareBridge<P>: Bridge where P: Port {
-  func updateCBS(
-    queueID: Int,
+  func adjustCreditBasedShaper(
+    portID: P.ID,
+    priority: SRclassPriority,
     idleSlope: Int,
     sendSlope: Int,
     hiCredit: Int,
@@ -457,7 +458,7 @@ extension MSRPApplication {
         return
       }
 
-      let accumulatedLatency = accumulatedLatency + port.latency
+      let accumulatedLatency = accumulatedLatency + UInt32(port.latency)
 
       if declarationType == .talkerAdvertise {
         if let tsnFailureCode = _canPropagateTalkerAdvertise(

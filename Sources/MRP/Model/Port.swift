@@ -27,7 +27,9 @@ public protocol Port: Hashable, Sendable, Identifiable where ID: Hashable & Send
   var id: ID { get }
   var pvid: UInt16? { get }
   var vlans: Set<VLAN> { get }
-  var latency: UInt32 { get }
+  var mtu: Int { get }
+  var latency: Int { get }
+  var linkSpeed: Int { get }
 
   var macAddress: EUI48 { get }
 }

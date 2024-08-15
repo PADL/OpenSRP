@@ -146,7 +146,15 @@ public struct LinuxPort: Port, Sendable, CustomStringConvertible {
     return Set(vlans.map { VLAN(id: $0) })
   }
 
-  public var latency: UInt32 {
+  public var mtu: Int {
+    _rtnl.mtu
+  }
+
+  public var linkSpeed: Int {
+    1_000_000
+  }
+
+  public var latency: Int {
     0
   }
 }
