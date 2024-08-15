@@ -46,8 +46,8 @@ public protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
   func didUpdate(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
   func didRemove(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
 
-  func preApplicantEventHandler(context: ApplicantEventContext<Self>) async throws
-  func postApplicantEventHandler(context: ApplicantEventContext<Self>)
+  func preApplicantEventHandler(context: EventContext<Self>) async throws
+  func postApplicantEventHandler(context: EventContext<Self>)
 
   // apply for all participants. if contextIdentifier is nil, then all participants are called
   // regardless of contextIdentifier.

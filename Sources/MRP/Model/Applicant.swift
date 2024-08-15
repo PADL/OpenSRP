@@ -295,15 +295,3 @@ private extension Applicant.State {
     return action
   }
 }
-
-public struct ApplicantEventContext<A: Application>: Sendable {
-  let participant: Participant<A>
-  let event: ProtocolEvent
-  let eventSource: ParticipantEventSource
-  let smFlags: StateMachineHandlerFlags
-  let applicant: Applicant
-  let action: Applicant.Action
-  let attributeType: AttributeType
-  let attributeSubtype: AttributeSubtype?
-  let attributeValue: any Value
-}

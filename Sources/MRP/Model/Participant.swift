@@ -44,6 +44,23 @@ enum ParticipantType {
   case applicantOnly
 }
 
+public struct EventContext<A: Application>: Sendable, CustomStringConvertible {
+  let participant: Participant<A>
+  let event: ProtocolEvent
+  let eventSource: ParticipantEventSource
+  let attributeType: AttributeType
+  let attributeSubtype: AttributeSubtype?
+  let attributeValue: any Value
+
+  fileprivate let smFlags: StateMachineHandlerFlags
+  fileprivate let applicant: Applicant
+  fileprivate let registrar: Registrar?
+
+  public var description: String {
+    "EventContext(event: \(event), attributeType: \(attributeType), attributeSubtype: \(attributeSubtype ?? 0), attributeValue: \(attributeValue), smFlags: \(smFlags), state A \(applicant) R \(registrar?.description ?? "-"))"
+  }
+}
+
 public enum AttributeValueFilter: Sendable {
   // match any value for this attribute type
   case matchAny
@@ -250,7 +267,8 @@ public final actor Participant<A: Application>: Equatable, Hashable {
   ) async rethrows {
     for attribute in _attributes {
       for attributeValue in attribute.value {
-        if let filter, !attributeValue.matches(attributeType: attributeType, filter) { continue }
+        if let filter,
+           !attributeValue.matches(attributeType: attributeType, matching: filter) { continue }
         try await block(attributeValue)
       }
     }
@@ -274,7 +292,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     createIfMissing: Bool = true
   ) throws -> _AttributeValueState<A> {
     if let attributeValue = _attributes[attributeType]?
-      .first(where: { $0.matches(attributeType: attributeType, filter) })
+      .first(where: { $0.matches(attributeType: attributeType, matching: filter) })
     {
       return attributeValue
     }
@@ -309,6 +327,25 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     )
     guard let attributeValueState, attributeValueState.registrarState == .IN else { return nil }
     return (attributeValueState.attributeSubtype, attributeValueState.value.value)
+  }
+
+  public func findAttributes(
+    attributeType: AttributeType,
+    matching filter: AttributeValueFilter
+  ) -> [(AttributeSubtype?, any Value)] {
+    var attributeValues = [(AttributeSubtype?, any Value)]()
+
+    for attributeValueState in _attributes[attributeType] ?? [] {
+      guard attributeValueState.matches(attributeType: attributeType, matching: filter) else {
+        continue
+      }
+      attributeValues.append((
+        attributeValueState.attributeSubtype,
+        attributeValueState.value.value
+      ))
+    }
+
+    return attributeValues
   }
 
   fileprivate func _removeAttributeValueState(_ attributeValueState: _AttributeValueState<A>) {
@@ -656,7 +693,7 @@ Sendable, Hashable, Equatable {
 
   func matches(
     attributeType filterAttributeType: AttributeType?,
-    _ filter: AttributeValueFilter
+    matching filter: AttributeValueFilter
   ) -> Bool {
     do {
       if let filterAttributeType {
@@ -692,64 +729,39 @@ Sendable, Hashable, Equatable {
     eventSource: ParticipantEventSource
   ) async throws {
     guard let participant else { throw MRPError.internalError }
-    let smFlags = try await participant._getSmFlags(for: attributeType)
 
-    participant._logger
-      .trace(
-        "handling protocol event \(event) for attribute \(attributeType) subtype \(String(describing: attributeSubtype)) value \(value) flags \(smFlags) state A \(applicant) R \(registrar?.description ?? "-")"
-      )
+    let context = try await EventContext(
+      participant: participant,
+      event: event,
+      eventSource: eventSource,
+      attributeType: attributeType,
+      attributeSubtype: attributeSubtype,
+      attributeValue: value.value,
+      smFlags: participant._getSmFlags(for: attributeType),
+      applicant: applicant,
+      registrar: registrar
+    )
 
-    try await _handleApplicant(
-      event: event,
-      participant: participant,
-      eventSource: eventSource,
-      smFlags: smFlags
-    )
-    try await _handleRegistrar(
-      event: event,
-      participant: participant,
-      eventSource: eventSource,
-      smFlags: smFlags
-    )
+    participant._logger.trace("handling \(context)")
+    try await _handleApplicant(context: context) // attribute subtype can be adjusted by hook
+    try await _handleRegistrar(context: context)
   }
 
-  private func _handleApplicant(
-    event: ProtocolEvent,
-    participant: P,
-    eventSource: ParticipantEventSource,
-    smFlags: StateMachineHandlerFlags
-  ) async throws {
-    let applicantAction = applicant.action(for: event, flags: smFlags)
+  private func _handleApplicant(context: EventContext<A>) async throws {
+    let applicantAction = applicant.action(for: context.event, flags: context.smFlags)
 
     if let applicantAction {
-      participant._logger.trace("applicant action for event \(event): \(applicantAction)")
-
-      let applicantEventContext = ApplicantEventContext(
-        participant: participant,
-        event: event,
-        eventSource: eventSource,
-        smFlags: smFlags,
-        applicant: applicant,
-        action: applicantAction,
-        attributeType: attributeType,
-        attributeSubtype: attributeSubtype,
-        attributeValue: value.value
-      )
-
-      try await participant.application?.preApplicantEventHandler(context: applicantEventContext)
-      try await _handle(
-        applicantAction: applicantAction,
-        participant: participant,
-        eventSource: eventSource
-      )
-      participant.application?.postApplicantEventHandler(context: applicantEventContext)
+      context.participant._logger
+        .trace("applicant action for event \(context.event): \(applicantAction)")
+      try await context.participant.application?.preApplicantEventHandler(context: context)
+      try await _handle(applicantAction: applicantAction, context: context)
+      context.participant.application?.postApplicantEventHandler(context: context)
     }
   }
 
   private func _handle(
     applicantAction action: Applicant.Action,
-    participant: P,
-    eventSource: ParticipantEventSource
+    context: EventContext<A>
   ) async throws {
     var attributeEvent: AttributeEvent?
 
@@ -780,67 +792,62 @@ Sendable, Hashable, Equatable {
     }
 
     if let attributeEvent {
-      await participant._txEnqueue(
+      await context.participant._txEnqueue(
         attributeEvent: attributeEvent,
         attributeValue: self
       )
     }
   }
 
-  private func _handleRegistrar(
-    event: ProtocolEvent,
-    participant: P,
-    eventSource: ParticipantEventSource,
-    smFlags: StateMachineHandlerFlags
-  ) async throws {
-    if let registrarAction = registrar?.action(for: event, flags: smFlags) {
-      participant._logger.trace("registrar action for event \(event): \(registrarAction)")
+  private func _handleRegistrar(context: EventContext<A>) async throws {
+    if let registrarAction = context.registrar?.action(for: context.event, flags: context.smFlags) {
+      context.participant._logger
+        .trace("registrar action for event \(context.event): \(registrarAction)")
       try await _handle(
         registrarAction: registrarAction,
-        participant: participant,
-        eventSource: eventSource
+        context: context
       )
 
-      if registrar?.state == .MT {
-        await participant._removeAttributeValueState(self)
+      if context.registrar?.state == .MT {
+        await context.participant._removeAttributeValueState(self)
       }
     }
   }
 
   private func _handle(
     registrarAction action: Registrar.Action,
-    participant: P,
-    eventSource: ParticipantEventSource
+    context: EventContext<A>
   ) async throws {
+    guard let application = context.participant.application else { throw MRPError.internalError }
     switch action {
     case .New:
-      try await participant.application?.joinIndicated(
-        contextIdentifier: participant.contextIdentifier,
-        port: participant.port,
-        attributeType: attributeType,
-        attributeSubtype: attributeSubtype,
-        attributeValue: value.value,
+      try await application.joinIndicated(
+        contextIdentifier: context.participant.contextIdentifier,
+        port: context.participant.port,
+        attributeType: context.attributeType,
+        attributeSubtype: context.attributeSubtype,
+        attributeValue: context.attributeValue,
         isNew: true,
-        eventSource: eventSource
+        eventSource: context.eventSource
       )
     case .Join:
-      try await participant.application?.joinIndicated(
-        contextIdentifier: participant.contextIdentifier,
-        port: participant.port,
-        attributeType: attributeType,
-        attributeSubtype: attributeSubtype,
-        attributeValue: value.value,
+      try await application.joinIndicated(
+        contextIdentifier: context.participant.contextIdentifier,
+        port: context.participant.port,
+        attributeType: context.attributeType,
+        attributeSubtype: context.attributeSubtype,
+        attributeValue: context.attributeValue,
         isNew: false,
-        eventSource: eventSource
+        eventSource: context.eventSource
       )
     case .Lv:
-      try await participant.application?.leaveIndicated(
-        contextIdentifier: participant.contextIdentifier,
-        port: participant.port,
-        attributeType: attributeType,
-        attributeSubtype: attributeSubtype,
-        attributeValue: value.value,
-        eventSource: eventSource
+      try await application.leaveIndicated(
+        contextIdentifier: context.participant.contextIdentifier,
+        port: context.participant.port,
+        attributeType: context.attributeType,
+        attributeSubtype: context.attributeSubtype,
+        attributeValue: context.attributeValue,
+        eventSource: context.eventSource
       )
     }
   }

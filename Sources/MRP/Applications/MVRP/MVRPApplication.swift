@@ -100,9 +100,9 @@ public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationDel
   }
 
   public func preApplicantEventHandler(
-    context: ApplicantEventContext<MVRPApplication>
+    context: EventContext<MVRPApplication>
   ) async throws {}
-  public func postApplicantEventHandler(context: ApplicantEventContext<MVRPApplication>) {}
+  public func postApplicantEventHandler(context: EventContext<MVRPApplication>) {}
 
   // On receipt of an ES_REGISTER_VLAN_MEMBER service primitive, the MVRP
   // Participant issues a MAD_Join.request service primitive (10.2, 10.3). The

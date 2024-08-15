@@ -213,7 +213,7 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
   // Attribute Declarations before the rJoinIn! or rJoinMt! event for the
   // attribute in the received message is processed
   public func preApplicantEventHandler(
-    context: ApplicantEventContext<MSRPApplication>
+    context: EventContext<MSRPApplication>
   ) async throws {
     guard context.event == .rJoinIn || context.event == .rJoinMt else { return }
 
@@ -221,6 +221,7 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
     guard let contextDirection = contextAttributeType.direction else { return }
 
     let contextStreamID = (context.attributeValue as! MSRPStreamIDRepresentable).streamID
+    let contextAttributeSubtype = context.attributeSubtype
 
     try await context.participant.leaveNow { attributeType, attributeSubtype, attributeValue in
       let attributeType = MSRPAttributeType(rawValue: attributeType)!
@@ -228,11 +229,11 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationDel
       let streamID = (attributeValue as! MSRPStreamIDRepresentable).streamID
 
       return contextStreamID == streamID && contextDirection == direction &&
-        (contextAttributeType != attributeType || context.attributeSubtype != attributeSubtype)
+        (contextAttributeType != attributeType || contextAttributeSubtype != attributeSubtype)
     }
   }
 
-  public func postApplicantEventHandler(context: ApplicantEventContext<MSRPApplication>) {}
+  public func postApplicantEventHandler(context: EventContext<MSRPApplication>) {}
 
   // On receipt of a REGISTER_STREAM.request the MSRP Participant shall issue a
   // MAD_Join.request service primitive (10.2, 10.3). The attribute_type (10.2)
@@ -557,23 +558,84 @@ extension MSRPApplication {
   }
 
   private func _findTalkerRegistration(
-    for streamID: MSRPStreamID,
-    participant: Participant<MSRPApplication>
-  ) async -> (MSRPDeclarationType, any MSRPTalkerValue)? {
-    if let value = await participant.findAttribute(
-      attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
-      matching: .matchIndex(MSRPTalkerAdvertiseValue(streamID: streamID))
-    ) {
-      try! (MSRPDeclarationType(attributeSubtype: value.0)!, value.1 as! any MSRPTalkerValue)
-    } else if let value = await participant.findAttribute(
-      attributeType: MSRPAttributeType.talkerFailed.rawValue,
-      matching: .matchIndex(MSRPTalkerFailedValue(streamID: streamID))
-    ) {
-      try! (MSRPDeclarationType(attributeSubtype: value.0)!, value.1 as! any MSRPTalkerValue)
+    for streamID: MSRPStreamID
+  ) async throws -> (any MSRPTalkerValue)? {
+    var talkerRegistration: (any MSRPTalkerValue)?
+
+    await apply { participant in
+      guard talkerRegistration == nil else { return }
+      if let value = await participant.findAttribute(
+        attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
+        matching: .matchIndex(MSRPTalkerAdvertiseValue(streamID: streamID))
+      ) {
+        talkerRegistration = value.1 as? (any MSRPTalkerValue)
+      } else if let value = await participant.findAttribute(
+        attributeType: MSRPAttributeType.talkerFailed.rawValue,
+        matching: .matchIndex(MSRPTalkerFailedValue(streamID: streamID))
+      ) {
+        talkerRegistration = value.1 as? (any MSRPTalkerValue)
+      }
+    }
+
+    return talkerRegistration
+  }
+
+  private func _mergeListenerDeclarations(
+    contextIdentifier: MAPContextIdentifier,
+    port: P,
+    streamID: MSRPStreamID,
+    declarationType: MSRPDeclarationType,
+    talkerRegistration: any MSRPTalkerValue
+  ) async throws -> MSRPDeclarationType {
+    var mergedDeclarationType: MSRPDeclarationType = if declarationType == .listenerAskingFailed ||
+      talkerRegistration is MSRPTalkerFailedValue
+    {
+      .listenerAskingFailed
     } else {
-      nil
+      declarationType
+    }
+
+    await apply(for: contextIdentifier) { participant in
+      guard participant.port != port else { return }
+      for listenerAttribute in await participant.findAttributes(
+        attributeType: MSRPAttributeType.listener.rawValue,
+        matching: .matchAnyIndex(streamID)
+      ) {
+        guard let declarationType = try? MSRPDeclarationType(attributeSubtype: listenerAttribute.0)
+        else { continue }
+        mergedDeclarationType = _mergeListener(
+          declarationType: declarationType,
+          with: mergedDeclarationType
+        )
+      }
+    }
+
+    return mergedDeclarationType
+  }
+
+  private func _updateDynamicReservationEntries(
+    port: P,
+    portState: MSRPPortState<P>,
+    streamID: MSRPStreamID,
+    declarationType: MSRPDeclarationType,
+    talkerRegistration: any MSRPTalkerValue
+  ) async throws {
+    if talkerRegistration is MSRPTalkerAdvertiseValue,
+       declarationType == .listenerReady || declarationType == .listenerReadyFailed
+    {
+      // FORWARDING
+    } else {
+      // FILTERING
     }
   }
+
+  private func _updateOperIdleSlope(
+    port: P,
+    portState: MSRPPortState<P>,
+    streamID: MSRPStreamID,
+    declarationType: MSRPDeclarationType,
+    talkerRegistration: any MSRPTalkerValue
+  ) async throws {}
 
   // On receipt of a MAD_Join.indication service primitive (10.2, 10.3) with an
   // attribute_type of Listener (35.2.2.4), the MSRP application shall issue a
@@ -588,34 +650,60 @@ extension MSRPApplication {
     isNew: Bool,
     eventSource: ParticipantEventSource
   ) async throws {
-    try await apply(for: contextIdentifier) { participant in
-      if participant.port != port,
-         let (portDeclarationType, talkerRegistration) = await _findTalkerRegistration(
-           for: streamID,
-           participant: participant
-         )
-      {
-        let mergedDeclarationType: MSRPDeclarationType =
-          if talkerRegistration is MSRPTalkerAdvertiseValue {
-            _mergeListener(
-              declarationType: declarationType,
-              with: portDeclarationType
-            )
-          } else {
-            .listenerAskingFailed
-          }
-
-        try await participant.join(
-          attributeType: MSRPAttributeType.listener.rawValue,
-          attributeSubtype: mergedDeclarationType.attributeSubtype?.rawValue,
-          attributeValue: MSRPListenerValue(streamID: streamID),
-          isNew: isNew,
-          eventSource: .map
-        )
-      }
+    guard let talkerRegistration = try? await _findTalkerRegistration(for: streamID) else {
+      throw MRPError.doNotPropagateAttribute
     }
 
-    throw MRPError.doNotPropagateAttribute // advise caller we have performed MAP ourselves
+    let participant = try findParticipant(for: contextIdentifier, port: port)
+    let mergedDeclarationType = try await _mergeListenerDeclarations(
+      contextIdentifier: contextIdentifier,
+      port: port,
+      streamID: streamID,
+      declarationType: declarationType,
+      talkerRegistration: talkerRegistration
+    )
+    try await participant.join(
+      attributeType: MSRPAttributeType.listener.rawValue,
+      attributeSubtype: mergedDeclarationType.attributeSubtype!.rawValue,
+      attributeValue: MSRPListenerValue(streamID: streamID),
+      isNew: isNew,
+      eventSource: .map
+    )
+
+    var portState: MSRPPortState<P>!
+    withPortState(port: port) {
+      $0.enabled = port.isAvbCapable
+      portState = $0
+    }
+
+    if mergedDeclarationType != .listenerAskingFailed {
+      // increase (if necessary) bandwidth first before updating dynamic reservation entries
+      try await _updateOperIdleSlope(
+        port: port,
+        portState: portState,
+        streamID: streamID,
+        declarationType: mergedDeclarationType,
+        talkerRegistration: talkerRegistration
+      )
+    }
+    try await _updateDynamicReservationEntries(
+      port: port,
+      portState: portState,
+      streamID: streamID,
+      declarationType: mergedDeclarationType,
+      talkerRegistration: talkerRegistration
+    )
+    if mergedDeclarationType == .listenerAskingFailed {
+      try await _updateOperIdleSlope(
+        port: port,
+        portState: portState,
+        streamID: streamID,
+        declarationType: mergedDeclarationType,
+        talkerRegistration: talkerRegistration
+      )
+    }
+
+    throw MRPError.doNotPropagateAttribute
   }
 
   func onJoinIndication(
