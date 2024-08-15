@@ -99,7 +99,9 @@ private final class MRPDaemon: AsyncParsableCommand {
         vlanExclusions: Set(excludeVlan.map { VLAN(id: $0) })
       )
     }
-    if enableMSRP {}
+    if enableMSRP {
+      _ = try await MSRPApplication(controller: controller)
+    }
 
     let serviceGroup = ServiceGroup(
       services: [controller],
