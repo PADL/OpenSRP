@@ -139,6 +139,7 @@ public final class MSRPApplication<P: Port>: BaseApplication, BaseApplicationEve
   ) rethrows -> T {
     try _ports.withCriticalRegion {
       if let index = $0.index(forKey: port.id) {
+        $0.values[index].enabled = port.isAvbCapable
         return try body(&$0.values[index])
       } else {
         var newPortState = try MSRPPortState(msrp: self, port: port)
@@ -436,10 +437,9 @@ extension MSRPApplication {
       portState = $0
     }
 
-    // Summary: propagate Talker declarations to _other_ ports
-
+    // TL;DR: propagate Talker declarations to other ports
     try await apply(for: contextIdentifier) { participant in
-      guard participant.port != port else { return }
+      guard participant.port != port else { return } // don't propagate to source port
 
       guard await !_shouldPruneTalkerDeclaration(
         port: participant.port,
@@ -671,7 +671,7 @@ extension MSRPApplication {
       throw MRPError.doNotPropagateAttribute
     }
 
-    // participant should be talker port
+    // TL;DR: propagate merged Listener declarations to _talker_ port
     let mergedDeclarationType = try await _mergeListenerDeclarations(
       contextIdentifier: contextIdentifier,
       port: port,
@@ -689,7 +689,6 @@ extension MSRPApplication {
 
     var portState: MSRPPortState<P>!
     withPortState(port: port) {
-      $0.enabled = port.isAvbCapable
       portState = $0
     }
 
