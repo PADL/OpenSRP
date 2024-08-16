@@ -39,7 +39,7 @@ private extension Port {
 public struct MSRPPortState<P: AVBPort>: Sendable {
   let mediaType: MSRPPortMediaType
   var msrpPortEnabledStatus: Bool
-  let streamEpoch: UInt32
+  var streamEpochs = [MSRPStreamID: UInt32]()
   var srpDomainBoundaryPort: [SRclassID: Bool]
   // Table 6-5—Default SRP domain boundary port priority regeneration override values
   var srClassPriorityMap: [SRclassID: SRclassPriority] = [
@@ -47,6 +47,7 @@ public struct MSRPPortState<P: AVBPort>: Sendable {
     .B: SRclassPriority.EE,
   ]
   let neighborProtocolVersion: MSRPProtocolVersion = .v0
+  // TODO: make these configurable
   let talkerPruning: Bool
   let talkerVlanPruning: Bool
 
@@ -56,17 +57,27 @@ public struct MSRPPortState<P: AVBPort>: Sendable {
     })?.key
   }
 
-  var streamAge: UInt32 {
-    guard let time = try? P.timeSinceEpoch() else {
+  mutating func register(streamID: MSRPStreamID) {
+    streamEpochs[streamID] = (try? P.timeSinceEpoch()) ?? 0
+  }
+
+  mutating func deregister(streamID: MSRPStreamID) {
+    streamEpochs[streamID] = nil
+  }
+
+  func getStreamAge(for streamID: MSRPStreamID) -> UInt32 {
+    guard let epoch = streamEpochs[streamID],
+          let time = try? P.timeSinceEpoch()
+    else {
       return 0
     }
-    return time - streamEpoch
+
+    return time - epoch
   }
 
   init(msrp: MSRPApplication<P>, port: P) throws {
     mediaType = .accessControlPort
     msrpPortEnabledStatus = port.isAvbCapable
-    streamEpoch = try P.timeSinceEpoch()
     srpDomainBoundaryPort = .init(uniqueKeysWithValues: SRclassID.allCases.map { (
       $0,
       !port.isAvbCapable
@@ -371,18 +382,66 @@ extension MSRPApplication {
     return false
   }
 
-  private func _checkAvailableBandwidth() throws {
+  private func _isFanInPortLimitReached() async -> Bool {
+    if _maxFanInPorts == 0 {
+      return false
+    }
+
+    var fanInCount = 0
+
+    // calculate total number of ports with inbound reservations
+    await apply { participant in
+      if await participant.findAttribute(
+        attributeType: MSRPAttributeType.listener.rawValue,
+        matching: .matchAny
+      ) != nil {
+        fanInCount += 1
+      }
+    }
+
+    return fanInCount <= _maxFanInPorts
+  }
+
+  private func _compareStreamImportance(
+    port: P,
+    portState: MSRPPortState<P>,
+    _ lhs: MSRPTalkerAdvertiseValue,
+    _ rhs: MSRPTalkerAdvertiseValue
+  ) -> Bool {
+    let lhsRank = lhs.priorityAndRank.rank ? 1 : 0
+    let rhsRank = rhs.priorityAndRank.rank ? 1 : 0
+
+    if lhsRank == rhsRank {
+      let lhsStreamAge = portState.getStreamAge(for: lhs.streamID)
+      let rhsStreamAge = portState.getStreamAge(for: rhs.streamID)
+
+      if lhsStreamAge == rhsStreamAge {
+        return lhs.streamID < rhs.streamID
+      } else {
+        return lhsStreamAge > rhsStreamAge
+      }
+    } else {
+      return lhsRank > rhsRank
+    }
+  }
+
+  private func _checkAvailableBandwidth(
+    port: P,
+    portState: MSRPPortState<P>,
+    streamID: MSRPStreamID,
+    declarationType: MSRPDeclarationType,
+    dataFrameParameters: MSRPDataFrameParameters,
+    tSpec: MSRPTSpec,
+    priorityAndRank: MSRPPriorityAndRank
+  ) async throws -> Bool {
     // find all the talkers on the port
     // calculate how much bandwidth they're using
     // check if it exceeds the link speed (remember to multiply by some constant for reservation)
     // SR Class A reserves up to 75% of bandwidth. The upper limit is not configurable.
     // SR Class B reserves all the bandwidth that is not used by SR Class A. SR Class B can occupy
     // total of 75%, if no SR class A is reserved.
+    true
   }
-
-  private func _verifyMaxFanInPorts() throws {}
-
-  private func _rankStream() throws {}
 
   private func _canBridgeTalker(
     port: P,
@@ -402,6 +461,23 @@ extension MSRPApplication {
         portState.srpDomainBoundaryPort[srClassID] == false
       else {
         throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
+      }
+
+      guard await !_isFanInPortLimitReached() else {
+        throw MSRPFailure(systemID: port.systemID, failureCode: .fanInPortLimitReached)
+      }
+
+      guard try await _checkAvailableBandwidth(
+        port: port,
+        portState: portState,
+        streamID: streamID,
+        declarationType: declarationType,
+        dataFrameParameters: dataFrameParameters,
+        tSpec: tSpec,
+        priorityAndRank: priorityAndRank
+      )
+      else {
+        throw MSRPFailure(systemID: port.systemID, failureCode: .insufficientBandwidth)
       }
     } catch let error as MSRPFailure {
       throw error
@@ -688,6 +764,11 @@ extension MSRPApplication {
 
     var portState: MSRPPortState<P>!
     withPortState(port: port) {
+      if mergedDeclarationType != .listenerAskingFailed {
+        $0.register(streamID: streamID)
+      } else {
+        $0.deregister(streamID: streamID)
+      }
       portState = $0
     }
 
