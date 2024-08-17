@@ -155,12 +155,12 @@ public struct LinuxPort: Port, Sendable, CustomStringConvertible {
   }
 }
 
-public extension LinuxPort: AVBPort {
-  var isAvbCapable: Bool {
+extension LinuxPort: AVBPort {
+  public var isAvbCapable: Bool {
     true
   }
 
-  func getPortTcMaxLatency(for: SRclassPriority) -> Int {
+  public func getPortTcMaxLatency(for: SRclassPriority) -> Int {
     500
   }
 }

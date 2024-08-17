@@ -531,6 +531,19 @@ public extension NLSocket {
     }
     try await ackRequest(message: message)
   }
+
+  fileprivate func addOrRemove(
+    bridgeIndex: Int,
+    interfaceIndex: Int,
+    idleSlope: Int,
+    sendSlope: Int,
+    hiCredit: Int,
+    loCredit: Int,
+    flags: UInt8 = 0,
+    isAdd: Bool
+  ) async throws {
+  }
+
 }
 
 extension UnsafePointer {
