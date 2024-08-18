@@ -587,57 +587,27 @@ Sendable, CustomStringConvertible,
   }
 
   public var index: Int {
-    get {
-      Int(rtnl_tc_get_ifindex(_obj))
-    }
-    set {
-      rtnl_tc_set_ifindex(_obj, Int32(newValue))
-    }
+    Int(rtnl_tc_get_ifindex(_obj))
   }
 
   public var mtu: UInt32 {
-    get {
-      rtnl_tc_get_mtu(_obj)
-    }
-    set {
-      rtnl_tc_set_mtu(_obj, newValue)
-    }
+    rtnl_tc_get_mtu(_obj)
   }
 
   public var handle: UInt32 {
-    get {
-      rtnl_tc_get_handle(_obj)
-    }
-    set {
-      rtnl_tc_set_handle(_obj, newValue)
-    }
+    rtnl_tc_get_handle(_obj)
   }
 
   public var parent: UInt32 {
-    get {
-      rtnl_tc_get_parent(_obj)
-    }
-    set {
-      rtnl_tc_set_parent(_obj, newValue)
-    }
+    rtnl_tc_get_parent(_obj)
   }
 
   public var linkType: UInt32 {
-    get {
-      rtnl_tc_get_linktype(_obj)
-    }
-    set {
-      rtnl_tc_set_linktype(_obj, newValue)
-    }
+    rtnl_tc_get_linktype(_obj)
   }
 
   public var kind: String {
-    get {
-      String(cString: rtnl_tc_get_kind(_obj))
-    }
-    set {
-      rtnl_tc_set_kind(_obj, newValue)
-    }
+    String(cString: rtnl_tc_get_kind(_obj))
   }
 
   public var chain: UInt32 {
@@ -648,10 +618,6 @@ Sendable, CustomStringConvertible,
       }
       return chain
     }
-  }
-
-  public func set(chain: UInt32) {
-    rtnl_tc_set_chain(_obj, chain)
   }
 
   public var description: String {
