@@ -30,32 +30,28 @@ public protocol MSRPAwareBridge<P>: Bridge where P: AVBPort {
   ) async throws
 }
 
-private extension Port {
+private extension AVBPort {
   var systemID: UInt64 {
     UInt64(eui48: macAddress)
+  }
+
+  func reverseMapSrClassPriority(priority: SRclassPriority) async -> SRclassID? {
+    try? await srClassPriorityMap.first(where: {
+      $0.value == priority
+    })?.key
   }
 }
 
 public struct MSRPPortState<P: AVBPort>: Sendable {
-  let mediaType: MSRPPortMediaType
+  var mediaType: MSRPPortMediaType { .accessControlPort }
   var msrpPortEnabledStatus: Bool
   var streamEpochs = [MSRPStreamID: UInt32]()
   var srpDomainBoundaryPort: [SRclassID: Bool]
   // Table 6-5—Default SRP domain boundary port priority regeneration override values
-  var srClassPriorityMap: [SRclassID: SRclassPriority] = [
-    .A: SRclassPriority.CA,
-    .B: SRclassPriority.EE,
-  ]
-  let neighborProtocolVersion: MSRPProtocolVersion = .v0
+  var neighborProtocolVersion: MSRPProtocolVersion { .v0 }
   // TODO: make these configurable
-  let talkerPruning: Bool
-  let talkerVlanPruning: Bool
-
-  func reverseMapSrClassPriority(priority: SRclassPriority) -> SRclassID? {
-    srClassPriorityMap.first(where: {
-      $0.value == priority
-    })?.key
-  }
+  var talkerPruning: Bool { false }
+  var talkerVlanPruning: Bool { false }
 
   mutating func register(streamID: MSRPStreamID) {
     streamEpochs[streamID] = (try? P.timeSinceEpoch()) ?? 0
@@ -76,14 +72,11 @@ public struct MSRPPortState<P: AVBPort>: Sendable {
   }
 
   init(msrp: MSRPApplication<P>, port: P) throws {
-    mediaType = .accessControlPort
     msrpPortEnabledStatus = port.isAvbCapable
     srpDomainBoundaryPort = .init(uniqueKeysWithValues: SRclassID.allCases.map { (
       $0,
       !port.isAvbCapable
     ) })
-    talkerPruning = false
-    talkerVlanPruning = false
   }
 }
 
@@ -456,7 +449,7 @@ extension MSRPApplication {
     eventSource: ParticipantEventSource
   ) async throws {
     do {
-      guard let srClassID = portState
+      guard let srClassID = await port
         .reverseMapSrClassPriority(priority: priorityAndRank.dataFramePriority),
         portState.srpDomainBoundaryPort[srClassID] == false
       else {
@@ -711,7 +704,7 @@ extension MSRPApplication {
     var streams = [SRclassID: [MSRPTSpec]]()
 
     for talker in talkers.map({ $0.1 as! MSRPTalkerAdvertiseValue }) {
-      guard let classID = portState
+      guard let classID = await participant.port
         .reverseMapSrClassPriority(priority: talker.priorityAndRank.dataFramePriority)
       else { continue }
       if let index = streams.index(forKey: classID) {

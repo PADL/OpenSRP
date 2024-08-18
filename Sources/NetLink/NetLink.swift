@@ -199,7 +199,8 @@ private func NLSocket_ErrCB(
   return err.pointee.error
 }
 
-public final class NLSocket: @unchecked Sendable {
+public final class NLSocket: @unchecked
+Sendable {
   private typealias Continuation = CheckedContinuation<NLObjectConstructible, Error>
   private typealias Stream = AsyncThrowingStream<NLObjectConstructible, Error>
   private typealias Ack = CheckedContinuation<(), Error>

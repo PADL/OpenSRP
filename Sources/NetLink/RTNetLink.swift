@@ -587,7 +587,8 @@ public extension NLSocket {
   }
 }
 
-public class RTNLTCBase: NLObjectConstructible, @unchecked Sendable, CustomStringConvertible,
+public class RTNLTCBase: NLObjectConstructible, @unchecked
+Sendable, CustomStringConvertible,
   RTNLLinkFactory
 {
   private let _object: NLObject

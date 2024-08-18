@@ -40,6 +40,8 @@ public protocol Port: Hashable, Sendable, Identifiable where ID: Hashable & Send
 
 public protocol AVBPort: Port {
   var isAvbCapable: Bool { get }
+  var srClassPriorityMap: [SRclassID: SRclassPriority] { get async throws }
+
   func getPortTcMaxLatency(for: SRclassPriority) -> Int
 }
 
