@@ -249,33 +249,18 @@ public final class RTNLLinkBridge: RTNLLink {
     return bridgeFlags
   }
 
-  public func add(vlans: Set<UInt16>, flags: UInt16 = 0, socket: NLSocket) async throws {
+  public func add(
+    vlans: Set<UInt16>,
+    flags: UInt16 = 0,
+    updateIfPresent: Bool = true,
+    socket: NLSocket
+  ) async throws {
     try await socket._vlanRequest(
       vlans: vlans,
       interfaceIndex: index,
       flags: flags,
       moreFlags: _bridgeFlags,
-      operation: .add
-    )
-  }
-
-  public func addOrUpdate(vlans: Set<UInt16>, flags: UInt16 = 0, socket: NLSocket) async throws {
-    try await socket._vlanRequest(
-      vlans: vlans,
-      interfaceIndex: index,
-      flags: flags,
-      moreFlags: _bridgeFlags,
-      operation: .addOrUpdate
-    )
-  }
-
-  public func update(vlans: Set<UInt16>, flags: UInt16 = 0, socket: NLSocket) async throws {
-    try await socket._vlanRequest(
-      vlans: vlans,
-      interfaceIndex: index,
-      flags: flags,
-      moreFlags: _bridgeFlags,
-      operation: .update
+      operation: updateIfPresent ? .addOrUpdate : .add
     )
   }
 
@@ -293,6 +278,7 @@ public final class RTNLLinkBridge: RTNLLink {
     link: RTNLLink,
     groupAddresses: [Address],
     vlanID: UInt16? = nil,
+    updateIfPresent: Bool = true,
     socket: NLSocket
   ) async throws {
     try await socket._groupRequest(
@@ -300,37 +286,7 @@ public final class RTNLLinkBridge: RTNLLink {
       interfaceIndex: link.index,
       groupAddresses: groupAddresses,
       vlanID: vlanID,
-      operation: .add
-    )
-  }
-
-  public func addOrUpdate(
-    link: RTNLLink,
-    groupAddresses: [Address],
-    vlanID: UInt16? = nil,
-    socket: NLSocket
-  ) async throws {
-    try await socket._groupRequest(
-      bridgeIndex: index,
-      interfaceIndex: link.index,
-      groupAddresses: groupAddresses,
-      vlanID: vlanID,
-      operation: .addOrUpdate
-    )
-  }
-
-  public func update(
-    link: RTNLLink,
-    groupAddresses: [Address],
-    vlanID: UInt16? = nil,
-    socket: NLSocket
-  ) async throws {
-    try await socket._groupRequest(
-      bridgeIndex: index,
-      interfaceIndex: link.index,
-      groupAddresses: groupAddresses,
-      vlanID: vlanID,
-      operation: .update
+      operation: updateIfPresent ? .addOrUpdate : .add
     )
   }
 
@@ -793,41 +749,13 @@ public extension RTNLLinkBridge {
     loCredit: Int,
     idleSlope: Int,
     sendSlope: Int,
+    updateIfPresent: Bool = true,
     socket: NLSocket
   ) async throws {
     try await socket._qDiscRequest(
       interfaceIndex: index, handle: handle, parent: parent, hiCredit: hiCredit, loCredit: loCredit,
-      idleSlope: idleSlope, sendSlope: sendSlope, operation: .add
-    )
-  }
-
-  func addOrUpdate(
-    handle: UInt32? = nil,
-    parent: UInt32? = nil,
-    hiCredit: Int,
-    loCredit: Int,
-    idleSlope: Int,
-    sendSlope: Int,
-    socket: NLSocket
-  ) async throws {
-    try await socket._qDiscRequest(
-      interfaceIndex: index, handle: handle, parent: parent, hiCredit: hiCredit, loCredit: loCredit,
-      idleSlope: idleSlope, sendSlope: sendSlope, operation: .addOrUpdate
-    )
-  }
-
-  func update(
-    handle: UInt32? = nil,
-    parent: UInt32? = nil,
-    hiCredit: Int,
-    loCredit: Int,
-    idleSlope: Int,
-    sendSlope: Int,
-    socket: NLSocket
-  ) async throws {
-    try await socket._qDiscRequest(
-      interfaceIndex: index, handle: handle, parent: parent, hiCredit: hiCredit, loCredit: loCredit,
-      idleSlope: idleSlope, sendSlope: sendSlope, operation: .update
+      idleSlope: idleSlope, sendSlope: sendSlope,
+      operation: updateIfPresent ? .addOrUpdate : .add
     )
   }
 
