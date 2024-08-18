@@ -684,17 +684,17 @@ private extension NLSocket {
     interfaceIndex: Int,
     handle: UInt32? = nil,
     parent: UInt32? = nil,
-    hiCredit: Int,
-    loCredit: Int,
-    idleSlope: Int,
-    sendSlope: Int,
+    hiCredit: Int32,
+    loCredit: Int32,
+    idleSlope: Int32,
+    sendSlope: Int32,
     operation: NLMessage.Operation
   ) async throws {
     var qopt = tc_cbs_qopt()
-    qopt.hicredit = Int32(hiCredit)
-    qopt.locredit = Int32(loCredit)
-    qopt.idleslope = Int32(idleSlope)
-    qopt.sendslope = Int32(sendSlope)
+    qopt.hicredit = hiCredit
+    qopt.locredit = loCredit
+    qopt.idleslope = idleSlope
+    qopt.sendslope = sendSlope
     try await _tcRequest(
       interfaceIndex: interfaceIndex,
       kind: "cbs",
@@ -711,10 +711,10 @@ public extension RTNLLinkBridge {
   func add(
     handle: UInt32? = nil,
     parent: UInt32? = nil,
-    hiCredit: Int,
-    loCredit: Int,
-    idleSlope: Int,
-    sendSlope: Int,
+    hiCredit: Int32 = Int32.max,
+    loCredit: Int32 = Int32.min,
+    idleSlope: Int32,
+    sendSlope: Int32,
     updateIfPresent: Bool = true,
     socket: NLSocket
   ) async throws {
@@ -728,10 +728,10 @@ public extension RTNLLinkBridge {
   func remove(
     handle: UInt32? = nil,
     parent: UInt32? = nil,
-    hiCredit: Int,
-    loCredit: Int,
-    idleSlope: Int,
-    sendSlope: Int,
+    hiCredit: Int32,
+    loCredit: Int32,
+    idleSlope: Int32,
+    sendSlope: Int32,
     socket: NLSocket
   ) async throws {
     try await socket._qDiscRequest(
