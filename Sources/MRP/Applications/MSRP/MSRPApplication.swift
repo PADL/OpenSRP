@@ -19,9 +19,9 @@ import Logging
 
 public let MSRPEtherType: UInt16 = 0x22EA
 
-public protocol MSRPAwareBridge<P>: Bridge where P: AVBPort {
+protocol MSRPAwareBridge<P>: Bridge where P: AVBPort {
   func adjustCreditBasedShaper(
-    portID: P.ID,
+    port: P,
     srClass: SRclassID,
     idleSlope: Int,
     sendSlope: Int,

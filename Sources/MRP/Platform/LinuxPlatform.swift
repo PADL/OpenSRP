@@ -164,7 +164,7 @@ extension LinuxPort: AVBPort {
     500
   }
 
-  public var srClassPriorityMap: [SRclassID:SRclassPriority] {
+  public var srClassPriorityMap: [SRclassID: SRclassPriority] {
     get async throws {
       [:]
     }
@@ -218,6 +218,7 @@ Sendable {
   private let _txSocket: Socket
   fileprivate let _nlLinkSocket: NLSocket
   private let _nlNfLog: NFNLLog
+  private let _nlQDiscHandle: Int?
   private var _nlNfLogMonitorTask: Task<(), Error>!
   private var _nlLinkMonitorTask: Task<(), Error>!
   private let _bridgeName: String
@@ -228,11 +229,12 @@ Sendable {
   private var _linkLocalRegistrations = Set<FilterRegistration>()
   private var _linkLocalRxTasks = [LinkLocalRXTaskKey: Task<(), Error>]()
 
-  public init(name: String, netFilterGroup group: Int) throws {
+  public init(name: String, netFilterGroup group: Int, qDiscHandle: Int? = nil) throws {
+    _bridgeName = name
     _txSocket = try Socket(ring: IORing.shared, domain: sa_family_t(AF_PACKET), type: SOCK_RAW)
     _nlLinkSocket = try NLSocket(protocol: NETLINK_ROUTE)
     _nlNfLog = try NFNLLog(group: UInt16(group))
-    _bridgeName = name
+    _nlQDiscHandle = qDiscHandle
   }
 
   deinit {
@@ -575,4 +577,27 @@ extension LinuxBridge: MVRPAwareBridge {
   }
 }
 
+extension LinuxBridge: MSRPAwareBridge {
+  func adjustCreditBasedShaper(
+    port: P,
+    srClass: SRclassID,
+    idleSlope: Int,
+    sendSlope: Int,
+    hiCredit: Int,
+    loCredit: Int
+  ) async throws {
+    guard let parent = _nlQDiscHandle else {
+      throw MSRPFailure(systemID: 0, failureCode: .egressPortIsNotAvbCapable)
+    }
+    try await port._rtnl.add(
+      handle: UInt32(srClass.rawValue), // FIXME: correct class mapping
+      parent: UInt32(parent),
+      hiCredit: Int32(hiCredit),
+      loCredit: Int32(loCredit),
+      idleSlope: Int32(idleSlope),
+      sendSlope: Int32(sendSlope),
+      socket: _nlLinkSocket
+    )
+  }
+}
 #endif

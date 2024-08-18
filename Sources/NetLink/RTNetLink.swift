@@ -709,7 +709,7 @@ private extension NLSocket {
   }
 }
 
-public extension RTNLLinkBridge {
+public extension RTNLLink {
   func add(
     handle: UInt32? = nil,
     parent: UInt32? = nil,

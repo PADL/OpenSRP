@@ -128,7 +128,7 @@ extension MSRPAwareBridge {
     )
 
     try await adjustCreditBasedShaper(
-      portID: port.id,
+      port: port,
       srClass: .A,
       idleSlope: idleslopeA,
       sendSlope: sendslopeA,
@@ -154,7 +154,7 @@ extension MSRPAwareBridge {
     )
 
     try await adjustCreditBasedShaper(
-      portID: port.id,
+      port: port,
       srClass: .B,
       idleSlope: idleslopeB,
       sendSlope: sendslopeB,
