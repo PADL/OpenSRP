@@ -163,6 +163,12 @@ extension LinuxPort: AVBPort {
   public func getPortTcMaxLatency(for: SRclassPriority) -> Int {
     500
   }
+
+  public var srClassPriorityMap: [SRclassID:SRclassPriority] {
+    get async throws {
+      [:]
+    }
+  }
 }
 
 private extension LinuxPort {

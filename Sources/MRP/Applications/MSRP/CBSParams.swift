@@ -129,7 +129,7 @@ extension MSRPAwareBridge {
 
     try await adjustCreditBasedShaper(
       portID: port.id,
-      priority: portState.srClassPriorityMap[.A] ?? .CA,
+      srClass: .A,
       idleSlope: idleslopeA,
       sendSlope: sendslopeA,
       hiCredit: hicreditA,
@@ -155,7 +155,7 @@ extension MSRPAwareBridge {
 
     try await adjustCreditBasedShaper(
       portID: port.id,
-      priority: portState.srClassPriorityMap[.B] ?? .EE,
+      srClass: .B,
       idleSlope: idleslopeB,
       sendSlope: sendslopeB,
       hiCredit: hicreditB,

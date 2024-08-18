@@ -22,7 +22,7 @@ public let MSRPEtherType: UInt16 = 0x22EA
 public protocol MSRPAwareBridge<P>: Bridge where P: AVBPort {
   func adjustCreditBasedShaper(
     portID: P.ID,
-    priority: SRclassPriority,
+    srClass: SRclassID,
     idleSlope: Int,
     sendSlope: Int,
     hiCredit: Int,
