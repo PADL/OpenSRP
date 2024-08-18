@@ -42,7 +42,7 @@ Sendable, CustomStringConvertible,
   public required convenience init(object: NLObject) throws {
     guard object.messageType == RTM_NEWLINK || object.messageType == RTM_DELLINK else {
       debugPrint("Unknown message type \(object.messageType) returned")
-      throw Errno.invalidArgument
+      throw NLError.invalidArgument
     }
     if rtnl_link_is_bridge(object._obj) != 0 {
       self.init(reassigningSelfTo: RTNLLinkBridge(object) as! Self)
@@ -183,7 +183,7 @@ Sendable, CustomStringConvertible,
       var numVF = UInt32(0)
       let r = rtnl_link_get_num_vf(_obj, &numVF)
       if r < 0 {
-        throw Errno(rawValue: -r)
+        throw NLError(rawValue: -r)
       }
       return Int(numVF)
     }
@@ -448,7 +448,7 @@ public enum RTNLLinkMessage: NLObjectConstructible, Sendable {
     case RTM_DELLINK:
       self = try .del(RTNLLink(object: object))
     default:
-      throw Errno.invalidArgument
+      throw NLError.invalidArgument
     }
   }
 
@@ -560,7 +560,7 @@ Sendable, CustomStringConvertible,
   public convenience init(object: NLObject, type: rtnl_tc_type?) throws {
     guard object.messageType == RTM_NEWQDISC || object.messageType == RTM_DELQDISC else {
       debugPrint("Unknown message type \(object.messageType) returned")
-      throw Errno.invalidArgument
+      throw NLError.invalidArgument
     }
     if let type {
       switch type {

@@ -60,7 +60,7 @@ Sendable, Equatable, Hashable, CustomStringConvertible {
   fileprivate func construct() throws -> NLObjectConstructible {
     guard let _constructFromObject else {
       debugPrint("NLObject: no constructor registered")
-      throw Errno.invalidArgument
+      throw NLError.invalidArgument
     }
     return try _constructFromObject(self)
   }
@@ -155,7 +155,7 @@ private func NLSocket_CB_VALID(
       constructFromObject = NFNLLogMessage.init
     default:
       debugPrint("NLSocket_CB_VALID: unknown NL message \(nlmsg_get_proto(msg))")
-      throw Errno.invalidArgument
+      throw NLError.invalidArgument
     }
 
     let object = try NLObject(msg: msg, constructFromObject: constructFromObject)
@@ -228,7 +228,7 @@ Sendable {
   public let notifications = Channel()
 
   public init(protocol: Int32) throws {
-    guard let sk = nl_socket_alloc() else { throw Errno.noMemory }
+    guard let sk = nl_socket_alloc() else { throw NLError.noMemory }
     nl_socket_disable_seq_check(sk)
     _sk = sk
 
@@ -445,12 +445,17 @@ public struct NLError: Error, CustomStringConvertible {
   let rawValue: RawValue
 
   init(rawValue: RawValue) {
+    precondition(rawValue != NLE_SUCCESS)
     self.rawValue = rawValue
   }
 
   public var description: String {
     String(cString: nl_geterror(rawValue))
   }
+
+  public static let failure = NLError(rawValue: NLE_FAILURE)
+  public static let noMemory = NLError(rawValue: NLE_NOMEM)
+  public static let invalidArgument = NLError(rawValue: NLE_INVAL)
 }
 
 public extension Errno {
@@ -543,7 +548,7 @@ struct NLMessage: ~Copyable {
 
   init(type: CInt, flags: Flags) throws {
     _msg = nlmsg_alloc_simple(type, flags.rawValue)
-    guard _msg != nil else { throw Errno.noMemory }
+    guard _msg != nil else { throw NLError.noMemory }
   }
 
   init(type: CInt, operation: Operation) throws {
@@ -552,7 +557,7 @@ struct NLMessage: ~Copyable {
 
   init(hdr: UnsafeMutablePointer<nlmsghdr>) throws {
     _msg = nlmsg_convert(hdr)
-    guard _msg != nil else { throw Errno.noMemory }
+    guard _msg != nil else { throw NLError.noMemory }
   }
 
   init(consuming msg: OpaquePointer) { _msg = msg }
@@ -631,7 +636,7 @@ struct NLMessage: ~Copyable {
 
   func reserve(length: Int, pad: CInt = CInt(NLMSG_ALIGNTO)) throws -> UnsafeMutableRawPointer {
     let ptr = nlmsg_reserve(_msg, length, pad)
-    guard let ptr else { throw Errno.noMemory }
+    guard let ptr else { throw NLError.noMemory }
     return ptr
   }
 
@@ -643,7 +648,7 @@ struct NLMessage: ~Copyable {
     flags: CInt = 0
   ) throws -> UnsafeMutablePointer<nlmsghdr> {
     guard let msghdr = nlmsg_put(_msg, pid, seq, type, payload, flags) else {
-      throw Errno.noMemory
+      throw NLError.noMemory
     }
     return msghdr
   }
