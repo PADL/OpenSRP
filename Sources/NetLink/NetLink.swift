@@ -312,7 +312,7 @@ public final class NLSocket: @unchecked Sendable {
     if r == -NLE_AGAIN {
       errno = EAGAIN
     } else if r < 0 {
-      yield(sequence: 0, with: Result.failure(Errno(rawValue: -r)))
+      yield(sequence: 0, with: Result.failure(NLError(rawValue: -r)))
     }
   }
 
