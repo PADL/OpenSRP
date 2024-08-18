@@ -34,5 +34,8 @@ enum nldump {
         debugPrint(" vlan ID \(vlan.vlanID ?? 0) flags \(vlan.vlanFlags)")
       }
     }
+    for try await addr in try await socket.getAddresses(family: sa_family_t(AF_INET)) {
+      debugPrint("@\(addr.index) found address \(addr)")
+    }
   }
 }

@@ -16,10 +16,12 @@
 
 import AsyncAlgorithms
 import AsyncExtensions
+import CLinuxSockAddr
 import CNetLink
 import Dispatch
 import Glibc
 import Locking
+import SocketAddress
 import SystemPackage
 
 public protocol NLObjectConstructible: Sendable {
@@ -150,7 +152,25 @@ private func NLSocket_CB_VALID(
 
     switch nlmsg_get_proto(msg) {
     case NETLINK_ROUTE:
-      constructFromObject = RTNLLinkMessage.init
+      switch Int(hdr.nlmsg_type) {
+      case RTM_DELADDR:
+        fallthrough
+      case RTM_GETADDR:
+        fallthrough
+      case RTM_NEWADDR:
+        constructFromObject = NLAddress.init
+      case RTM_DELLINK:
+        fallthrough
+      case RTM_GETLINK:
+        fallthrough
+      case RTM_NEWLINK:
+        fallthrough
+      case RTM_SETLINK:
+        constructFromObject = RTNLLinkMessage.init
+      default:
+        debugPrint("NLSocket_CB_VALID: unknown NETLINK_ROUTE message type \(hdr.nlmsg_type)")
+        throw NLError.invalidArgument
+      }
     case NETLINK_NETFILTER:
       constructFromObject = NFNLLogMessage.init
     default:
@@ -478,7 +498,7 @@ func throwingNLError(_ body: () -> CInt) throws -> CInt {
 }
 
 struct NLAttribute {
-  var _nla: UnsafePointer<nlattr>
+  fileprivate var _nla: UnsafePointer<nlattr>
 
   var type: CInt {
     nla_type(_nla)
@@ -490,6 +510,107 @@ struct NLAttribute {
 
   func get(attrtype: CInt) -> UInt32 {
     nla_get_u32(_nla)
+  }
+}
+
+public struct NLAddress: Sendable, NLObjectConstructible, CustomStringConvertible {
+  private var _addr: NLObject
+
+  init() {
+    let addr = rtnl_addr_alloc()
+    _addr = NLObject(consumingObj: addr!)
+  }
+
+  init(addr: OpaquePointer) {
+    _addr = NLObject(obj: addr)
+  }
+
+  public init(object: NLObject) {
+    _addr = object
+  }
+
+  private var addr: OpaquePointer {
+    _addr._obj
+  }
+
+  public var label: String {
+    String(cString: rtnl_addr_get_label(addr))
+  }
+
+  public var index: Int {
+    Int(rtnl_addr_get_ifindex(addr))
+  }
+
+  public var family: sa_family_t {
+    sa_family_t(rtnl_addr_get_family(addr))
+  }
+
+  public var prefixLength: Int {
+    Int(rtnl_addr_get_prefixlen(addr))
+  }
+
+  public var scope: Int {
+    Int(rtnl_addr_get_scope(addr))
+  }
+
+  public var socketAddress: SocketAddress? {
+    do {
+      var ss = Glibc.sockaddr_storage()
+      var salen = socklen_t(0)
+
+      _ = try withUnsafeMutablePointer(to: &ss) {
+        try $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+          try throwingNLError {
+            nl_addr_fill_sockaddr(addr, sa, &salen)
+          }
+        }
+      }
+
+      return ss
+    } catch {
+      return nil
+    }
+  }
+
+  public var description: String {
+    var af = [CChar](repeating: 0, count: 128)
+    let _af = af.withUnsafeMutableBytes { nl_af2str(
+      rtnl_addr_get_family(addr),
+      $0.baseAddress,
+      $0.count
+    ) }
+    var local = [CChar](repeating: 0, count: 128)
+    let _local = local.withUnsafeMutableBytes { nl_addr2str(
+      rtnl_addr_get_local(addr),
+      $0.baseAddress,
+      $0.count
+    ) }
+    return "NLAddress(family: \(String(cString: _af!)), local: \(String(cString: _local!)), index: \(index))"
+  }
+
+  public var localAddress: NLAddress? {
+    guard let addr = rtnl_addr_get_local(addr) else { return nil }
+    return NLAddress(addr: addr)
+  }
+
+  public var peerAddress: NLAddress? {
+    guard let addr = rtnl_addr_get_peer(addr) else { return nil }
+    return NLAddress(addr: addr)
+  }
+
+  public var broadcastAddress: NLAddress? {
+    guard let addr = rtnl_addr_get_broadcast(addr) else { return nil }
+    return NLAddress(addr: addr)
+  }
+
+  public var multicastAddress: NLAddress? {
+    guard let addr = rtnl_addr_get_multicast(addr) else { return nil }
+    return NLAddress(addr: addr)
+  }
+
+  public var anycastAddress: NLAddress? {
+    guard let addr = rtnl_addr_get_anycast(addr) else { return nil }
+    return NLAddress(addr: addr)
   }
 }
 

@@ -94,9 +94,9 @@ Sendable, CustomStringConvertible,
     )
   }
 
-  public typealias Address = (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8)
+  public typealias LinkAddress = (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8)
 
-  public static func parseMacAddressString(_ macAddress: String) throws -> Address {
+  public static func parseMacAddressString(_ macAddress: String) throws -> LinkAddress {
     let ll = try sockaddr_ll(
       family: sa_family_t(AF_PACKET),
       presentationAddress: macAddress
@@ -111,7 +111,7 @@ Sendable, CustomStringConvertible,
     )
   }
 
-  private func _makeAddress(_ addr: OpaquePointer) -> Address {
+  private func _makeAddress(_ addr: OpaquePointer) -> LinkAddress {
     var mac = [UInt8](repeating: 0, count: Int(nl_addr_get_len(addr)))
     precondition(mac.count == Int(ETH_ALEN))
     _ = mac.withUnsafeMutableBytes {
@@ -120,12 +120,20 @@ Sendable, CustomStringConvertible,
     return (mac[0], mac[1], mac[2], mac[3], mac[4], mac[5])
   }
 
-  public var address: Address {
+  public var address: LinkAddress {
     _makeAddress(rtnl_link_get_addr(_obj))
   }
 
-  public var broadcastAddress: Address {
+  public var nlAddress: NLAddress {
+    NLAddress(addr: rtnl_link_get_addr(_obj))
+  }
+
+  public var broadcastAddress: LinkAddress {
     _makeAddress(rtnl_link_get_broadcast(_obj))
+  }
+
+  public var nlBroadcastAddress: NLAddress {
+    NLAddress(addr: rtnl_link_get_broadcast(_obj))
   }
 
   public var family: sa_family_t {
@@ -276,7 +284,7 @@ public final class RTNLLinkBridge: RTNLLink {
 
   public func add(
     link: RTNLLink,
-    groupAddresses: [Address],
+    groupAddresses: [LinkAddress],
     vlanID: UInt16? = nil,
     updateIfPresent: Bool = true,
     socket: NLSocket
@@ -292,7 +300,7 @@ public final class RTNLLinkBridge: RTNLLink {
 
   public func remove(
     link: RTNLLink,
-    groupAddresses: [Address],
+    groupAddresses: [LinkAddress],
     vlanID: UInt16? = nil,
     socket: NLSocket
   ) async throws {
@@ -478,6 +486,17 @@ public extension NLSocket {
       .eraseToAnyAsyncSequence()
   }
 
+  func getAddresses(family: sa_family_t) async throws -> AnyAsyncSequence<NLAddress> {
+    let message = try NLMessage(socket: self, type: RTM_GETADDR, flags: .dump)
+    var hdr = rtgenmsg()
+    hdr.rtgen_family = UInt8(family)
+    try withUnsafeBytes(of: &hdr) {
+      try message.append(Array($0))
+    }
+    return try streamRequest(message: message).map { $0 as! NLAddress }
+      .eraseToAnyAsyncSequence()
+  }
+
   func subscribeLinks() throws {
     try add(membership: RTNLGRP_LINK)
   }
@@ -514,7 +533,7 @@ public extension NLSocket {
   fileprivate func _groupRequest(
     bridgeIndex: Int,
     interfaceIndex: Int,
-    groupAddresses: [RTNLLink.Address],
+    groupAddresses: [RTNLLink.LinkAddress],
     vlanID: UInt16? = nil,
     flags: UInt8 = 0,
     operation: NLMessage.Operation
