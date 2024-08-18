@@ -65,8 +65,8 @@ Sendable, CustomStringConvertible,
     Int(rtnl_link_get_ifindex(_obj))
   }
 
-  public var mtu: Int {
-    Int(rtnl_link_get_mtu(_obj))
+  public var mtu: UInt {
+    UInt(rtnl_link_get_mtu(_obj))
   }
 
   public var description: String {
@@ -250,22 +250,42 @@ public final class RTNLLinkBridge: RTNLLink {
   }
 
   public func add(vlans: Set<UInt16>, flags: UInt16 = 0, socket: NLSocket) async throws {
-    try await socket.addOrRemove(
+    try await socket._vlanRequest(
       vlans: vlans,
       interfaceIndex: index,
       flags: flags,
       moreFlags: _bridgeFlags,
-      isAdd: true
+      operation: .add
+    )
+  }
+
+  public func addOrUpdate(vlans: Set<UInt16>, flags: UInt16 = 0, socket: NLSocket) async throws {
+    try await socket._vlanRequest(
+      vlans: vlans,
+      interfaceIndex: index,
+      flags: flags,
+      moreFlags: _bridgeFlags,
+      operation: .addOrUpdate
+    )
+  }
+
+  public func update(vlans: Set<UInt16>, flags: UInt16 = 0, socket: NLSocket) async throws {
+    try await socket._vlanRequest(
+      vlans: vlans,
+      interfaceIndex: index,
+      flags: flags,
+      moreFlags: _bridgeFlags,
+      operation: .update
     )
   }
 
   public func remove(vlans: Set<UInt16>, flags: UInt16 = 0, socket: NLSocket) async throws {
-    try await socket.addOrRemove(
+    try await socket._vlanRequest(
       vlans: vlans,
       interfaceIndex: index,
       flags: flags,
       moreFlags: _bridgeFlags,
-      isAdd: false
+      operation: .delete
     )
   }
 
@@ -275,12 +295,42 @@ public final class RTNLLinkBridge: RTNLLink {
     vlanID: UInt16? = nil,
     socket: NLSocket
   ) async throws {
-    try await socket.addOrRemove(
+    try await socket._groupRequest(
       bridgeIndex: index,
       interfaceIndex: link.index,
       groupAddresses: groupAddresses,
       vlanID: vlanID,
-      isAdd: true
+      operation: .add
+    )
+  }
+
+  public func addOrUpdate(
+    link: RTNLLink,
+    groupAddresses: [Address],
+    vlanID: UInt16? = nil,
+    socket: NLSocket
+  ) async throws {
+    try await socket._groupRequest(
+      bridgeIndex: index,
+      interfaceIndex: link.index,
+      groupAddresses: groupAddresses,
+      vlanID: vlanID,
+      operation: .addOrUpdate
+    )
+  }
+
+  public func update(
+    link: RTNLLink,
+    groupAddresses: [Address],
+    vlanID: UInt16? = nil,
+    socket: NLSocket
+  ) async throws {
+    try await socket._groupRequest(
+      bridgeIndex: index,
+      interfaceIndex: link.index,
+      groupAddresses: groupAddresses,
+      vlanID: vlanID,
+      operation: .update
     )
   }
 
@@ -290,12 +340,12 @@ public final class RTNLLinkBridge: RTNLLink {
     vlanID: UInt16? = nil,
     socket: NLSocket
   ) async throws {
-    try await socket.addOrRemove(
+    try await socket._groupRequest(
       bridgeIndex: index,
       interfaceIndex: link.index,
       groupAddresses: groupAddresses,
       vlanID: vlanID,
-      isAdd: false
+      operation: .delete
     )
   }
 
@@ -321,7 +371,7 @@ public final class RTNLLinkBridge: RTNLLink {
   public var bridgeHWMode: UInt16 {
     get throws {
       var hwmode = UInt16(0)
-      try throwingErrno {
+      try throwingNLError {
         rtnl_link_bridge_get_hwmode(_obj, &hwmode)
       }
       return hwmode
@@ -419,13 +469,13 @@ public final class RTNLLinkVLAN: RTNLLink {
 
 public extension NLSocket {
   func enslave(link slave: RTNLLink, to master: RTNLLink) throws {
-    try throwingErrno {
+    try throwingNLError {
       rtnl_link_enslave(_sk, master._obj, slave._obj)
     }
   }
 
   func release(link slave: RTNLLink) throws {
-    try throwingErrno {
+    try throwingNLError {
       rtnl_link_release(_sk, slave._obj)
     }
   }
@@ -458,7 +508,7 @@ public enum RTNLLinkMessage: NLObjectConstructible, Sendable {
 
 public extension NLSocket {
   func getLinks(family: sa_family_t) async throws -> AnyAsyncSequence<RTNLLink> {
-    let message = try NLMessage(socket: self, type: RTM_GETLINK, flags: NLM_F_DUMP)
+    let message = try NLMessage(socket: self, type: RTM_GETLINK, flags: .dump)
     var hdr = ifinfomsg()
     hdr.ifi_family = UInt8(family)
     try withUnsafeBytes(of: &hdr) {
@@ -480,17 +530,17 @@ public extension NLSocket {
     try drop(membership: RTNLGRP_LINK)
   }
 
-  fileprivate func addOrRemove(
+  fileprivate func _vlanRequest(
     vlans: Set<UInt16>,
     interfaceIndex: Int,
     flags: UInt16 = 0,
     moreFlags: UInt16 = 0,
-    isAdd: Bool
+    operation: NLMessage.Operation
   ) async throws {
     let message = try NLMessage(
       socket: self,
-      type: isAdd ? RTM_SETLINK : RTM_DELLINK,
-      flags: (isAdd ? NLM_F_EXCL : 0) | NLM_F_CREATE
+      type: operation != .delete ? RTM_SETLINK : RTM_DELLINK,
+      operation: operation
     )
     try message.appendIfInfo(index: interfaceIndex)
     let attr = message.nestStart(attr: CInt(IFLA_AF_SPEC))
@@ -505,15 +555,19 @@ public extension NLSocket {
     try await ackRequest(message: message)
   }
 
-  fileprivate func addOrRemove(
+  fileprivate func _groupRequest(
     bridgeIndex: Int,
     interfaceIndex: Int,
     groupAddresses: [RTNLLink.Address],
     vlanID: UInt16? = nil,
     flags: UInt8 = 0,
-    isAdd: Bool
+    operation: NLMessage.Operation
   ) async throws {
-    let message = try NLMessage(socket: self, type: isAdd ? RTM_NEWMDB : RTM_DELMDB)
+    let message = try NLMessage(
+      socket: self,
+      type: operation != .delete ? RTM_NEWMDB : RTM_DELMDB,
+      flags: operation.flags
+    )
     var portMsg = br_port_msg(family: UInt8(AF_BRIDGE), ifindex: UInt32(bridgeIndex))
     try withUnsafeBytes(of: &portMsg) {
       try message.append(Array($0))
@@ -531,19 +585,265 @@ public extension NLSocket {
     }
     try await ackRequest(message: message)
   }
+}
 
-  fileprivate func addOrRemove(
-    bridgeIndex: Int,
-    interfaceIndex: Int,
-    idleSlope: Int,
-    sendSlope: Int,
-    hiCredit: Int,
-    loCredit: Int,
-    flags: UInt8 = 0,
-    isAdd: Bool
-  ) async throws {
+public class RTNLTCBase: NLObjectConstructible, @unchecked Sendable, CustomStringConvertible,
+  RTNLLinkFactory
+{
+  private let _object: NLObject
+
+  fileprivate init(_ object: NLObject) {
+    _object = object
   }
 
+  public required convenience init(object: NLObject) throws {
+    try self.init(object: object, type: nil)
+  }
+
+  public convenience init(object: NLObject, type: rtnl_tc_type?) throws {
+    guard object.messageType == RTM_NEWQDISC || object.messageType == RTM_DELQDISC else {
+      debugPrint("Unknown message type \(object.messageType) returned")
+      throw Errno.invalidArgument
+    }
+    if let type {
+      switch type {
+      case RTNL_TC_TYPE_QDISC:
+        self.init(reassigningSelfTo: RTNLTCQDisc(object) as! Self)
+      case RTNL_TC_TYPE_CLASS:
+        self.init(reassigningSelfTo: RTNLTCClass(object) as! Self)
+      case RTNL_TC_TYPE_CLS:
+        self.init(reassigningSelfTo: RTNLTCClassifier(object) as! Self)
+      default:
+        self.init(object)
+      }
+    } else {
+      self.init(object)
+    }
+  }
+
+  fileprivate var _obj: OpaquePointer {
+    _object._obj
+  }
+
+  public var name: String {
+    String(cString: rtnl_link_get_name(_obj))
+  }
+
+  public var index: Int {
+    get {
+      Int(rtnl_tc_get_ifindex(_obj))
+    }
+    set {
+      rtnl_tc_set_ifindex(_obj, Int32(newValue))
+    }
+  }
+
+  public var mtu: UInt32 {
+    get {
+      rtnl_tc_get_mtu(_obj)
+    }
+    set {
+      rtnl_tc_set_mtu(_obj, newValue)
+    }
+  }
+
+  public var handle: UInt32 {
+    get {
+      rtnl_tc_get_handle(_obj)
+    }
+    set {
+      rtnl_tc_set_handle(_obj, newValue)
+    }
+  }
+
+  public var parent: UInt32 {
+    get {
+      rtnl_tc_get_parent(_obj)
+    }
+    set {
+      rtnl_tc_set_parent(_obj, newValue)
+    }
+  }
+
+  public var linkType: UInt32 {
+    get {
+      rtnl_tc_get_linktype(_obj)
+    }
+    set {
+      rtnl_tc_set_linktype(_obj, newValue)
+    }
+  }
+
+  public var kind: String {
+    get {
+      String(cString: rtnl_tc_get_kind(_obj))
+    }
+    set {
+      rtnl_tc_set_kind(_obj, newValue)
+    }
+  }
+
+  public var chain: UInt32 {
+    get throws {
+      var chain: UInt32 = 0
+      try throwingNLError {
+        rtnl_tc_get_chain(_obj, &chain)
+      }
+      return chain
+    }
+  }
+
+  public func set(chain: UInt32) {
+    rtnl_tc_set_chain(_obj, chain)
+  }
+
+  public var description: String {
+    "\(Swift.type(of: self))(index: \(index), handle: \(handle), parent: \(parent), kind: \(kind))"
+  }
+}
+
+public final class RTNLTCQDisc: RTNLTCBase {
+  public convenience init() {
+    self.init(object: NLObject(consumingObj: rtnl_qdisc_alloc()))
+  }
+
+  public required convenience init(object: NLObject) {
+    self.init(object)
+  }
+}
+
+public final class RTNLTCClassifier: RTNLTCBase {}
+
+public final class RTNLTCClass: RTNLTCBase {}
+
+private extension NLSocket {
+  func _tcRequest(
+    family: sa_family_t = sa_family_t(AF_UNSPEC),
+    interfaceIndex: Int,
+    kind: String? = nil,
+    handle: UInt32? = nil,
+    parent: UInt32? = nil,
+    options: UnsafePointer<some Any>,
+    optionsAttribute: CInt,
+    operation: NLMessage.Operation
+  ) async throws {
+    var options = options
+
+    if handle == nil, parent == nil {
+      throw NLError(rawValue: NLE_MISSING_ATTR)
+    }
+
+    let message = try NLMessage(
+      socket: self,
+      type: operation != .delete ? RTM_NEWQDISC : RTM_DELQDISC,
+      operation: operation
+    )
+
+    var tchdr = tcmsg()
+    tchdr.tcm_family = UInt8(family)
+    tchdr.tcm_ifindex = CInt(interfaceIndex)
+    tchdr.tcm_parent = parent ?? 0
+    tchdr.tcm_handle = handle ?? 0
+    try message.append(opaque: &tchdr)
+
+    if let kind {
+      try message.put(string: kind, for: CInt(TCA_KIND))
+    }
+
+    let attr = message.nestStart(attr: CInt(TCA_OPTIONS))
+    try message.put(opaque: &options, for: optionsAttribute)
+    message.nestEnd(attr: attr)
+
+    try await ackRequest(message: message)
+  }
+
+  func _qDiscRequest(
+    interfaceIndex: Int,
+    handle: UInt32? = nil,
+    parent: UInt32? = nil,
+    hiCredit: Int,
+    loCredit: Int,
+    idleSlope: Int,
+    sendSlope: Int,
+    operation: NLMessage.Operation
+  ) async throws {
+    var qopt = tc_cbs_qopt()
+    qopt.hicredit = Int32(hiCredit)
+    qopt.locredit = Int32(loCredit)
+    qopt.idleslope = Int32(idleSlope)
+    qopt.sendslope = Int32(sendSlope)
+    try await _tcRequest(
+      interfaceIndex: interfaceIndex,
+      kind: "cbs",
+      handle: handle,
+      parent: parent,
+      options: &qopt,
+      optionsAttribute: CInt(TCA_CBS_PARMS),
+      operation: operation
+    )
+  }
+}
+
+public extension RTNLLinkBridge {
+  func add(
+    handle: UInt32? = nil,
+    parent: UInt32? = nil,
+    hiCredit: Int,
+    loCredit: Int,
+    idleSlope: Int,
+    sendSlope: Int,
+    socket: NLSocket
+  ) async throws {
+    try await socket._qDiscRequest(
+      interfaceIndex: index, handle: handle, parent: parent, hiCredit: hiCredit, loCredit: loCredit,
+      idleSlope: idleSlope, sendSlope: sendSlope, operation: .add
+    )
+  }
+
+  func addOrUpdate(
+    handle: UInt32? = nil,
+    parent: UInt32? = nil,
+    hiCredit: Int,
+    loCredit: Int,
+    idleSlope: Int,
+    sendSlope: Int,
+    socket: NLSocket
+  ) async throws {
+    try await socket._qDiscRequest(
+      interfaceIndex: index, handle: handle, parent: parent, hiCredit: hiCredit, loCredit: loCredit,
+      idleSlope: idleSlope, sendSlope: sendSlope, operation: .addOrUpdate
+    )
+  }
+
+  func update(
+    handle: UInt32? = nil,
+    parent: UInt32? = nil,
+    hiCredit: Int,
+    loCredit: Int,
+    idleSlope: Int,
+    sendSlope: Int,
+    socket: NLSocket
+  ) async throws {
+    try await socket._qDiscRequest(
+      interfaceIndex: index, handle: handle, parent: parent, hiCredit: hiCredit, loCredit: loCredit,
+      idleSlope: idleSlope, sendSlope: sendSlope, operation: .update
+    )
+  }
+
+  func remove(
+    handle: UInt32? = nil,
+    parent: UInt32? = nil,
+    hiCredit: Int,
+    loCredit: Int,
+    idleSlope: Int,
+    sendSlope: Int,
+    socket: NLSocket
+  ) async throws {
+    try await socket._qDiscRequest(
+      interfaceIndex: index, handle: handle, parent: parent, hiCredit: hiCredit, loCredit: loCredit,
+      idleSlope: idleSlope, sendSlope: sendSlope, operation: .delete
+    )
+  }
 }
 
 extension UnsafePointer {

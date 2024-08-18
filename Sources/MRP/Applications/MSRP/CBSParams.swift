@@ -118,12 +118,12 @@ extension MSRPAwareBridge {
       streams: streams,
       srClassID: .A
     )
-    let sendslopeA = idleslopeA - port.linkSpeed
+    let sendslopeA = idleslopeA - Int(port.linkSpeed)
     let (hicreditA, locreditA) = calcClassACredits(
       idleslopeA: idleslopeA,
       sendslopeA: sendslopeA,
-      linkSpeed: port.linkSpeed,
-      frameNonSr: port.mtu,
+      linkSpeed: Int(port.linkSpeed),
+      frameNonSr: Int(port.mtu),
       maxFrameSizeA: maxFrameSizeA
     )
 
@@ -142,13 +142,13 @@ extension MSRPAwareBridge {
       streams: streams,
       srClassID: .B
     )
-    let sendslopeB = idleslopeB - port.linkSpeed
+    let sendslopeB = idleslopeB - Int(port.linkSpeed)
     let (hicreditB, locreditB) = calcClassBCredits(
       idleslopeA: idleslopeA,
       idleslopeB: idleslopeB,
       sendslopeB: sendslopeB,
-      linkSpeed: port.linkSpeed,
-      frameNonSr: port.mtu,
+      linkSpeed: Int(port.linkSpeed),
+      frameNonSr: Int(port.mtu),
       maxFrameSizeA: maxFrameSizeA,
       maxFrameSizeB: maxFrameSizeB
     )

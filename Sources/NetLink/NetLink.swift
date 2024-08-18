@@ -69,7 +69,7 @@ Sendable, Equatable, Hashable, CustomStringConvertible {
     var obj: OpaquePointer!
 
     try withUnsafeMutablePointer(to: &obj) { objRef in
-      _ = try throwingErrno {
+      _ = try throwingNLError {
         nl_msg_parse(msg, { obj, objRef in
           nl_object_get(obj)
           objRef!
@@ -231,7 +231,7 @@ public final class NLSocket: @unchecked Sendable {
     nl_socket_disable_seq_check(sk)
     _sk = sk
 
-    try throwingErrno {
+    try throwingNLError {
       nl_connect(sk, `protocol`)
     }
     nl_socket_set_nonblocking(sk)
@@ -279,19 +279,19 @@ public final class NLSocket: @unchecked Sendable {
   }
 
   public func connect(proto: CInt) throws {
-    try throwingErrno { nl_connect(_sk, proto) }
+    try throwingNLError { nl_connect(_sk, proto) }
   }
 
   public func add(membership group: rtnetlink_groups) throws {
-    try throwingErrno { nl_socket_add_membership(_sk, CInt(group.rawValue)) }
+    try throwingNLError { nl_socket_add_membership(_sk, CInt(group.rawValue)) }
   }
 
   public func drop(membership group: rtnetlink_groups) throws {
-    try throwingErrno { nl_socket_drop_membership(_sk, CInt(group.rawValue)) }
+    try throwingNLError { nl_socket_drop_membership(_sk, CInt(group.rawValue)) }
   }
 
   public func setPassCred(_ value: Bool) throws {
-    try throwingErrno { nl_socket_set_passcred(_sk, value ? 1 : 0) }
+    try throwingNLError { nl_socket_set_passcred(_sk, value ? 1 : 0) }
   }
 
   public var messageBufferSize: Int {
@@ -438,11 +438,35 @@ public final class NLSocket: @unchecked Sendable {
   }
 }
 
+public struct NLError: Error, CustomStringConvertible {
+  typealias RawValue = CInt
+
+  let rawValue: RawValue
+
+  init(rawValue: RawValue) {
+    self.rawValue = rawValue
+  }
+
+  public var description: String {
+    String(cString: nl_geterror(rawValue))
+  }
+}
+
+public extension Errno {
+  func throwingNLError() throws {
+    throw asNLError()
+  }
+
+  func asNLError() -> NLError {
+    NLError(rawValue: rawValue)
+  }
+}
+
 @discardableResult
-func throwingErrno(_ body: () -> CInt) throws -> CInt {
+func throwingNLError(_ body: () -> CInt) throws -> CInt {
   let r = body()
   guard r >= 0 else {
-    throw Errno(rawValue: -r)
+    throw NLError(rawValue: -r)
   }
   return r
 }
@@ -464,11 +488,65 @@ struct NLAttribute {
 }
 
 struct NLMessage: ~Copyable {
+  struct Flags: OptionSet {
+    typealias RawValue = CInt
+
+    var rawValue: RawValue
+
+    init(rawValue: RawValue) {
+      self.rawValue = rawValue
+    }
+
+    static let request = Flags(rawValue: NLM_F_REQUEST)
+    static let multi = Flags(rawValue: NLM_F_MULTI)
+    static let ack = Flags(rawValue: NLM_F_ACK)
+    static let echo = Flags(rawValue: NLM_F_ECHO)
+    static let dump = Flags(rawValue: NLM_F_DUMP)
+    static let dumpInterrupted = Flags(rawValue: NLM_F_DUMP_INTR)
+    static let dumpFiltered = Flags(rawValue: NLM_F_DUMP_FILTERED)
+    static let root = Flags(rawValue: NLM_F_ROOT)
+    static let match = Flags(rawValue: NLM_F_MATCH)
+    static let atomic = Flags(rawValue: NLM_F_ATOMIC)
+    static let replace = Flags(rawValue: NLM_F_REPLACE)
+    static let exclusive = Flags(rawValue: NLM_F_EXCL)
+    static let create = Flags(rawValue: NLM_F_CREATE)
+    static let append = Flags(rawValue: NLM_F_APPEND)
+    static let nonRecursive = Flags(rawValue: NLM_F_NONREC)
+    static let bulk = Flags(rawValue: NLM_F_BULK)
+    static let capped = Flags(rawValue: NLM_F_CAPPED)
+    static let extendedAckTlvs = Flags(rawValue: NLM_F_ACK_TLVS)
+
+    static let _add = Flags([.exclusive, .create])
+    static let _addOrUpdate = Flags([.create, .replace])
+    static let _update = Flags([.replace])
+    static let _delete = Flags([.exclusive])
+  }
+
+  enum Operation {
+    case add
+    case addOrUpdate
+    case update
+    case delete
+
+    var flags: Flags {
+      switch self {
+      case .add: Flags._add
+      case .addOrUpdate: Flags._addOrUpdate
+      case .update: Flags._update
+      case .delete: Flags._delete
+      }
+    }
+  }
+
   var _msg: OpaquePointer!
 
-  init(type: CInt, flags: CInt) throws {
-    _msg = nlmsg_alloc_simple(type, flags)
+  init(type: CInt, flags: Flags) throws {
+    _msg = nlmsg_alloc_simple(type, flags.rawValue)
     guard _msg != nil else { throw Errno.noMemory }
+  }
+
+  init(type: CInt, operation: Operation) throws {
+    try self.init(type: type, flags: operation.flags)
   }
 
   init(hdr: UnsafeMutablePointer<nlmsghdr>) throws {
@@ -476,23 +554,33 @@ struct NLMessage: ~Copyable {
     guard _msg != nil else { throw Errno.noMemory }
   }
 
+  init(consuming msg: OpaquePointer) { _msg = msg }
+
   init(
     socket: NLSocket,
     type: Int,
-    flags: Int32 = 0
+    flags: Flags = []
   ) throws {
     try self.init(seq: socket.useNextSequenceNumber(), type: type, flags: flags)
+  }
+
+  init(
+    socket: NLSocket,
+    type: Int,
+    operation: Operation
+  ) throws {
+    try self.init(socket: socket, type: type, flags: operation.flags)
   }
 
   private init(
     pid: UInt32 = UInt32(NL_AUTO_PID),
     seq: UInt32 = UInt32(NL_AUTO_SEQ),
     type: Int,
-    flags: Int32 = 0
+    flags: Flags = []
   ) throws {
     var nlh = nlmsghdr()
     nlh.nlmsg_type = UInt16(type)
-    nlh.nlmsg_flags = UInt16(flags)
+    nlh.nlmsg_flags = UInt16(flags.rawValue)
     nlh.nlmsg_seq = seq
     nlh.nlmsg_pid = pid
 
@@ -501,10 +589,16 @@ struct NLMessage: ~Copyable {
 
   func append(_ data: [UInt8], pad: CInt = CInt(NLMSG_ALIGNTO)) throws {
     var data = data
-    try throwingErrno {
+    try throwingNLError {
       data.withUnsafeMutableBufferPointer {
         nlmsg_append(_msg, $0.baseAddress, $0.count, pad)
       }
+    }
+  }
+
+  func append(opaque value: UnsafePointer<some Any>) throws {
+    _ = try withUnsafeBytes(of: value.pointee) { value in
+      try append(Array(value))
     }
   }
 
@@ -531,7 +625,7 @@ struct NLMessage: ~Copyable {
   }
 
   func expand(to newlen: Int) throws {
-    try throwingErrno { nlmsg_expand(_msg, newlen) }
+    try throwingNLError { nlmsg_expand(_msg, newlen) }
   }
 
   func reserve(length: Int, pad: CInt = CInt(NLMSG_ALIGNTO)) throws -> UnsafeMutableRawPointer {
@@ -554,24 +648,24 @@ struct NLMessage: ~Copyable {
   }
 
   func put(u8 value: UInt8, for attrtype: CInt) throws {
-    try throwingErrno { nla_put_u8(_msg, attrtype, value) }
+    try throwingNLError { nla_put_u8(_msg, attrtype, value) }
   }
 
   func put(u16 value: UInt16, for attrtype: CInt) throws {
-    try throwingErrno { nla_put_u16(_msg, attrtype, value) }
+    try throwingNLError { nla_put_u16(_msg, attrtype, value) }
   }
 
   func put(u32 value: UInt32, for attrtype: CInt) throws {
-    try throwingErrno { nla_put_u32(_msg, attrtype, value) }
+    try throwingNLError { nla_put_u32(_msg, attrtype, value) }
   }
 
   func put(u64 value: UInt64, for attrtype: CInt) throws {
-    try throwingErrno { nla_put_u64(_msg, attrtype, value) }
+    try throwingNLError { nla_put_u64(_msg, attrtype, value) }
   }
 
   func put(data value: [UInt8], for attrtype: CInt) throws {
     _ = try value.withUnsafeBufferPointer { value in
-      try throwingErrno {
+      try throwingNLError {
         nla_put(_msg, attrtype, Int32(value.count), value.baseAddress)
       }
     }
@@ -579,9 +673,15 @@ struct NLMessage: ~Copyable {
 
   func put(opaque value: UnsafePointer<some Any>, for attrtype: CInt) throws {
     _ = try withUnsafeBytes(of: value.pointee) { value in
-      try throwingErrno {
+      try throwingNLError {
         nla_put(_msg, attrtype, Int32(value.count), value.baseAddress)
       }
+    }
+  }
+
+  func put(string value: String, for attrtype: CInt) throws {
+    try throwingNLError {
+      nla_put_string(_msg, attrtype, value)
     }
   }
 
@@ -591,7 +691,7 @@ struct NLMessage: ~Copyable {
   }
 
   func send(on socket: NLSocket) throws {
-    try throwingErrno { nl_send_auto(socket._sk, _msg) }
+    try throwingNLError { nl_send_auto(socket._sk, _msg) }
   }
 
   deinit {

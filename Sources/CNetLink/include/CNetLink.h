@@ -33,3 +33,5 @@
 #include <netlink/netfilter/log.h>
 #include <netlink/netfilter/log_msg.h>
 
+int rtnl_tc_msg_build(struct rtnl_tc *tc, int type, int flags,
+                      struct nl_msg **result);

@@ -146,11 +146,11 @@ public struct LinuxPort: Port, Sendable, CustomStringConvertible {
     return Set(vlans.map { VLAN(id: $0) })
   }
 
-  public var mtu: Int {
+  public var mtu: UInt {
     _rtnl.mtu
   }
 
-  public var linkSpeed: Int {
+  public var linkSpeed: UInt {
     1_000_000
   }
 }
@@ -515,7 +515,7 @@ fileprivate final class FilterRegistration: Equatable, Hashable, Sendable, Custo
       index: port.id
     ))
 
-    return try await rxSocket.receiveMessages(count: port._rtnl.mtu).compactMap { message in
+    return try await rxSocket.receiveMessages(count: Int(port._rtnl.mtu)).compactMap { message in
       var deserializationContext = DeserializationContext(message.buffer)
       return try? IEEE802Packet(deserializationContext: &deserializationContext)
     }.eraseToAnyAsyncSequence()

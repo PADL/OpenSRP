@@ -32,10 +32,10 @@ public protocol Port: Hashable, Sendable, Identifiable where ID: Hashable & Send
   var vlans: Set<VLAN> { get }
 
   // MTU in octets
-  var mtu: Int { get }
+  var mtu: UInt { get }
 
   // link speed in kbps
-  var linkSpeed: Int { get }
+  var linkSpeed: UInt { get }
 }
 
 public protocol AVBPort: Port {
