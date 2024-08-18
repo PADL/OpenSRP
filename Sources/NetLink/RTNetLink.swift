@@ -673,9 +673,11 @@ private extension NLSocket {
       try message.put(string: kind, for: CInt(TCA_KIND))
     }
 
-    let attr = message.nestStart(attr: CInt(TCA_OPTIONS))
-    try message.put(opaque: &options, for: optionsAttribute)
-    message.nestEnd(attr: attr)
+    if operation != .delete {
+      let attr = message.nestStart(attr: CInt(TCA_OPTIONS))
+      try message.put(opaque: &options, for: optionsAttribute)
+      message.nestEnd(attr: attr)
+    }
 
     try await ackRequest(message: message)
   }
@@ -684,10 +686,10 @@ private extension NLSocket {
     interfaceIndex: Int,
     handle: UInt32? = nil,
     parent: UInt32? = nil,
-    hiCredit: Int32,
-    loCredit: Int32,
-    idleSlope: Int32,
-    sendSlope: Int32,
+    hiCredit: Int32 = Int32.max,
+    loCredit: Int32 = Int32.min,
+    idleSlope: Int32 = 0,
+    sendSlope: Int32 = 0,
     operation: NLMessage.Operation
   ) async throws {
     var qopt = tc_cbs_qopt()
@@ -728,15 +730,13 @@ public extension RTNLLinkBridge {
   func remove(
     handle: UInt32? = nil,
     parent: UInt32? = nil,
-    hiCredit: Int32,
-    loCredit: Int32,
-    idleSlope: Int32,
-    sendSlope: Int32,
     socket: NLSocket
   ) async throws {
     try await socket._qDiscRequest(
-      interfaceIndex: index, handle: handle, parent: parent, hiCredit: hiCredit, loCredit: loCredit,
-      idleSlope: idleSlope, sendSlope: sendSlope, operation: .delete
+      interfaceIndex: index,
+      handle: handle,
+      parent: parent,
+      operation: .delete
     )
   }
 }
