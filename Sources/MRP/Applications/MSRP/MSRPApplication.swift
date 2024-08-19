@@ -119,6 +119,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
   var _portStates = ManagedCriticalState<[P.ID: MSRPPortState<P>]>([:])
   let _mmrp: MMRPApplication<P>?
   var _priorityMapNotificationTask: Task<(), Error>?
+  let _deltaBandwidths: [SRclassID: Int]
 
   public init(
     controller: MRPController<P>,
@@ -126,7 +127,8 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     maxFanInPorts: Int = 0,
     latencyMaxFrameSize: UInt16 = 2000,
     srPVid: VLAN = VLAN(id: 2),
-    maxSRClass: SRclassID = .B
+    maxSRClass: SRclassID = .B,
+    deltaBandwidths: [SRclassID: Int] = [.A: 75, .B: 0]
   ) async throws {
     _controller = Weak(controller)
     _logger = controller.logger
@@ -135,6 +137,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     _latencyMaxFrameSize = latencyMaxFrameSize
     _srPVid = srPVid
     _maxSRClass = maxSRClass
+    _deltaBandwidths = deltaBandwidths
     _mmrp = try? await controller.application(for: MMRPEtherType)
     try await controller.register(application: self)
     _priorityMapNotificationTask = Task {
@@ -521,13 +524,35 @@ extension MSRPApplication {
   private func _checkAvailableBandwidth(
     port: P,
     portState: MSRPPortState<P>,
-    streamID: MSRPStreamID,
-    declarationType: MSRPDeclarationType,
+    srClassID lowestSRClassID: SRclassID,
+    bandwidthUsed: [SRclassID: Int]
+  ) -> Bool {
+    var bandwidthLimit = 0
+    var aggregateBandwidth = 0
+
+    for item in (lowestSRClassID.rawValue...SRclassID.A.rawValue)
+      .map({ SRclassID(rawValue: $0)! })
+    {
+      bandwidthLimit += _deltaBandwidths[item] ?? 0
+      aggregateBandwidth += bandwidthUsed[item] ?? 0
+    }
+
+    if bandwidthLimit > 100 {
+      bandwidthLimit = 100
+    }
+
+    return Double(aggregateBandwidth) < Double(port.linkSpeed) * Double(bandwidthLimit) /
+      Double(100)
+  }
+
+  private func _checkAvailableBandwidth(
+    port: P,
+    portState: MSRPPortState<P>,
     dataFrameParameters: MSRPDataFrameParameters,
     tSpec: MSRPTSpec,
     priorityAndRank: MSRPPriorityAndRank
   ) async throws -> Bool {
-    var bandwidthUsed = 0 // in kbps
+    var bandwidthUsed = [SRclassID: Int]()
 
     let participant = try findParticipant(port: port)
     let talkers = await participant.findAttributes(
@@ -540,14 +565,34 @@ extension MSRPApplication {
       else {
         continue
       }
-      let classMeasurementInterval = try srClassID.classMeasurementInterval
+      let classMeasurementInterval = try srClassID
+        .classMeasurementInterval // number of intervals in usec
       let maxFrameRate = Int(talker.tSpec.maxIntervalFrames) *
-        (1_000_000 / classMeasurementInterval)
-
-      bandwidthUsed += maxFrameRate * Int(tSpec.maxFrameSize) * 8 / 1000
+        (1_000_000 / classMeasurementInterval) // number of frames per second
+      let bw = maxFrameRate * Int(tSpec.maxFrameSize) * 8 / 1000 // bandwidth used in kbps
+      if let index = bandwidthUsed.index(forKey: srClassID) {
+        bandwidthUsed.values[index] += bw
+      } else {
+        bandwidthUsed[srClassID] = bw
+      }
     }
 
-    return Double(bandwidthUsed) < Double(port.linkSpeed) * 0.75
+    for srClassID in SRclassID.allCases {
+      guard _checkAvailableBandwidth(
+        port: port,
+        portState: portState,
+        srClassID: srClassID,
+        bandwidthUsed: bandwidthUsed
+      ) else {
+        _logger
+          .trace(
+            "MSRP: bandwith limit reached for class \(srClassID), port \(port), link speed \(port.linkSpeed), deltas \(_deltaBandwidths), used \(bandwidthUsed)"
+          )
+        return false
+      }
+    }
+
+    return true
   }
 
   private func _canBridgeTalker(
@@ -582,8 +627,6 @@ extension MSRPApplication {
       guard try await _checkAvailableBandwidth(
         port: port,
         portState: portState,
-        streamID: streamID,
-        declarationType: declarationType,
         dataFrameParameters: dataFrameParameters,
         tSpec: tSpec,
         priorityAndRank: priorityAndRank
@@ -770,10 +813,8 @@ extension MSRPApplication {
     talkerRegistration: any MSRPTalkerValue,
     isJoin: Bool
   ) async throws -> MSRPDeclarationType? {
-    var mergedDeclarationType: MSRPDeclarationType?
-
-    if isJoin {
-      mergedDeclarationType = if declarationType == .listenerAskingFailed ||
+    var mergedDeclarationType: MSRPDeclarationType? = if isJoin {
+      if declarationType == .listenerAskingFailed ||
         talkerRegistration is MSRPTalkerFailedValue
       {
         .listenerAskingFailed
@@ -781,7 +822,7 @@ extension MSRPApplication {
         declarationType
       }
     } else {
-      mergedDeclarationType = nil
+      nil
     }
 
     // collect listener declarations from all ports except the declaration being processed
