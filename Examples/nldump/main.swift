@@ -33,7 +33,10 @@ enum nldump {
       } else if let vlan = link as? RTNLLinkVLAN {
         debugPrint(" vlan ID \(vlan.vlanID ?? 0) flags \(vlan.vlanFlags)")
       }
-      if let qdiscs = try? await socket.getQDiscs(family: sa_family_t(AF_UNSPEC), interfaceIndex: link.index) {
+      if let qdiscs = try? await socket.getQDiscs(
+        family: sa_family_t(AF_UNSPEC),
+        interfaceIndex: link.index
+      ) {
         for try await qdisc in qdiscs {
           debugPrint("  qdisc \(qdisc)")
         }

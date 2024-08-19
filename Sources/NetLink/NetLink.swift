@@ -158,7 +158,7 @@ private func NLSocket_CB_VALID(
       case RTM_GETADDR:
         fallthrough
       case RTM_NEWADDR:
-        constructFromObject = NLAddress.init
+        constructFromObject = NLAddressMessage.init
       case RTM_DELLINK:
         fallthrough
       case RTM_GETLINK:
@@ -172,7 +172,7 @@ private func NLSocket_CB_VALID(
       case RTM_GETQDISC:
         fallthrough
       case RTM_NEWQDISC:
-        constructFromObject = RTNLTCBase.init
+        constructFromObject = RTNLTCMessage.init
       default:
         debugPrint("NLSocket_CB_VALID: unknown NETLINK_ROUTE message type \(hdr.nlmsg_type)")
         throw NLError.invalidArgument
@@ -617,6 +617,31 @@ public struct NLAddress: Sendable, NLObjectConstructible, CustomStringConvertibl
   public var anycastAddress: NLAddress? {
     guard let addr = rtnl_addr_get_anycast(addr) else { return nil }
     return NLAddress(addr: addr)
+  }
+}
+
+public enum NLAddressMessage: NLObjectConstructible, Sendable {
+  case new(NLAddress)
+  case del(NLAddress)
+
+  public init(object: NLObject) throws {
+    switch object.messageType {
+    case RTM_NEWADDR:
+      self = .new(NLAddress(object: object))
+    case RTM_DELADDR:
+      self = .del(NLAddress(object: object))
+    default:
+      throw NLError.invalidArgument
+    }
+  }
+
+  public var address: NLAddress {
+    switch self {
+    case let .new(address):
+      address
+    case let .del(address):
+      address
+    }
   }
 }
 

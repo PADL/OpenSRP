@@ -870,6 +870,39 @@ public extension RTNLLink {
   }
 }
 
+public enum RTNLTCMessage: NLObjectConstructible, Sendable {
+  case new(RTNLTCBase)
+  case del(RTNLTCBase)
+
+  public init(object: NLObject) throws {
+    switch object.messageType {
+    case RTM_NEWQDISC:
+      fallthrough
+    case RTM_NEWTCLASS:
+      fallthrough
+    case RTM_NEWTFILTER:
+      self = try .new(RTNLTCBase(object: object))
+    case RTM_DELQDISC:
+      fallthrough
+    case RTM_DELTCLASS:
+      fallthrough
+    case RTM_DELTFILTER:
+      self = try .del(RTNLTCBase(object: object))
+    default:
+      throw NLError.invalidArgument
+    }
+  }
+
+  public var tc: RTNLTCBase {
+    switch self {
+    case let .new(tc):
+      tc
+    case let .del(tc):
+      tc
+    }
+  }
+}
+
 extension UnsafePointer {
   func propertyBasePointer<Property>(to property: KeyPath<Pointee, Property>)
     -> UnsafePointer<Property>?

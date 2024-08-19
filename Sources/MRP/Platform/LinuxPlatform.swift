@@ -228,6 +228,8 @@ Sendable {
   private let _rxPacketsChannel = AsyncThrowingChannel<(Port.ID, IEEE802Packet), Error>()
   private var _linkLocalRegistrations = Set<FilterRegistration>()
   private var _linkLocalRxTasks = [LinkLocalRXTaskKey: Task<(), Error>]()
+  private let _srClassPriorityMapNotificationChannel =
+    AsyncChannel<SRClassPriorityMapNotification<Port>>()
 
   public init(name: String, netFilterGroup group: Int, qDiscHandle: Int? = nil) throws {
     _bridgeName = name
@@ -273,6 +275,24 @@ Sendable {
 
   public var notifications: AnyAsyncSequence<PortNotification<Port>> {
     _portNotificationChannel.eraseToAnyAsyncSequence()
+  }
+
+  private func _handleTCNotification(_ tcMessage: RTNLTCMessage) throws {
+    // all we are really interested is in SR class remappings
+    guard let qdisc = tcMessage.tc as? RTNLMQPrioQDisc,
+          let srClassPriorityMap = qdisc.srClassPriorityMap else { return }
+    let tcNotification: SRClassPriorityMapNotification<Port> = if case .new = tcMessage {
+      .added(srClassPriorityMap)
+    } else {
+      .removed(srClassPriorityMap)
+    }
+    Task { await _srClassPriorityMapNotificationChannel.send(tcNotification) }
+  }
+
+  public var srClassPriorityMapNotifications: AnyAsyncSequence<
+    SRClassPriorityMapNotification<Port>
+  > {
+    _srClassPriorityMapNotificationChannel.eraseToAnyAsyncSequence()
   }
 
   public var defaultPVid: UInt16? {
@@ -399,11 +419,19 @@ Sendable {
     _bridgeIndex = _bridgePort!._rtnl.index
 
     try _nlLinkSocket.subscribeLinks()
+    try _nlLinkSocket.subscribeTC()
 
     _nlLinkMonitorTask = Task<(), Error> { [self] in
       for try await notification in _nlLinkSocket.notifications {
         do {
-          try _handleLinkNotification(notification as! RTNLLinkMessage)
+          switch notification {
+          case let linkNotification as RTNLLinkMessage:
+            try _handleLinkNotification(linkNotification)
+          case let tcNotification as RTNLTCMessage:
+            try _handleTCNotification(tcNotification)
+          default:
+            break
+          }
         } catch Errno.noSuchAddressOrDevice {
           throw Errno.noSuchAddressOrDevice
         } catch {}
@@ -431,6 +459,7 @@ Sendable {
     _nlNfLogMonitorTask?.cancel()
     _nlLinkMonitorTask?.cancel()
 
+    try? _nlLinkSocket.unsubscribeTC()
     try? _nlLinkSocket.unsubscribeLinks()
 
     _bridgePort = nil
@@ -555,6 +584,7 @@ extension LinuxBridge: MMRPAwareBridge {
     serviceRequirement requirementSpecification: MMRPServiceRequirementValue,
     on ports: Set<P>
   ) async throws {}
+
   func deregister(
     serviceRequirement requirementSpecification: MMRPServiceRequirementValue,
     from ports: Set<P>
@@ -598,6 +628,17 @@ extension LinuxBridge: MSRPAwareBridge {
       sendSlope: Int32(sendSlope),
       socket: _nlLinkSocket
     )
+  }
+}
+
+fileprivate extension RTNLMQPrioQDisc {
+  var srClassPriorityMap: (LinuxPort.ID, SRClassPriorityMap)? {
+    guard let priorityMap else { return nil }
+    return (index, SRClassPriorityMap(uniqueKeysWithValues: priorityMap.compactMap {
+      guard let srClassID = SRclassID(rawValue: $0),
+            let srClassPriority = SRclassPriority(rawValue: $1) else { return nil }
+      return (srClassID, srClassPriority)
+    }))
   }
 }
 #endif

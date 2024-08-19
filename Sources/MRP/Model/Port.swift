@@ -38,9 +38,11 @@ public protocol Port: Hashable, Sendable, Identifiable where ID: Hashable & Send
   var linkSpeed: UInt { get }
 }
 
+public typealias SRClassPriorityMap = [SRclassID: SRclassPriority]
+
 public protocol AVBPort: Port {
   var isAvbCapable: Bool { get }
-  var srClassPriorityMap: [SRclassID: SRclassPriority] { get async throws }
+  var srClassPriorityMap: SRClassPriorityMap { get async throws }
 
   func getPortTcMaxLatency(for: SRclassPriority) -> Int
 }
@@ -58,6 +60,34 @@ public enum PortNotification<P: Port>: Sendable {
       port
     case let .changed(port):
       port
+    }
+  }
+}
+
+public enum SRClassPriorityMapNotification<P: Port>: Sendable {
+  case added((P.ID, SRClassPriorityMap))
+  case removed((P.ID, SRClassPriorityMap))
+  case changed((P.ID, SRClassPriorityMap))
+
+  var portID: P.ID {
+    switch self {
+    case let .added(n):
+      n.0
+    case let .removed(n):
+      n.0
+    case let .changed(n):
+      n.0
+    }
+  }
+
+  var map: SRClassPriorityMap {
+    switch self {
+    case let .added(n):
+      n.1
+    case let .removed(n):
+      n.1
+    case let .changed(n):
+      n.1
     }
   }
 }
