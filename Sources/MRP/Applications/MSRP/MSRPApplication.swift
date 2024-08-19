@@ -99,7 +99,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
 
   public var etherType: UInt16 { MSRPEtherType }
 
-  public var protocolVersion: ProtocolVersion { 0 }
+  public var protocolVersion: ProtocolVersion { MSRPProtocolVersion.v0.rawValue }
 
   public var hasAttributeListLength: Bool { true }
 
@@ -166,30 +166,36 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     }
   }
 
-  func onContextAdded(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws {
+  func onContextAdded(
+    contextIdentifier: MAPContextIdentifier,
+    with context: MAPContext<P>
+  ) async throws {
     precondition(contextIdentifier == MAPBaseSpanningTreeContext)
 
-    Task {
-      var srClassPriorityMap = [P.ID: SRClassPriorityMap]()
+    var srClassPriorityMap = [P.ID: SRClassPriorityMap]()
 
+    for port in context {
+      if port.isAvbCapable, let bridge = (controller?.bridge as? any MSRPAwareBridge<P>) {
+        srClassPriorityMap[port.id] = try? await bridge.getSRClassPriorityMap(port: port)
+        _logger.trace("MSRP: allocating port state for \(port), prio map \(srClassPriorityMap)")
+      } else {
+        _logger.trace("MRRP: port \(port) is not AVB capable, skipping")
+      }
+    }
+
+    try _portStates.withCriticalRegion {
       for port in context {
-        if port.isAvbCapable, let bridge = (controller?.bridge as? any MSRPAwareBridge<P>) {
-          srClassPriorityMap[port.id] = try? await bridge.getSRClassPriorityMap(port: port)
-          _logger.trace("MSRP: allocating port state for \(port), prio map \(srClassPriorityMap)")
-        } else {
-          _logger.trace("MRRP: port \(port) is not AVB capable, skipping")
+        var portState = try MSRPPortState(msrp: self, port: port)
+        if let srClassPriorityMap = srClassPriorityMap[port.id] {
+          portState.srClassPriorityMap = srClassPriorityMap
         }
+        $0[port.id] = portState
       }
+    }
 
-      try _portStates.withCriticalRegion {
-        for port in context {
-          var portState = try MSRPPortState(msrp: self, port: port)
-          if let srClassPriorityMap = srClassPriorityMap[port.id] {
-            portState.srClassPriorityMap = srClassPriorityMap
-          }
-          $0[port.id] = portState
-        }
-      }
+    for port in context {
+      _logger.trace("MSRP: declaring domains for port \(port)")
+      try await _declareDomains(port: port)
     }
   }
 
@@ -208,6 +214,13 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
         $0.values[index].msrpPortEnabledStatus = port.isAvbCapable
       }
     }
+
+    Task {
+      for port in context {
+        _logger.trace("MSRP: re-declaring domains for port \(port)")
+        try await _declareDomains(port: port)
+      }
+    }
   }
 
   func onContextRemoved(
@@ -218,6 +231,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
 
     _portStates.withCriticalRegion {
       for port in context {
+        _logger.trace("MSRP: port \(port) disappeared, removing")
         $0.removeValue(forKey: port.id)
       }
     }
@@ -586,7 +600,7 @@ extension MSRPApplication {
       ) else {
         _logger
           .trace(
-            "MSRP: bandwith limit reached for class \(srClassID), port \(port), link speed \(port.linkSpeed), deltas \(_deltaBandwidths), used \(bandwidthUsed)"
+            "MSRP: bandwidth limit reached for class \(srClassID), port \(port), link speed \(port.linkSpeed), deltas \(_deltaBandwidths), used \(bandwidthUsed)"
           )
         return false
       }
@@ -1074,6 +1088,7 @@ extension MSRPApplication {
         eventSource: eventSource
       )
     case .domain:
+      guard eventSource == .peer || eventSource == .local else { break }
       let domain = (attributeValue as! MSRPDomainValue)
       withPortState(port: port) { portState in
         let srClassPriority = portState.srClassPriorityMap[domain.srClassID]
@@ -1116,7 +1131,6 @@ extension MSRPApplication {
         eventSource: .map
       )
     }
-    // FIXME: check normal propagation should still occur
   }
 
   // On receipt of a MAD_Leave.indication service primitive (10.2, 10.3) with
@@ -1222,5 +1236,46 @@ extension MSRPApplication {
       }
     }
     throw MRPError.doNotPropagateAttribute
+  }
+
+  private func _declareDomain(
+    srClassID: SRclassID,
+    on participant: Participant<MSRPApplication>
+  ) async throws {
+    var domain: MSRPDomainValue?
+
+    withPortState(port: participant.port) { portState in
+      if let srClassPriority = portState.srClassPriorityMap[srClassID] {
+        domain = MSRPDomainValue(
+          srClassID: srClassID,
+          srClassPriority: srClassPriority,
+          srClassVID: _srPVid.vid
+        )
+      }
+    }
+
+    if let domain {
+      _logger.info("MSRP: declaring domain \(domain)")
+      try await participant.join(
+        attributeType: MSRPAttributeType.domain.rawValue,
+        attributeValue: domain,
+        isNew: true,
+        eventSource: .application
+      )
+    } else {
+      _logger
+        .warning(
+          "MSRP: not declaring domain for SR class \(srClassID) as no priority mapping found"
+        )
+    }
+  }
+
+  private func _declareDomains(port: P) async throws {
+    let participant = try findParticipant(port: port)
+    for srClassID in (_maxSRClass.rawValue...SRclassID.A.rawValue)
+      .map({ SRclassID(rawValue: $0)! })
+    {
+      try await _declareDomain(srClassID: srClassID, on: participant)
+    }
   }
 }

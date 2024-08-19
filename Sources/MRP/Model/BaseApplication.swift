@@ -25,7 +25,10 @@ protocol BaseApplication: Application where P == P {
 }
 
 protocol BaseApplicationContextObserver<P>: BaseApplication {
-  func onContextAdded(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
+  func onContextAdded(
+    contextIdentifier: MAPContextIdentifier,
+    with context: MAPContext<P>
+  ) async throws
   func onContextUpdated(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
   func onContextRemoved(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
 }
@@ -129,8 +132,6 @@ extension BaseApplication {
   ) async throws {
     guard nonBaseContextsSupported || contextIdentifier == MAPBaseSpanningTreeContext
     else { return }
-    guard let observer = self as? any BaseApplicationContextObserver<P> else { return }
-    try observer.onContextAdded(contextIdentifier: contextIdentifier, with: context)
     for port in context {
       guard (try? findParticipant(for: contextIdentifier, port: port)) == nil
       else {
@@ -145,6 +146,10 @@ extension BaseApplication {
       )
       try add(participant: participant)
     }
+    // ensure participants are initialized before calling observer
+    if let observer = self as? any BaseApplicationContextObserver<P> {
+      try await observer.onContextAdded(contextIdentifier: contextIdentifier, with: context)
+    }
   }
 
   public func didUpdate(
@@ -153,14 +158,15 @@ extension BaseApplication {
   ) throws {
     guard nonBaseContextsSupported || contextIdentifier == MAPBaseSpanningTreeContext
     else { return }
-    guard let observer = self as? any BaseApplicationContextObserver<P> else { return }
-    try observer.onContextUpdated(contextIdentifier: contextIdentifier, with: context)
     for port in context {
       let participant = try findParticipant(
         for: contextIdentifier,
         port: port
       )
       Task { try await participant.redeclare() }
+    }
+    if let observer = self as? any BaseApplicationContextObserver<P> {
+      try observer.onContextUpdated(contextIdentifier: contextIdentifier, with: context)
     }
   }
 
@@ -170,8 +176,10 @@ extension BaseApplication {
   ) throws {
     guard nonBaseContextsSupported || contextIdentifier == MAPBaseSpanningTreeContext
     else { return }
-    guard let observer = self as? any BaseApplicationContextObserver<P> else { return }
-    try observer.onContextRemoved(contextIdentifier: contextIdentifier, with: context)
+    // call observer _before_ removing participants so it can do any other cleanup
+    if let observer = self as? any BaseApplicationContextObserver<P> {
+      try observer.onContextRemoved(contextIdentifier: contextIdentifier, with: context)
+    }
     for port in context {
       let participant = try findParticipant(
         for: contextIdentifier,
