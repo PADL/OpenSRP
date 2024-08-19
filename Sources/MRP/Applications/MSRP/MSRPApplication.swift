@@ -267,16 +267,6 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     .normalParticipant
   }
 
-  private func declarationType(for streamID: MSRPStreamID) async throws -> MSRPDeclarationType? {
-    let talkerRegistration = try await _findTalkerRegistration(for: streamID)
-    guard let talkerRegistration else { return nil }
-    if talkerRegistration.1 is MSRPTalkerAdvertiseValue {
-      return .talkerAdvertise
-    } else {
-      return .talkerFailed
-    }
-  }
-
   // If an MSRP message is received from a Port with an event value specifying
   // the JoinIn or JoinMt message, and if the StreamID (35.2.2.8.2,
   // 35.2.2.10.2), and Direction (35.2.1.2) all match those of an attribute
@@ -302,8 +292,15 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
       guard let direction = attributeType.direction else { return false }
       let streamID = (attributeValue as! MSRPStreamIDRepresentable).streamID
 
-      return contextStreamID == streamID && contextDirection == direction &&
+      let isIncluded = contextStreamID == streamID && contextDirection == direction &&
         (contextAttributeType != attributeType || contextAttributeSubtype != attributeSubtype)
+      if isIncluded {
+        _logger
+          .trace(
+            "MSRP: forcing immediate leave for stream \(streamID) owing to attribute change: \(attributeType)->\(contextAttributeType) \(String(describing: attributeSubtype))->\(String(describing: contextAttributeSubtype))"
+          )
+      }
+      return isIncluded
     }
   }
 
@@ -378,8 +375,15 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
   public func deregisterStream(
     streamID: MSRPStreamID
   ) async throws {
-    guard let declarationType = try await declarationType(for: streamID) else {
-      throw MRPError.invalidAttributeValue
+    let talkerRegistration = try await _findTalkerRegistration(for: streamID)
+    let declarationType: MSRPDeclarationType
+    guard let talkerRegistration else {
+      throw MRPError.participantNotFound
+    }
+    if talkerRegistration.1 is MSRPTalkerAdvertiseValue {
+      declarationType = .talkerAdvertise
+    } else {
+      declarationType = .talkerFailed
     }
     try await leave(
       attributeType: declarationType.attributeType.rawValue,
@@ -395,14 +399,18 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
   // shall contain the StreamID and the Declaration Type.
   public func registerAttach(
     streamID: MSRPStreamID,
-    declarationType: MSRPDeclarationType
+    declarationType: MSRPDeclarationType,
+    on port: P? = nil
   ) async throws {
-    try await join(
-      attributeType: declarationType.attributeType.rawValue,
-      attributeValue: MSRPListenerValue(streamID: streamID),
-      isNew: false,
-      for: MAPBaseSpanningTreeContext
-    )
+    try await apply { participant in
+      if let port, port != participant.port { return }
+      try await join(
+        attributeType: declarationType.attributeType.rawValue,
+        attributeValue: MSRPListenerValue(streamID: streamID),
+        isNew: true,
+        for: MAPBaseSpanningTreeContext
+      )
+    }
   }
 
   // On receipt of a DEREGISTER_ATTACH.request the MSRP Participant shall issue
@@ -411,16 +419,26 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
   // attribute_value parameter shall carry the StreamID and the Declaration
   // Type currently associated with the StreamID.
   public func deregisterAttach(
-    streamID: MSRPStreamID
+    streamID: MSRPStreamID,
+    on port: P? = nil
   ) async throws {
-    guard let declarationType = try await declarationType(for: streamID) else {
-      throw MRPError.invalidAttributeValue
+    try await apply { participant in
+      if let port, port != participant.port { return }
+      guard let listenerAttribute = await participant.findAttribute(
+        attributeType: MSRPAttributeType.listener.rawValue,
+        matching: .matchAny
+      ),
+        let declarationType = try MSRPDeclarationType(attributeSubtype: listenerAttribute.0)
+      else {
+        return
+      }
+
+      try await leave(
+        attributeType: declarationType.attributeType.rawValue,
+        attributeValue: MSRPListenerValue(streamID: streamID),
+        for: MAPBaseSpanningTreeContext
+      )
     }
-    try await leave(
-      attributeType: declarationType.attributeType.rawValue,
-      attributeValue: MSRPListenerValue(streamID: streamID),
-      for: MAPBaseSpanningTreeContext
-    )
   }
 }
 
@@ -446,6 +464,7 @@ extension MSRPApplication {
            matching: .matchEqual(MMRPMACValue(macAddress: dataFrameParameters.destinationAddress))
          ) == nil
       {
+        _logger.debug("MSRP: pruning talker stream \(streamID) on port \(port)")
         return true
       }
     }
@@ -534,10 +553,15 @@ extension MSRPApplication {
         .reverseMapSrClassPriority(priority: priorityAndRank.dataFramePriority),
         portState.srpDomainBoundaryPort[srClassID] == false
       else {
+        _logger
+          .info(
+            "MSRP: port \(port) is a SRP domain boundary port for \(priorityAndRank), cannot bridge"
+          )
         throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
       }
 
       guard await !_isFanInPortLimitReached() else {
+        _logger.info("MSRP: max fan in port limit reached")
         throw MSRPFailure(systemID: port.systemID, failureCode: .fanInPortLimitReached)
       }
 
@@ -551,6 +575,7 @@ extension MSRPApplication {
         priorityAndRank: priorityAndRank
       )
       else {
+        _logger.info("MSRP: bandwidth limit exceeded for stream \(streamID) on port \(port)")
         throw MSRPFailure(systemID: port.systemID, failureCode: .insufficientBandwidth)
       }
     } catch let error as MSRPFailure {
@@ -628,8 +653,9 @@ extension MSRPApplication {
             priorityAndRank: priorityAndRank,
             accumulatedLatency: accumulatedLatency
           )
+          _logger.trace("MSRP: propagating talker advertise \(talkerAdvertise) to port \(port)")
           try await participant.join(
-            attributeType: MSRPAttributeType.talkerFailed.rawValue,
+            attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
             attributeValue: talkerAdvertise,
             isNew: false,
             eventSource: .map
@@ -644,6 +670,10 @@ extension MSRPApplication {
             systemID: error.systemID,
             failureCode: error.failureCode
           )
+          _logger
+            .trace(
+              "MSRP: propagating talker failed \(talkerFailed) on port \(port), error \(error)"
+            )
           try await participant.join(
             attributeType: MSRPAttributeType.talkerFailed.rawValue,
             attributeValue: talkerFailed,
@@ -662,6 +692,7 @@ extension MSRPApplication {
           systemID: failureInformation!.systemID,
           failureCode: failureInformation!.failureCode
         )
+        _logger.trace("MSRP: propagating talker failed \(talkerFailed) to port \(port), transitive")
         try await participant.join(
           attributeType: MSRPAttributeType.talkerFailed.rawValue,
           attributeValue: talkerFailed,
@@ -723,7 +754,7 @@ extension MSRPApplication {
     streamID: MSRPStreamID,
     declarationType: MSRPDeclarationType,
     talkerRegistration: any MSRPTalkerValue,
-    isJoin: Bool = true
+    isJoin: Bool
   ) async throws -> MSRPDeclarationType? {
     var mergedDeclarationType: MSRPDeclarationType?
 
@@ -776,12 +807,14 @@ extension MSRPApplication {
     if talkerRegistration is MSRPTalkerAdvertiseValue,
        declarationType == .listenerReady || declarationType == .listenerReadyFailed
     {
+      _logger.trace("MSRP: registering MDB entries for \(talkerRegistration.dataFrameParameters)")
       try await bridge.register(
         groupAddress: talkerRegistration.dataFrameParameters.destinationAddress,
         vlan: talkerRegistration.dataFrameParameters.vlanIdentifier,
         on: [participant.port]
       )
     } else {
+      _logger.trace("MSRP: deregistering MDB entries for \(talkerRegistration.dataFrameParameters)")
       try await bridge.deregister(
         groupAddress: talkerRegistration.dataFrameParameters.destinationAddress,
         vlan: talkerRegistration.dataFrameParameters.vlanIdentifier,
@@ -818,6 +851,8 @@ extension MSRPApplication {
       }
     }
 
+    _logger.trace("MSRP: adjusting idle slope, port \(participant.port), streams \(streams)")
+
     try await bridge.adjustCreditBasedShaper(
       application: self,
       port: participant.port,
@@ -842,6 +877,11 @@ extension MSRPApplication {
       portState = $0
     }
     guard let portState else { throw MRPError.portNotFound }
+
+    _logger
+      .trace(
+        "MSRP: updating port parameters for port \(port) streamID \(streamID) declaration type \(String(describing: mergedDeclarationType)) talker \(talkerRegistration.1)"
+      )
 
     if mergedDeclarationType == .listenerReady || mergedDeclarationType == .listenerReadyFailed {
       // increase (if necessary) bandwidth first before updating dynamic reservation entries
@@ -892,7 +932,8 @@ extension MSRPApplication {
       port: port,
       streamID: streamID,
       declarationType: declarationType,
-      talkerRegistration: talkerRegistration.1
+      talkerRegistration: talkerRegistration.1,
+      isJoin: true
     )
     try await talkerRegistration.0.join(
       attributeType: MSRPAttributeType.listener.rawValue,
@@ -925,6 +966,11 @@ extension MSRPApplication {
     // 35.2.4 (d) A MAD_Join.indication adds a new attribute to MAD (with isNew TRUE)
     guard isNew, eventSource != .map
     else { throw MRPError.doNotPropagateAttribute } // don't recursively invoke MAP
+
+    _logger
+      .trace(
+        "MSRP: join for attribute \(attributeType) subtype \(String(describing: attributeSubtype)) value \(attributeValue) source \(eventSource) port \(port)"
+      )
 
     switch attributeType {
     case .talkerAdvertise:
@@ -1042,7 +1088,8 @@ extension MSRPApplication {
       port: port,
       streamID: streamID,
       declarationType: declarationType,
-      talkerRegistration: talkerRegistration.1
+      talkerRegistration: talkerRegistration.1,
+      isJoin: false
     )
 
     if let mergedDeclarationType {
@@ -1082,6 +1129,11 @@ extension MSRPApplication {
 
     guard eventSource != .map
     else { throw MRPError.doNotPropagateAttribute } // don't recursively invoke MAP
+
+    _logger
+      .trace(
+        "MSRP: leave for attribute \(attributeType) subtype \(String(describing: attributeSubtype)) value \(attributeValue) source \(eventSource) port \(port)"
+      )
 
     switch attributeType {
     case .talkerAdvertise:

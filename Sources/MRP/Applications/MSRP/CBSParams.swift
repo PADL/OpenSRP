@@ -153,6 +153,11 @@ extension MSRPAwareBridge {
       maxFrameSizeB: maxFrameSizeB
     )
 
+    application._logger
+      .trace(
+        "MSRP: adjusting CBS for class B: idleSlope: \(idleslopeB) sendSlope: \(sendslopeB) hiCredit: \(hicreditB) loCredit: \(locreditB)"
+      )
+
     try await adjustCreditBasedShaper(
       port: port,
       srClass: .B,
