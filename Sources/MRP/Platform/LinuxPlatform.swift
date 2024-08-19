@@ -573,21 +573,23 @@ fileprivate final class FilterRegistration: Equatable, Hashable, Sendable, Custo
 }
 
 extension LinuxBridge: MMRPAwareBridge {
-  func register(groupAddress: EUI48, on ports: Set<P>) async throws {
+  func register(groupAddress: EUI48, vlan: VLAN?, on ports: Set<P>) async throws {
     for port in ports {
       try await (bridgePort._rtnl as! RTNLLinkBridge).add(
         link: port._rtnl,
         groupAddresses: [groupAddress],
+        vlanID: vlan?.vid,
         socket: _nlLinkSocket
       )
     }
   }
 
-  func deregister(groupAddress: EUI48, from ports: Set<P>) async throws {
+  func deregister(groupAddress: EUI48, vlan: VLAN?, from ports: Set<P>) async throws {
     for port in ports {
       try await (bridgePort._rtnl as! RTNLLinkBridge).remove(
         link: port._rtnl,
         groupAddresses: [groupAddress],
+        vlanID: vlan?.vid,
         socket: _nlLinkSocket
       )
     }
