@@ -58,9 +58,6 @@ private final class MRPDaemon: AsyncParsableCommand {
   @Option(name: .long, help: "Maximum number of MSRP fan-in ports")
   var maxFanInPorts: Int = 0
 
-  @Option(name: .long, help: "Default MSRP latency maximum frame size")
-  var latencyMaxFrameSize: Int? = nil
-
   @Option(name: .long, help: "MSRP SR class A delta bandwidth percentage")
   var classADeltaBandwidth: Int? = nil
 
@@ -68,7 +65,7 @@ private final class MRPDaemon: AsyncParsableCommand {
   var classBDeltaBandwidth: Int? = nil
 
   @Option(name: .long, help: "Default MSRP SR PVID")
-  var srPVid: UInt16 = SR_PVID
+  var srPVid: UInt16 = SR_PVID.id
 
   @Option(name: .long, help: "Exclude physical interface (may be specified multiple times)")
   var excludeIface: [String] = []
@@ -95,7 +92,6 @@ private final class MRPDaemon: AsyncParsableCommand {
     case forceAvbCapable
     case enableTalkerPruning
     case maxFanInPorts
-    case latencyMaxFrameSize
     case srPVid
     case classADeltaBandwidth
     case classBDeltaBandwidth
@@ -143,8 +139,7 @@ private final class MRPDaemon: AsyncParsableCommand {
         controller: controller,
         talkerPruning: enableTalkerPruning,
         maxFanInPorts: maxFanInPorts,
-        latencyMaxFrameSize: latencyMaxFrameSize,
-        srPVid: srPVid,
+        srPVid: VLAN(id: srPVid),
         deltaBandwidths: deltaBandwidths,
         forceAvbCapable: forceAvbCapable
       )
