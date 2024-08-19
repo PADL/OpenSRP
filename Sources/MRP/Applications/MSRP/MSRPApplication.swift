@@ -527,13 +527,27 @@ extension MSRPApplication {
     tSpec: MSRPTSpec,
     priorityAndRank: MSRPPriorityAndRank
   ) async throws -> Bool {
-    // find all the talkers on the port
-    // calculate how much bandwidth they're using
-    // check if it exceeds the link speed (remember to multiply by some constant for reservation)
-    // SR Class A reserves up to 75% of bandwidth. The upper limit is not configurable.
-    // SR Class B reserves all the bandwidth that is not used by SR Class A. SR Class B can occupy
-    // total of 75%, if no SR class A is reserved.
-    true
+    var bandwidthUsed = 0 // in kbps
+
+    let participant = try findParticipant(port: port)
+    let talkers = await participant.findAttributes(
+      attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
+      matching: .matchAny
+    )
+    for talker in talkers.map({ $0.1 as! MSRPTalkerAdvertiseValue }) {
+      guard let srClassID = await portState
+        .reverseMapSrClassPriority(priority: talker.priorityAndRank.dataFramePriority)
+      else {
+        continue
+      }
+      let classMeasurementInterval = try srClassID.classMeasurementInterval
+      let maxFrameRate = Int(talker.tSpec.maxIntervalFrames) *
+        (1_000_000 / classMeasurementInterval)
+
+      bandwidthUsed += maxFrameRate * Int(tSpec.maxFrameSize) * 8 / 1000
+    }
+
+    return Double(bandwidthUsed) < Double(port.linkSpeed) * 0.75
   }
 
   private func _canBridgeTalker(

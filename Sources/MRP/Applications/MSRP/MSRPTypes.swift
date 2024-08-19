@@ -297,6 +297,19 @@ public enum SRclassID: UInt8, Sendable, CaseIterable {
   case E = 2
   case F = 1
   case G = 0
+
+  var classMeasurementInterval: Int {
+    get throws {
+      switch self {
+      case .A:
+        125
+      case .B:
+        250
+      default:
+        throw MRPError.invalidSRclassID
+      }
+    }
+  }
 }
 
 public typealias SRclassPriority = IEEE802Packet.TCI.PCP

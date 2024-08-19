@@ -88,16 +88,7 @@ extension MSRPAwareBridge {
 
     for stream in streams[srClassID] ?? [] {
       let frameSize = min(stream.maxFrameSize, application._latencyMaxFrameSize)
-      let classMeasurementInterval: Int
-
-      switch srClassID {
-      case .A:
-        classMeasurementInterval = 125
-      case .B:
-        classMeasurementInterval = 250
-      default:
-        throw MRPError.invalidSRclassID
-      }
+      let classMeasurementInterval = try srClassID.classMeasurementInterval
 
       let maxFrameRate = Int(stream.maxIntervalFrames) * (1_000_000 / classMeasurementInterval)
       idleslope += maxFrameRate * Int(frameSize) * 8 / 1000
