@@ -46,9 +46,9 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
 
   var macAddress: MRP.EUI48 { (0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF) }
 
-  var mtu: Int { 1500 }
+  var mtu: UInt { 1500 }
 
-  var linkSpeed: Int { 1_000_000 }
+  var linkSpeed: UInt { 1_000_000 }
 
   init(id: ID) {
     self.id = id
