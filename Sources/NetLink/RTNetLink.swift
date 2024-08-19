@@ -486,6 +486,14 @@ public extension NLSocket {
       .eraseToAnyAsyncSequence()
   }
 
+  func subscribeLinks() throws {
+    try add(membership: RTNLGRP_LINK)
+  }
+
+  func unsubscribeLinks() throws {
+    try drop(membership: RTNLGRP_LINK)
+  }
+
   func getAddresses(family: sa_family_t) async throws -> AnyAsyncSequence<NLAddress> {
     let message = try NLMessage(socket: self, type: RTM_GETADDR, flags: .dump)
     var hdr = rtgenmsg()
@@ -495,6 +503,22 @@ public extension NLSocket {
     }
     return try streamRequest(message: message).map { $0 as! NLAddress }
       .eraseToAnyAsyncSequence()
+  }
+
+  func subscribeIPv4Addresses() throws {
+    try add(membership: RTNLGRP_IPV4_IFADDR)
+  }
+
+  func unsubscribeIPv4Addresses() throws {
+    try drop(membership: RTNLGRP_IPV4_IFADDR)
+  }
+
+  func subscribeIPv6Addresses() throws {
+    try add(membership: RTNLGRP_IPV6_IFADDR)
+  }
+
+  func unsubscribeIPv6Addresses() throws {
+    try drop(membership: RTNLGRP_IPV6_IFADDR)
   }
 
   func getQDiscs(
@@ -512,12 +536,12 @@ public extension NLSocket {
       .eraseToAnyAsyncSequence()
   }
 
-  func subscribeLinks() throws {
-    try add(membership: RTNLGRP_LINK)
+  func subscribeTC() throws {
+    try add(membership: RTNLGRP_TC)
   }
 
-  func unsubscribeLinks() throws {
-    try drop(membership: RTNLGRP_LINK)
+  func unsubscribeTC() throws {
+    try drop(membership: RTNLGRP_TC)
   }
 
   fileprivate func _vlanRequest(
