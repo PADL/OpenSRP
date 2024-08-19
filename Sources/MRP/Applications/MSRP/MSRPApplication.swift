@@ -41,7 +41,9 @@ extension AVBPort {
   }
 }
 
-public struct MSRPPortState<P: AVBPort>: Sendable {
+private let DefaultSRClassPriorityMap: SRClassPriorityMap = [.A: .CA, .B: .EE]
+
+struct MSRPPortState<P: AVBPort>: Sendable {
   var mediaType: MSRPPortMediaType { .accessControlPort }
   var msrpPortEnabledStatus: Bool
   var streamEpochs = [MSRPStreamID: UInt32]()
@@ -76,10 +78,11 @@ public struct MSRPPortState<P: AVBPort>: Sendable {
   }
 
   init(msrp: MSRPApplication<P>, port: P) throws {
-    msrpPortEnabledStatus = port.isAvbCapable
+    let isAvbCapable = port.isAvbCapable || msrp._forceAvbCapable
+    msrpPortEnabledStatus = isAvbCapable
     srpDomainBoundaryPort = .init(uniqueKeysWithValues: SRclassID.allCases.map { (
       $0,
-      !port.isAvbCapable
+      !isAvbCapable
     ) })
   }
 }
@@ -110,16 +113,17 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
   let _participants =
     ManagedCriticalState<[MAPContextIdentifier: Set<Participant<MSRPApplication<P>>>]>([:])
   let _logger: Logger
-
-  let _talkerPruning: Bool
-  let _maxFanInPorts: Int
   let _latencyMaxFrameSize: UInt16
-  let _srPVid: VLAN
-  let _maxSRClass: SRclassID
-  var _portStates = ManagedCriticalState<[P.ID: MSRPPortState<P>]>([:])
-  let _mmrp: MMRPApplication<P>?
-  var _priorityMapNotificationTask: Task<(), Error>?
-  let _deltaBandwidths: [SRclassID: Int]
+
+  fileprivate let _talkerPruning: Bool
+  fileprivate let _maxFanInPorts: Int
+  fileprivate let _srPVid: VLAN
+  fileprivate let _maxSRClass: SRclassID
+  fileprivate var _portStates = ManagedCriticalState<[P.ID: MSRPPortState<P>]>([:])
+  fileprivate let _mmrp: MMRPApplication<P>?
+  fileprivate var _priorityMapNotificationTask: Task<(), Error>?
+  fileprivate let _deltaBandwidths: [SRclassID: Int]
+  fileprivate let _forceAvbCapable: Bool
 
   public init(
     controller: MRPController<P>,
@@ -128,7 +132,8 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     latencyMaxFrameSize: UInt16 = 2000,
     srPVid: VLAN = SR_PVID,
     maxSRClass: SRclassID = .B,
-    deltaBandwidths: [SRclassID: Int] = [.A: 75, .B: 0]
+    deltaBandwidths: [SRclassID: Int] = [.A: 75, .B: 0],
+    forceAvbCapable: Bool = false
   ) async throws {
     _controller = Weak(controller)
     _logger = controller.logger
@@ -138,6 +143,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     _srPVid = srPVid
     _maxSRClass = maxSRClass
     _deltaBandwidths = deltaBandwidths
+    _forceAvbCapable = forceAvbCapable
     _mmrp = try? await controller.application(for: MMRPEtherType)
     try await controller.register(application: self)
     _priorityMapNotificationTask = Task {
@@ -178,6 +184,9 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
       if port.isAvbCapable, let bridge = (controller?.bridge as? any MSRPAwareBridge<P>) {
         srClassPriorityMap[port.id] = try? await bridge.getSRClassPriorityMap(port: port)
         _logger.trace("MSRP: allocating port state for \(port), prio map \(srClassPriorityMap)")
+      } else if _forceAvbCapable {
+        srClassPriorityMap[port.id] = DefaultSRClassPriorityMap
+        _logger.trace("MRRP: forcing port \(port) to advertise as AVB capable")
       } else {
         _logger.trace("MRRP: port \(port) is not AVB capable, skipping")
       }
@@ -205,13 +214,15 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
   ) throws {
     precondition(contextIdentifier == MAPBaseSpanningTreeContext)
 
-    _portStates.withCriticalRegion {
-      for port in context {
-        guard let index = $0.index(forKey: port.id) else { continue }
-        if $0.values[index].msrpPortEnabledStatus != port.isAvbCapable {
-          _logger.info("MSRP: port \(port) changed isAvbCapable, now \(port.isAvbCapable)")
+    if !_forceAvbCapable {
+      _portStates.withCriticalRegion {
+        for port in context {
+          guard let index = $0.index(forKey: port.id) else { continue }
+          if $0.values[index].msrpPortEnabledStatus != port.isAvbCapable {
+            _logger.info("MSRP: port \(port) changed isAvbCapable, now \(port.isAvbCapable)")
+          }
+          $0.values[index].msrpPortEnabledStatus = port.isAvbCapable
         }
-        $0.values[index].msrpPortEnabledStatus = port.isAvbCapable
       }
     }
 

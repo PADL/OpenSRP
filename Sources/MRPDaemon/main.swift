@@ -49,6 +49,27 @@ private final class MRPDaemon: AsyncParsableCommand {
   @Option(name: .shortAndLong, help: "QDisc handle")
   var qDiscHandle: Int = 0x9000
 
+  @Option(name: .long, help: "Force ports to advertise as AVB capable")
+  var forceAvbCapable: Bool = false
+
+  @Option(name: .long, help: "Enable MSRP talker pruning")
+  var enableTalkerPruning: Bool = false
+
+  @Option(name: .long, help: "Maximum number of MSRP fan-in ports")
+  var maxFanInPorts: Int = 0
+
+  @Option(name: .long, help: "Default MSRP latency maximum frame size")
+  var latencyMaxFrameSize: Int? = nil
+
+  @Option(name: .long, help: "MSRP SR class A delta bandwidth percentage")
+  var classADeltaBandwidth: Int? = nil
+
+  @Option(name: .long, help: "MSRP SR class B delta bandwidth percentage")
+  var classBDeltaBandwidth: Int? = nil
+
+  @Option(name: .long, help: "Default MSRP SR PVID")
+  var srPVid: UInt16 = SR_PVID
+
   @Option(name: .long, help: "Exclude physical interface (may be specified multiple times)")
   var excludeIface: [String] = []
 
@@ -71,6 +92,13 @@ private final class MRPDaemon: AsyncParsableCommand {
     case bridgeInterface
     case nfGroup
     case qDiscHandle
+    case forceAvbCapable
+    case enableTalkerPruning
+    case maxFanInPorts
+    case latencyMaxFrameSize
+    case srPVid
+    case classADeltaBandwidth
+    case classBDeltaBandwidth
     case excludeIface
     case excludeVlan
     case logLevel
@@ -104,7 +132,22 @@ private final class MRPDaemon: AsyncParsableCommand {
       )
     }
     if enableMSRP {
-      _ = try await MSRPApplication(controller: controller)
+      var deltaBandwidths = [SRclassID: Int]()
+      if let classADeltaBandwidth {
+        deltaBandwidths[.A] = classADeltaBandwidth
+      }
+      if let classBDeltaBandwidth {
+        deltaBandwidths[.B] = classBDeltaBandwidth
+      }
+      _ = try await MSRPApplication(
+        controller: controller,
+        talkerPruning: enableTalkerPruning,
+        maxFanInPorts: maxFanInPorts,
+        latencyMaxFrameSize: latencyMaxFrameSize,
+        srPVid: srPVid,
+        deltaBandwidths: deltaBandwidths,
+        forceAvbCapable: forceAvbCapable
+      )
     }
 
     let serviceGroup = ServiceGroup(
