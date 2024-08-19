@@ -326,7 +326,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
       createIfMissing: false
     )
     guard let attributeValueState, attributeValueState.registrarState == .IN else { return nil }
-    return (attributeValueState.attributeSubtype, attributeValueState.value.value)
+    return (attributeValueState.attributeSubtype, attributeValueState.unwrappedValue)
   }
 
   public func findAttributes(
@@ -341,7 +341,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
       }
       attributeValues.append((
         attributeValueState.attributeSubtype,
-        attributeValueState.value.value
+        attributeValueState.unwrappedValue
       ))
     }
 
@@ -364,7 +364,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
       guard isIncluded(
         attributeValueState.attributeType,
         attributeValueState.attributeSubtype,
-        attributeValueState.value.value
+        attributeValueState.unwrappedValue
       ) else {
         return
       }
@@ -644,6 +644,7 @@ Sendable, Hashable, Equatable {
   var index: UInt64 { value.index }
 
   var participant: P? { _participant.object }
+  var unwrappedValue: any Value { value.value }
 
   var registrarState: Registrar.State? {
     registrar?.state
@@ -736,7 +737,7 @@ Sendable, Hashable, Equatable {
       eventSource: eventSource,
       attributeType: attributeType,
       attributeSubtype: attributeSubtype,
-      attributeValue: value.value,
+      attributeValue: unwrappedValue,
       smFlags: participant._getSmFlags(for: attributeType),
       applicant: applicant,
       registrar: registrar

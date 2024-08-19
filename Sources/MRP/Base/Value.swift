@@ -21,13 +21,7 @@
 public protocol Value: SerDes, Equatable {
   var index: UInt64 { get }
 
-  init(firstValue: Self?, index: UInt64) throws
-}
-
-extension Value {
-  init(index: UInt64) throws {
-    try self.init(firstValue: nil, index: index)
-  }
+  func makeValue(relativeTo index: UInt64) throws -> Self
 }
 
 struct AnyValue: Value, Equatable, CustomStringConvertible {
@@ -39,8 +33,8 @@ struct AnyValue: Value, Equatable, CustomStringConvertible {
   }
 
   private let _value: any Value
-  private let _isEqual: @Sendable (_: any Value, _: AnyValue)
-    -> Bool
+  private let _isEqual: @Sendable (_: any Value, _: AnyValue) -> Bool
+  private let _makeValue: @Sendable (_: UInt64) throws -> any Value
 
   init<V: Value>(_ value: V) {
     _value = value
@@ -48,6 +42,10 @@ struct AnyValue: Value, Equatable, CustomStringConvertible {
     _isEqual = { lhs, rhs in
       guard let lhs = lhs as? V, let rhs = rhs as? V else { return false }
       return lhs == rhs
+    }
+
+    _makeValue = { index in
+      try value.makeValue(relativeTo: index)
     }
   }
 
@@ -63,12 +61,13 @@ struct AnyValue: Value, Equatable, CustomStringConvertible {
     try _value.serialize(into: &serializationContext)
   }
 
-  init(deserializationContext _: inout DeserializationContext) throws {
-    fatalError("cannot deserialize type-erased value")
+  func makeValue(relativeTo index: UInt64) throws -> Self {
+    let value = try _makeValue(index)
+    return Self(value)
   }
 
-  init(firstValue _: Self?, index _: UInt64) {
-    fatalError("cannot init type-erased value")
+  init(deserializationContext _: inout DeserializationContext) throws {
+    fatalError("cannot deserialize type-erased value")
   }
 
   var description: String {
@@ -83,9 +82,5 @@ extension Value {
     } else {
       AnyValue(self)
     }
-  }
-
-  func makeValue(relativeTo index: UInt64) throws -> Self {
-    try Self(firstValue: self, index: index)
   }
 }

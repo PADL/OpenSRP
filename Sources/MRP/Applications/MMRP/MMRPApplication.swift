@@ -92,9 +92,9 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationEve
     else { throw MRPError.unknownAttributeType }
     switch attributeType {
     case .mac:
-      return MMRPMACValue(index: 0)
+      return MMRPMACValue()
     case .serviceRequirement:
-      return try MMRPServiceRequirementValue(index: 0)
+      return MMRPServiceRequirementValue()
     }
   }
 

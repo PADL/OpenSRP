@@ -247,13 +247,8 @@ public struct MSRPDataFrameParameters: Value, Equatable {
     self.init(0)
   }
 
-  public init(firstValue: Self?, index: UInt64) throws {
-    let value: UInt64 = if let firstValue {
-      firstValue._value + UInt64(index)
-    } else {
-      UInt64(index)
-    }
-    self.init(value)
+  public func makeValue(relativeTo index: UInt64) throws -> Self {
+    Self(_value + index)
   }
 }
 
@@ -315,3 +310,5 @@ public enum SRclassID: UInt8, Sendable, CaseIterable {
 public typealias SRclassPriority = IEEE802Packet.TCI.PCP
 
 public typealias SRclassVID = VLAN.ID
+
+public let SR_PVID = VLAN(vid: 2)

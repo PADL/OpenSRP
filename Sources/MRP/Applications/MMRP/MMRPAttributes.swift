@@ -44,12 +44,15 @@ public enum MMRPServiceRequirementValue: UInt8, Value, Equatable, Hashable {
     UInt64(rawValue)
   }
 
-  public init(firstValue: Self? = nil, index: UInt64) throws {
-    guard let value = Self(rawValue: (firstValue?.rawValue ?? 0) + UInt8(index)) else {
+  public init() {
+    self = .allGroups
+  }
+
+  public func makeValue(relativeTo index: UInt64) throws -> Self {
+    guard let value = Self(rawValue: rawValue + UInt8(index)) else {
       throw MRPError.invalidAttributeValue
     }
-
-    self = value
+    return value
   }
 }
 
@@ -60,6 +63,10 @@ struct MMRPMACValue: Value, Equatable, Hashable {
     precondition((_macAddress & 0xFFFF_0000_0000_0000) == 0)
     serializationContext.serialize(uint32: UInt32(_macAddress >> 16))
     serializationContext.serialize(uint16: UInt16(_macAddress & 0xFFF))
+  }
+
+  private init(_macAddress: UInt64) {
+    self._macAddress = _macAddress
   }
 
   init(deserializationContext: inout DeserializationContext) throws {
@@ -73,8 +80,12 @@ struct MMRPMACValue: Value, Equatable, Hashable {
     return _macAddress
   }
 
-  init(firstValue: Self? = nil, index: UInt64) {
-    _macAddress = (firstValue?._macAddress ?? 0) + UInt64(index)
+  init() {
+    _macAddress = 0
+  }
+
+  func makeValue(relativeTo index: UInt64) throws -> Self {
+    Self(_macAddress: _macAddress + UInt64(index))
   }
 
   var macAddress: EUI48 {

@@ -46,6 +46,9 @@ private final class MRPDaemon: AsyncParsableCommand {
   @Option(name: .shortAndLong, help: "NetFilter group")
   var nfGroup: Int = 10
 
+  @Option(name: .shortAndLong, help: "QDisc handle")
+  var qDiscHandle: Int = 0x9000
+
   @Option(name: .long, help: "Exclude physical interface (may be specified multiple times)")
   var excludeIface: [String] = []
 
@@ -67,6 +70,7 @@ private final class MRPDaemon: AsyncParsableCommand {
   enum CodingKeys: String, CodingKey {
     case bridgeInterface
     case nfGroup
+    case qDiscHandle
     case excludeIface
     case excludeVlan
     case logLevel
@@ -84,7 +88,7 @@ private final class MRPDaemon: AsyncParsableCommand {
     logger = Logger(label: "com.padl.mrpd")
     logger.logLevel = logLevel
 
-    let bridge = try B(name: bridgeInterface, netFilterGroup: nfGroup)
+    let bridge = try B(name: bridgeInterface, netFilterGroup: nfGroup, qDiscHandle: qDiscHandle)
     let controller = try await MRPController<P>(
       bridge: bridge,
       logger: logger,

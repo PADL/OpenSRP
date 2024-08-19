@@ -39,9 +39,13 @@ extension VLAN: Value {
     UInt64(vid)
   }
 
-  public init(firstValue: VLAN?, index: UInt64) throws {
-    let newVid = (firstValue?.vid ?? 0) + UInt16(index)
+  public init() {
+    self.init(vid: 0)
+  }
+
+  public func makeValue(relativeTo index: UInt64) throws -> Self {
+    let newVid = UInt64(vid) + index
     guard newVid <= 0xFFF else { throw MRPError.invalidAttributeValue }
-    self.init(vid: newVid)
+    return Self(vid: UInt16(newVid))
   }
 }

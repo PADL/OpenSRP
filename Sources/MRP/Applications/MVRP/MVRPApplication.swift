@@ -83,7 +83,7 @@ public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationEve
     else { throw MRPError.unknownAttributeType }
     switch attributeType {
     case .vid:
-      return try VLAN(index: 0)
+      return VLAN()
     }
   }
 

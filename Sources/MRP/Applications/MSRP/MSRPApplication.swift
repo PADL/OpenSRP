@@ -126,7 +126,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     talkerPruning: Bool = false,
     maxFanInPorts: Int = 0,
     latencyMaxFrameSize: UInt16 = 2000,
-    srPVid: VLAN = VLAN(id: 2),
+    srPVid: VLAN = SR_PVID,
     maxSRClass: SRclassID = .B,
     deltaBandwidths: [SRclassID: Int] = [.A: 75, .B: 0]
   ) async throws {
@@ -264,13 +264,13 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     else { throw MRPError.unknownAttributeType }
     switch attributeType {
     case .talkerAdvertise:
-      return try MSRPTalkerAdvertiseValue(index: 0)
+      return MSRPTalkerAdvertiseValue()
     case .talkerFailed:
-      return try MSRPTalkerFailedValue(index: 0)
+      return MSRPTalkerFailedValue()
     case .listener:
-      return try MSRPListenerValue(index: 0)
+      return MSRPListenerValue()
     case .domain:
-      return try MSRPDomainValue(index: 0)
+      return try MSRPDomainValue()
     }
   }
 

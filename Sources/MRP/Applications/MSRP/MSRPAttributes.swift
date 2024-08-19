@@ -111,21 +111,18 @@ struct MSRPTalkerAdvertiseValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equ
     accumulatedLatency = try deserializationContext.deserialize()
   }
 
-  init(firstValue: Self?, index: UInt64) throws {
-    if let firstValue {
-      try self.init(
-        streamID: firstValue.streamID + index,
-        dataFrameParameters: firstValue.dataFrameParameters.makeValue(relativeTo: index),
-        tSpec: firstValue.tSpec,
-        priorityAndRank: firstValue.priorityAndRank,
-        accumulatedLatency: firstValue.accumulatedLatency
-      )
-    } else {
-      try self.init(
-        streamID: UInt64(index),
-        dataFrameParameters: MSRPDataFrameParameters(index: index)
-      )
-    }
+  init() {
+    self.init(streamID: 0, dataFrameParameters: MSRPDataFrameParameters())
+  }
+
+  public func makeValue(relativeTo index: UInt64) throws -> Self {
+    try Self(
+      streamID: streamID + index,
+      dataFrameParameters: dataFrameParameters.makeValue(relativeTo: index),
+      tSpec: tSpec,
+      priorityAndRank: priorityAndRank,
+      accumulatedLatency: accumulatedLatency
+    )
   }
 }
 
@@ -175,23 +172,20 @@ struct MSRPTalkerFailedValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equata
     failureCode = try TSNFailureCode(deserializationContext: &deserializationContext)
   }
 
-  init(firstValue: Self?, index: UInt64) throws {
-    if let firstValue {
-      try self.init(
-        streamID: firstValue.streamID + UInt64(index),
-        dataFrameParameters: firstValue.dataFrameParameters.makeValue(relativeTo: index),
-        tSpec: firstValue.tSpec,
-        priorityAndRank: firstValue.priorityAndRank,
-        accumulatedLatency: firstValue.accumulatedLatency,
-        systemID: firstValue.systemID,
-        failureCode: firstValue.failureCode
-      )
-    } else {
-      try self.init(
-        streamID: UInt64(index),
-        dataFrameParameters: MSRPDataFrameParameters(index: index)
-      )
-    }
+  init() {
+    self.init(streamID: 0, dataFrameParameters: MSRPDataFrameParameters())
+  }
+
+  public func makeValue(relativeTo index: UInt64) throws -> Self {
+    try Self(
+      streamID: streamID + UInt64(index),
+      dataFrameParameters: dataFrameParameters.makeValue(relativeTo: index),
+      tSpec: tSpec,
+      priorityAndRank: priorityAndRank,
+      accumulatedLatency: accumulatedLatency,
+      systemID: systemID,
+      failureCode: failureCode
+    )
   }
 }
 
@@ -214,8 +208,12 @@ struct MSRPListenerValue: Value, Equatable {
     streamID = try deserializationContext.deserialize()
   }
 
-  init(firstValue: Self?, index: UInt64) throws {
-    self.init(streamID: firstValue?.streamID ?? 0 + UInt64(index))
+  public init() {
+    self.init(streamID: 0)
+  }
+
+  public func makeValue(relativeTo index: UInt64) throws -> Self {
+    Self(streamID: streamID + index)
   }
 }
 
@@ -261,19 +259,21 @@ struct MSRPDomainValue: Value, Equatable {
     self.srClassVID = srClassVID
   }
 
-  init(firstValue: MSRPDomainValue?, index: UInt64) throws {
-    let value = UInt64(firstValue?.srClassID.rawValue ?? 0) + index
+  init() throws {
+    self.init(srClassID: .B, srClassPriority: .EE, srClassVID: SR_PVID.vid)
+  }
+
+  public func makeValue(relativeTo index: UInt64) throws -> Self {
+    let value = UInt64(srClassID.rawValue) + index
     guard value < 8 else {
       throw MRPError.invalidAttributeValue
     }
     guard let srClassID = SRclassID(rawValue: UInt8(value)) else {
       throw MRPError.invalidSRclassID
     }
-    self.srClassID = srClassID
     guard let srClassPriority = SRclassPriority(rawValue: UInt8(value)) else {
       throw MRPError.invalidSRclassPriority
     }
-    self.srClassPriority = srClassPriority
-    srClassVID = 0
+    return Self(srClassID: srClassID, srClassPriority: srClassPriority, srClassVID: SR_PVID.vid)
   }
 }
