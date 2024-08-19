@@ -21,9 +21,9 @@ import CNetLink
 import SocketAddress
 import SystemPackage
 
-protocol RTNLLinkFactory {}
+protocol RTNLFactory {}
 
-extension RTNLLinkFactory {
+extension RTNLFactory {
   init(reassigningSelfTo other: Self) {
     self = other
   }
@@ -31,7 +31,7 @@ extension RTNLLinkFactory {
 
 public class RTNLLink: NLObjectConstructible, @unchecked
 Sendable, CustomStringConvertible,
-  RTNLLinkFactory
+  RTNLFactory
 {
   private let _object: NLObject
 
@@ -497,6 +497,21 @@ public extension NLSocket {
       .eraseToAnyAsyncSequence()
   }
 
+  func getQDiscs(
+    family: sa_family_t,
+    interfaceIndex: Int
+  ) async throws -> AnyAsyncSequence<RTNLTCQDisc> {
+    let message = try NLMessage(socket: self, type: RTM_GETQDISC, flags: .dump)
+    var hdr = tcmsg()
+    hdr.tcm_family = UInt8(family)
+    hdr.tcm_ifindex = Int32(interfaceIndex)
+    try withUnsafeBytes(of: &hdr) {
+      try message.append(Array($0))
+    }
+    return try streamRequest(message: message).map { $0 as! RTNLTCQDisc }
+      .eraseToAnyAsyncSequence()
+  }
+
   func subscribeLinks() throws {
     try add(membership: RTNLGRP_LINK)
   }
@@ -564,7 +579,7 @@ public extension NLSocket {
 
 public class RTNLTCBase: NLObjectConstructible, @unchecked
 Sendable, CustomStringConvertible,
-  RTNLLinkFactory
+  RTNLFactory
 {
   private let _object: NLObject
 
@@ -573,27 +588,28 @@ Sendable, CustomStringConvertible,
   }
 
   public required convenience init(object: NLObject) throws {
-    try self.init(object: object, type: nil)
-  }
-
-  public convenience init(object: NLObject, type: rtnl_tc_type?) throws {
-    guard object.messageType == RTM_NEWQDISC || object.messageType == RTM_DELQDISC else {
-      debugPrint("Unknown message type \(object.messageType) returned")
+    let kind = String(cString: rtnl_tc_get_kind(object._obj))
+    switch object.messageType {
+    case RTM_NEWQDISC:
+      fallthrough
+    case RTM_DELQDISC:
+      fallthrough
+    case RTM_GETQDISC:
+      try self.init(reassigningSelfTo: RTNLTCQDisc(object: object, kind: kind) as! Self)
+    case RTM_NEWTCLASS:
+      fallthrough
+    case RTM_DELTCLASS:
+      fallthrough
+    case RTM_GETTCLASS:
+      self.init(reassigningSelfTo: RTNLTCClass(object) as! Self)
+    case RTM_NEWTFILTER:
+      fallthrough
+    case RTM_DELTFILTER:
+      fallthrough
+    case RTM_GETTFILTER:
+      self.init(reassigningSelfTo: RTNLTCClassifier(object) as! Self)
+    default:
       throw NLError.invalidArgument
-    }
-    if let type {
-      switch type {
-      case RTNL_TC_TYPE_QDISC:
-        self.init(reassigningSelfTo: RTNLTCQDisc(object) as! Self)
-      case RTNL_TC_TYPE_CLASS:
-        self.init(reassigningSelfTo: RTNLTCClass(object) as! Self)
-      case RTNL_TC_TYPE_CLS:
-        self.init(reassigningSelfTo: RTNLTCClassifier(object) as! Self)
-      default:
-        self.init(object)
-      }
-    } else {
-      self.init(object)
     }
   }
 
@@ -644,13 +660,83 @@ Sendable, CustomStringConvertible,
   }
 }
 
-public final class RTNLTCQDisc: RTNLTCBase {
+public class RTNLTCQDisc: RTNLTCBase {
   public convenience init() {
     self.init(object: NLObject(consumingObj: rtnl_qdisc_alloc()))
   }
 
   public required convenience init(object: NLObject) {
     self.init(object)
+  }
+
+  public convenience init(object: NLObject, kind: String) throws {
+    switch kind {
+    case "mqprio":
+      self.init(reassigningSelfTo: RTNLMQPrioQDisc(object) as! Self)
+    case "pfifo_fast":
+      self.init(reassigningSelfTo: RTNLPFIFOFastQDisc(object) as! Self)
+    default:
+      self.init(object)
+    }
+  }
+}
+
+public final class RTNLPFIFOFastQDisc: RTNLTCQDisc {}
+
+public final class RTNLMQPrioQDisc: RTNLTCQDisc {
+  public var numTC: Int {
+    Int(rtnl_qdisc_mqprio_get_num_tc(_obj))
+  }
+
+  public var hwOffload: Bool {
+    rtnl_qdisc_mqprio_get_hw_offload(_obj) > 0
+  }
+
+  public var mode: Int32 {
+    get throws {
+      try throwingNLError {
+        rtnl_qdisc_mqprio_get_mode(_obj)
+      }
+    }
+  }
+
+  public var shaper: UInt16 {
+    get throws {
+      try UInt16(throwingNLError {
+        rtnl_qdisc_mqprio_get_shaper(_obj)
+      })
+    }
+  }
+
+  public var minRate: UInt64 {
+    get throws {
+      var rate = UInt64(0)
+      try throwingNLError {
+        rtnl_qdisc_mqprio_get_min_rate(_obj, &rate)
+      }
+      return rate
+    }
+  }
+
+  public var maxRate: [UInt64] {
+    get throws {
+      var rates = [UInt64](repeating: 0, count: Int(TC_QOPT_MAX_QUEUE))
+      _ = try throwingNLError {
+        rates.withUnsafeMutableBufferPointer {
+          rtnl_qdisc_mqprio_get_max_rate(_obj, $0.baseAddress)
+        }
+      }
+      return rates
+    }
+  }
+
+  public var priorityMap: [UInt8: UInt8]? {
+    guard let map = rtnl_qdisc_mqprio_get_priomap(_obj) else { return nil }
+    var priorityMap = [UInt8: UInt8]()
+    for i in 0...Int(TC_QOPT_BITMASK) {
+      priorityMap[UInt8(i)] = UInt8(map[i])
+    }
+    return priorityMap
   }
 }
 

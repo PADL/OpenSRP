@@ -167,6 +167,12 @@ private func NLSocket_CB_VALID(
         fallthrough
       case RTM_SETLINK:
         constructFromObject = RTNLLinkMessage.init
+      case RTM_DELQDISC:
+        fallthrough
+      case RTM_GETQDISC:
+        fallthrough
+      case RTM_NEWQDISC:
+        constructFromObject = RTNLTCBase.init
       default:
         debugPrint("NLSocket_CB_VALID: unknown NETLINK_ROUTE message type \(hdr.nlmsg_type)")
         throw NLError.invalidArgument

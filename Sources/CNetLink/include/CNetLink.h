@@ -21,6 +21,9 @@
 #include <netlink/route/mdb.h>
 #include <netlink/route/netconf.h>
 #include <netlink/route/qdisc.h>
+#include <netlink/route/qdisc/fifo.h>
+#include <netlink/route/qdisc/mqprio.h>
+#include <netlink/route/qdisc/prio.h>
 #include <netlink/route/route.h>
 #include <netlink/route/rtnl.h>
 #include <netlink/route/rule.h>
