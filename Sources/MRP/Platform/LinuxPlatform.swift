@@ -93,6 +93,34 @@ private func _makeLinkLayerAddressBytes(
   }
 }
 
+private func _getEthChannelCount(name: String) throws -> (Int, Int) {
+  let fileHandle = try FileHandle(
+    fileDescriptor: socket(CInt(AF_PACKET), Int32(SOCK_DGRAM.rawValue), 0),
+    closeOnDealloc: true
+  )
+
+  var channels = ethtool_channels()
+  channels.cmd = UInt32(ETHTOOL_GCHANNELS)
+  try withUnsafeMutablePointer(to: &channels) {
+    try $0.withMemoryRebound(to: CChar.self, capacity: MemoryLayout<ethtool_channels>.size) {
+      var ifr = ifreq()
+      ifr.ifr_ifru.ifru_data = UnsafeMutablePointer($0)
+      // note: we are trusting here that the string is ASCII and not UTF-8
+      try withUnsafePointer(to: ifr.ifr_ifrn.ifrn_name) {
+        let baseAddress = $0.propertyBasePointer(to: \.0)!
+        guard name.count < Int(IFNAMSIZ) else { throw Errno.outOfRange }
+        memcpy(UnsafeMutableRawPointer(mutating: baseAddress), name, name.count + 1)
+      }
+
+      if ioctl(fileHandle.fileDescriptor, UInt(SIOCETHTOOL), &ifr) < 0 {
+        throw Errno(rawValue: errno)
+      }
+    }
+  }
+
+  return (Int(channels.rx_count), Int(channels.tx_count))
+}
+
 public struct LinuxPort: Port, Sendable, CustomStringConvertible {
   public static func timeSinceEpoch() throws -> UInt32 {
     var tv = timeval()
@@ -180,7 +208,9 @@ public struct LinuxPort: Port, Sendable, CustomStringConvertible {
 
 extension LinuxPort: AVBPort {
   public var isAvbCapable: Bool {
-    true
+    // TODO: may need to revisit this
+    guard let channelCount = try? _getEthChannelCount(name: name) else { return false }
+    return channelCount.1 > 2
   }
 
   public func getPortTcMaxLatency(for: SRclassPriority) -> Int {
@@ -672,6 +702,15 @@ fileprivate extension RTNLMQPrioQDisc {
       let srClassPriority = _mapUPToSRClassPriority(up)
       return (srClassID, srClassPriority)
     }))
+  }
+}
+
+fileprivate extension UnsafePointer {
+  func propertyBasePointer<Property>(to property: KeyPath<Pointee, Property>)
+    -> UnsafePointer<Property>?
+  {
+    guard let offset = MemoryLayout<Pointee>.offset(of: property) else { return nil }
+    return (UnsafeRawPointer(self) + offset).assumingMemoryBound(to: Property.self)
   }
 }
 #endif
