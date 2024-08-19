@@ -172,6 +172,9 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
       for port in context {
         if port.isAvbCapable, let bridge = (controller?.bridge as? any MSRPAwareBridge<P>) {
           srClassPriorityMap[port.id] = try? await bridge.getSRClassPriorityMap(port: port)
+          _logger.trace("MSRP: allocating port state for \(port), prio map \(srClassPriorityMap)")
+        } else {
+          _logger.trace("MRRP: port \(port) is not AVB capable, skipping")
         }
       }
 
@@ -196,6 +199,9 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     _portStates.withCriticalRegion {
       for port in context {
         guard let index = $0.index(forKey: port.id) else { continue }
+        if $0.values[index].msrpPortEnabledStatus != port.isAvbCapable {
+          _logger.info("MSRP: port \(port) changed isAvbCapable, now \(port.isAvbCapable)")
+        }
         $0.values[index].msrpPortEnabledStatus = port.isAvbCapable
       }
     }
@@ -261,8 +267,14 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     .normalParticipant
   }
 
-  private func declarationType(for streamID: MSRPStreamID) throws -> MSRPDeclarationType {
-    throw MRPError.invalidMSRPDeclarationType
+  private func declarationType(for streamID: MSRPStreamID) async throws -> MSRPDeclarationType? {
+    let talkerRegistration = try await _findTalkerRegistration(for: streamID)
+    guard let talkerRegistration else { return nil }
+    if talkerRegistration.1 is MSRPTalkerAdvertiseValue {
+      return .talkerAdvertise
+    } else {
+      return .talkerFailed
+    }
   }
 
   // If an MSRP message is received from a Port with an event value specifying
@@ -366,8 +378,11 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
   public func deregisterStream(
     streamID: MSRPStreamID
   ) async throws {
+    guard let declarationType = try await declarationType(for: streamID) else {
+      throw MRPError.invalidAttributeValue
+    }
     try await leave(
-      attributeType: declarationType(for: streamID).attributeType.rawValue,
+      attributeType: declarationType.attributeType.rawValue,
       attributeValue: MSRPListenerValue(streamID: streamID),
       for: MAPBaseSpanningTreeContext
     )
@@ -398,8 +413,11 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
   public func deregisterAttach(
     streamID: MSRPStreamID
   ) async throws {
+    guard let declarationType = try await declarationType(for: streamID) else {
+      throw MRPError.invalidAttributeValue
+    }
     try await leave(
-      attributeType: declarationType(for: streamID).attributeType.rawValue,
+      attributeType: declarationType.attributeType.rawValue,
       attributeValue: MSRPListenerValue(streamID: streamID),
       for: MAPBaseSpanningTreeContext
     )
