@@ -511,7 +511,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
           attributeType: message.attributeType,
           matching: .matchRelativeWithSubtype((
             vectorAttribute.applicationEvents?[i],
-            vectorAttribute.firstValue,
+            vectorAttribute.firstValue.value,
             UInt64(i)
           ))
         ) else { continue }
@@ -656,6 +656,7 @@ Sendable, Hashable, Equatable {
     subtype: AttributeSubtype?,
     value: AnyValue
   ) {
+    precondition(!(value.value is AnyValue))
     _participant = participant
     registrar = nil
     attributeType = type
@@ -664,6 +665,7 @@ Sendable, Hashable, Equatable {
   }
 
   init(participant: P, type: AttributeType, subtype: AttributeSubtype?, value: AnyValue) {
+    precondition(!(value.value is AnyValue))
     _participant = Weak(participant)
     attributeType = type
     attributeSubtype = subtype
@@ -743,6 +745,7 @@ Sendable, Hashable, Equatable {
       registrar: registrar
     )
 
+    precondition(!(unwrappedValue is AnyValue))
     participant._logger.trace("handling \(context)")
     try await _handleApplicant(context: context) // attribute subtype can be adjusted by hook
     try await _handleRegistrar(context: context)
