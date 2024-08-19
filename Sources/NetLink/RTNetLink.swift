@@ -501,7 +501,7 @@ public extension NLSocket {
     try withUnsafeBytes(of: &hdr) {
       try message.append(Array($0))
     }
-    return try streamRequest(message: message).map { $0 as! NLAddress }
+    return try streamRequest(message: message).map { ($0 as! NLAddressMessage).address }
       .eraseToAnyAsyncSequence()
   }
 
@@ -532,7 +532,7 @@ public extension NLSocket {
     try withUnsafeBytes(of: &hdr) {
       try message.append(Array($0))
     }
-    return try streamRequest(message: message).map { $0 as! RTNLTCQDisc }
+    return try streamRequest(message: message).map { ($0 as! RTNLTCMessage).tc as! RTNLTCQDisc }
       .eraseToAnyAsyncSequence()
   }
 
@@ -754,6 +754,7 @@ public final class RTNLMQPrioQDisc: RTNLTCQDisc {
     }
   }
 
+  // maps priorities to TCs
   public var priorityMap: [UInt8: UInt8]? {
     guard let map = rtnl_qdisc_mqprio_get_priomap(_obj) else { return nil }
     var priorityMap = [UInt8: UInt8]()

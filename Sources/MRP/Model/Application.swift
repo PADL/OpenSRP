@@ -35,7 +35,6 @@ public protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
   var etherType: UInt16 { get }
   var protocolVersion: ProtocolVersion { get }
   var hasAttributeListLength: Bool { get }
-  var nonBaseContextsSupported: Bool { get }
 
   var controller: MRPController<P>? { get }
 
@@ -62,6 +61,7 @@ public protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
 
   func hasAttributeSubtype(for: AttributeType) -> Bool
   func administrativeControl(for: AttributeType) throws -> AdministrativeControl
+  var nonBaseContextsSupported: Bool { get }
 
   func makeNullValue(for attributeType: AttributeType) throws -> any Value
   func deserialize(

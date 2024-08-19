@@ -102,8 +102,8 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
     await _shutdown()
   }
 
-  public func lookup(port name: String) throws -> some Port {
-    guard let port = ports.first(where: { $0.name == name }) else {
+  public func port(with id: P.ID) throws -> P {
+    guard let port = ports.first(where: { $0.id == id }) else {
       throw MRPError.portNotFound
     }
     return port

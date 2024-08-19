@@ -14,6 +14,7 @@
 // limitations under the License.
 //
 
+import AsyncExtensions
 import Locking
 import Logging
 
@@ -28,17 +29,15 @@ protocol MSRPAwareBridge<P>: Bridge where P: AVBPort {
     hiCredit: Int,
     loCredit: Int
   ) async throws
+
+  func getSRClassPriorityMap(port: P) async throws -> SRClassPriorityMap?
+
+  var srClassPriorityMapNotifications: AnyAsyncSequence<SRClassPriorityMapNotification<P>> { get }
 }
 
-private extension AVBPort {
+extension AVBPort {
   var systemID: UInt64 {
     UInt64(eui48: macAddress)
-  }
-
-  func reverseMapSrClassPriority(priority: SRclassPriority) async -> SRclassID? {
-    try? await srClassPriorityMap.first(where: {
-      $0.value == priority
-    })?.key
   }
 }
 
@@ -52,6 +51,11 @@ public struct MSRPPortState<P: AVBPort>: Sendable {
   // TODO: make these configurable
   var talkerPruning: Bool { false }
   var talkerVlanPruning: Bool { false }
+  var srClassPriorityMap = SRClassPriorityMap()
+
+  func reverseMapSrClassPriority(priority: SRclassPriority) async -> SRclassID? {
+    srClassPriorityMap.first(where: { $0.value == priority })?.key
+  }
 
   mutating func register(streamID: MSRPStreamID) {
     streamEpochs[streamID] = (try? P.timeSinceEpoch()) ?? 0
@@ -81,6 +85,7 @@ public struct MSRPPortState<P: AVBPort>: Sendable {
 }
 
 public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventObserver,
+  BaseApplicationContextObserver,
   ApplicationEventHandler, CustomStringConvertible, @unchecked Sendable where P == P
 {
   // for now, we only operate in the Base Spanning Tree Context
@@ -111,8 +116,9 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
   let _latencyMaxFrameSize: UInt16
   let _srPVid: VLAN
   let _maxSRClass: SRclassID
-  var _ports = ManagedCriticalState<[P.ID: MSRPPortState<P>]>([:])
+  var _portStates = ManagedCriticalState<[P.ID: MSRPPortState<P>]>([:])
   let _mmrp: MMRPApplication<P>?
+  var _priorityMapNotificationTask: Task<(), Error>?
 
   public init(
     controller: MRPController<P>,
@@ -131,6 +137,16 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     _maxSRClass = maxSRClass
     _mmrp = try? await controller.application(for: MMRPEtherType)
     try await controller.register(application: self)
+    _priorityMapNotificationTask = Task {
+      guard let bridge = controller.bridge as? any MSRPAwareBridge<P> else { return }
+
+      for try await notification in bridge.srClassPriorityMapNotifications {
+        guard let port = try? await controller.port(with: notification.portID) else { continue }
+        withPortState(port: port) { portState in
+          portState.srClassPriorityMap = notification.map
+        }
+      }
+    }
   }
 
   @discardableResult
@@ -138,21 +154,68 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     port: P,
     body: (_: inout MSRPPortState<P>) throws -> T
   ) rethrows -> T {
-    try _ports.withCriticalRegion {
+    try _portStates.withCriticalRegion {
       if let index = $0.index(forKey: port.id) {
-        $0.values[index].msrpPortEnabledStatus = port.isAvbCapable
         return try body(&$0.values[index])
       } else {
-        var newPortState = try MSRPPortState(msrp: self, port: port)
-        let ret = try body(&newPortState)
-        $0[port.id] = newPortState
-        return ret
+        throw MRPError.portNotFound
+      }
+    }
+  }
+
+  func onContextAdded(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws {
+    precondition(contextIdentifier == MAPBaseSpanningTreeContext)
+
+    Task {
+      var srClassPriorityMap = [P.ID: SRClassPriorityMap]()
+
+      for port in context {
+        if port.isAvbCapable, let bridge = (controller?.bridge as? any MSRPAwareBridge<P>) {
+          srClassPriorityMap[port.id] = try? await bridge.getSRClassPriorityMap(port: port)
+        }
+      }
+
+      try _portStates.withCriticalRegion {
+        for port in context {
+          var portState = try MSRPPortState(msrp: self, port: port)
+          if let srClassPriorityMap = srClassPriorityMap[port.id] {
+            portState.srClassPriorityMap = srClassPriorityMap
+          }
+          $0[port.id] = portState
+        }
+      }
+    }
+  }
+
+  func onContextUpdated(
+    contextIdentifier: MAPContextIdentifier,
+    with context: MAPContext<P>
+  ) throws {
+    precondition(contextIdentifier == MAPBaseSpanningTreeContext)
+
+    _portStates.withCriticalRegion {
+      for port in context {
+        guard let index = $0.index(forKey: port.id) else { continue }
+        $0.values[index].msrpPortEnabledStatus = port.isAvbCapable
+      }
+    }
+  }
+
+  func onContextRemoved(
+    contextIdentifier: MAPContextIdentifier,
+    with context: MAPContext<P>
+  ) throws {
+    precondition(contextIdentifier == MAPBaseSpanningTreeContext)
+
+    _portStates.withCriticalRegion {
+      for port in context {
+        $0.removeValue(forKey: port.id)
       }
     }
   }
 
   public var description: String {
-    "MSRPApplication(controller: \(controller!), participants: \(_participants.criticalState))"
+    "MSRPApplication(controller: \(controller!), participants: \(_participants.criticalState), portStates: \(_portStates.criticalState)"
   }
 
   public func deserialize(
@@ -449,7 +512,7 @@ extension MSRPApplication {
     eventSource: ParticipantEventSource
   ) async throws {
     do {
-      guard let srClassID = await port
+      guard let srClassID = await portState
         .reverseMapSrClassPriority(priority: priorityAndRank.dataFramePriority),
         portState.srpDomainBoundaryPort[srClassID] == false
       else {
@@ -704,7 +767,7 @@ extension MSRPApplication {
     var streams = [SRclassID: [MSRPTSpec]]()
 
     for talker in talkers.map({ $0.1 as! MSRPTalkerAdvertiseValue }) {
-      guard let classID = await participant.port
+      guard let classID = await portState
         .reverseMapSrClassPriority(priority: talker.priorityAndRank.dataFramePriority)
       else { continue }
       if let index = streams.index(forKey: classID) {

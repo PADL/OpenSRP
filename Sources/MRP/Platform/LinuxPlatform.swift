@@ -28,6 +28,29 @@ import NetLink
 import SocketAddress
 import SystemPackage
 
+private func _mapUPToSRClassPriority(_ up: UInt8) -> SRclassPriority {
+  guard let srClassPriority = SRclassPriority(rawValue: up) else {
+    return SRclassPriority.BE // best effort
+  }
+  return srClassPriority
+}
+
+private func _mapSRClassPriorityToUP(_ srClassPriority: SRclassPriority) -> UInt8 {
+  srClassPriority.rawValue
+}
+
+private func _mapTCToSRClassID(_ tc: UInt8) -> SRclassID? {
+  guard tc <= SRclassID.A.rawValue else {
+    return nil
+  }
+
+  return SRclassID(rawValue: SRclassID.A.rawValue - tc)
+}
+
+private func _mapSRClassIDToTC(_ srClassID: SRclassID) -> UInt8 {
+  SRclassID.A.rawValue - srClassID.rawValue
+}
+
 private func _makeLinkLayerAddress(
   family: sa_family_t = sa_family_t(AF_PACKET),
   macAddress: EUI48? = nil,
@@ -163,12 +186,6 @@ extension LinuxPort: AVBPort {
   public func getPortTcMaxLatency(for: SRclassPriority) -> Int {
     500
   }
-
-  public var srClassPriorityMap: [SRclassID: SRclassPriority] {
-    get async throws {
-      [:]
-    }
-  }
 }
 
 private extension LinuxPort {
@@ -280,6 +297,8 @@ Sendable {
   private func _handleTCNotification(_ tcMessage: RTNLTCMessage) throws {
     // all we are really interested is in SR class remappings
     guard let qdisc = tcMessage.tc as? RTNLMQPrioQDisc,
+          let _nlQDiscHandle,
+          qdisc.parent == _nlQDiscHandle,
           let srClassPriorityMap = qdisc.srClassPriorityMap else { return }
     let tcNotification: SRClassPriorityMapNotification<Port> = if case .new = tcMessage {
       .added(srClassPriorityMap)
@@ -287,12 +306,6 @@ Sendable {
       .removed(srClassPriorityMap)
     }
     Task { await _srClassPriorityMapNotificationChannel.send(tcNotification) }
-  }
-
-  public var srClassPriorityMapNotifications: AnyAsyncSequence<
-    SRClassPriorityMapNotification<Port>
-  > {
-    _srClassPriorityMapNotificationChannel.eraseToAnyAsyncSequence()
   }
 
   public var defaultPVid: UInt16? {
@@ -609,7 +622,7 @@ extension LinuxBridge: MVRPAwareBridge {
 
 extension LinuxBridge: MSRPAwareBridge {
   func adjustCreditBasedShaper(
-    port: P,
+    port: Port,
     srClass: SRclassID,
     idleSlope: Int,
     sendSlope: Int,
@@ -617,10 +630,10 @@ extension LinuxBridge: MSRPAwareBridge {
     loCredit: Int
   ) async throws {
     guard let parent = _nlQDiscHandle else {
-      throw MSRPFailure(systemID: 0, failureCode: .egressPortIsNotAvbCapable)
+      throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
     }
     try await port._rtnl.add(
-      handle: UInt32(srClass.rawValue), // FIXME: correct class mapping
+      handle: 1 + UInt32(_mapSRClassIDToTC(srClass)),
       parent: UInt32(parent),
       hiCredit: Int32(hiCredit),
       loCredit: Int32(loCredit),
@@ -629,14 +642,32 @@ extension LinuxBridge: MSRPAwareBridge {
       socket: _nlLinkSocket
     )
   }
+
+  func getSRClassPriorityMap(port: P) async throws -> SRClassPriorityMap? {
+    let qDiscs = try await _nlLinkSocket.getQDiscs(
+      family: sa_family_t(AF_UNSPEC),
+      interfaceIndex: port.id
+    )
+    guard let qDisc = try await qDiscs.collect().compactMap({ $0 as? RTNLMQPrioQDisc }).first else {
+      return nil
+    }
+    guard let parent = _nlQDiscHandle, qDisc.parent == parent else {
+      return nil
+    }
+    return qDisc.srClassPriorityMap?.1
+  }
+
+  var srClassPriorityMapNotifications: AnyAsyncSequence<SRClassPriorityMapNotification<Port>> {
+    _srClassPriorityMapNotificationChannel.eraseToAnyAsyncSequence()
+  }
 }
 
 fileprivate extension RTNLMQPrioQDisc {
   var srClassPriorityMap: (LinuxPort.ID, SRClassPriorityMap)? {
     guard let priorityMap else { return nil }
-    return (index, SRClassPriorityMap(uniqueKeysWithValues: priorityMap.compactMap {
-      guard let srClassID = SRclassID(rawValue: $0),
-            let srClassPriority = SRclassPriority(rawValue: $1) else { return nil }
+    return (index, SRClassPriorityMap(uniqueKeysWithValues: priorityMap.compactMap { up, tc in
+      guard let srClassID = _mapTCToSRClassID(tc) else { return nil }
+      let srClassPriority = _mapUPToSRClassPriority(up)
       return (srClassID, srClassPriority)
     }))
   }
