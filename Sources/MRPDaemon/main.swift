@@ -49,10 +49,10 @@ private final class MRPDaemon: AsyncParsableCommand {
   @Option(name: .shortAndLong, help: "QDisc handle")
   var qDiscHandle: Int = 0x9000
 
-  @Option(name: .long, help: "Force ports to advertise as AVB capable")
+  @Flag(name: .long, help: "Force ports to advertise as AVB capable")
   var forceAvbCapable: Bool = false
 
-  @Option(name: .long, help: "Enable MSRP talker pruning")
+  @Flag(name: .long, help: "Enable MSRP talker pruning")
   var enableTalkerPruning: Bool = false
 
   @Option(name: .long, help: "Maximum number of MSRP fan-in ports")
