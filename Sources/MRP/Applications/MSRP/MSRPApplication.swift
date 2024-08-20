@@ -1044,7 +1044,7 @@ extension MSRPApplication {
     else { throw MRPError.unknownAttributeType }
 
     // 35.2.4 (d) A MAD_Join.indication adds a new attribute to MAD (with isNew TRUE)
-    guard isNew, eventSource != .map
+    guard isNew, (eventSource == .timer || eventSource == .local || eventSource == .peer)
     else { throw MRPError.doNotPropagateAttribute } // don't recursively invoke MAP
 
     _logger
@@ -1099,7 +1099,6 @@ extension MSRPApplication {
         eventSource: eventSource
       )
     case .domain:
-      guard eventSource == .peer || eventSource == .local else { break }
       let domain = (attributeValue as! MSRPDomainValue)
       withPortState(port: port) { portState in
         let srClassPriority = portState.srClassPriorityMap[domain.srClassID]
@@ -1207,7 +1206,7 @@ extension MSRPApplication {
     guard let attributeType = MSRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }
 
-    guard eventSource != .map
+    guard eventSource == .timer || eventSource == .local || eventSource == .peer
     else { throw MRPError.doNotPropagateAttribute } // don't recursively invoke MAP
 
     _logger
