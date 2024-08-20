@@ -211,7 +211,10 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     }
 
     _logger = controller.logger
+    await _initTimers()
+  }
 
+  private func _initTimers() async {
     // The Join Period Timer, jointimer, controls the interval between transmit
     // opportunities that are applied to the Applicant state machine. An
     // instance of this timer is required on a per-Port, per-MRP Participant
@@ -228,7 +231,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     // < T < 1.5 × LeaveAllTime when it is started. LeaveAllTime is defined in
     // Table 10-7.
     _leaveAll = await LeaveAll(
-      interval: controller.leaveAllTime,
+      interval: controller!.leaveAllTime,
       onLeaveAllTimerExpired: _onLeaveAllTimerExpired
     )
   }
