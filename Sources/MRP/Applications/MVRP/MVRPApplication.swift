@@ -14,6 +14,7 @@
 // limitations under the License.
 //
 
+import IEEE802
 import Locking
 import Logging
 

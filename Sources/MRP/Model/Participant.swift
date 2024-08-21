@@ -35,6 +35,7 @@
 // identifies the set of Bridge Ports that form the applicable active topology
 // (8.4).
 
+import IEEE802
 import Logging
 
 enum ParticipantType {

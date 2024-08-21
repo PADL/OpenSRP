@@ -23,6 +23,7 @@
 // primarily on the exchange of idempotent protocol state rather than commands.
 
 import AsyncExtensions
+import IEEE802
 import Logging
 import ServiceLifecycle
 

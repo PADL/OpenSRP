@@ -14,6 +14,8 @@
 // limitations under the License.
 //
 
+import IEEE802
+
 enum MSRPPortMediaType {
   case accessControlPort
   case nonDMNSharedMediumPort

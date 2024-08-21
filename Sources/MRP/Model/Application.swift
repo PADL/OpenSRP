@@ -14,6 +14,7 @@
 // limitations under the License.
 //
 
+import IEEE802
 import Logging
 
 public enum AdministrativeControl {

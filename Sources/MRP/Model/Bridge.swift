@@ -15,6 +15,7 @@
 //
 
 import AsyncExtensions
+import IEEE802
 
 public protocol Bridge<P>: Sendable {
   associatedtype P: Port

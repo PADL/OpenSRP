@@ -14,6 +14,8 @@
 // limitations under the License.
 //
 
+import IEEE802
+
 enum MMRPAttributeType: AttributeType, CaseIterable {
   case serviceRequirement = 1
   case mac = 2

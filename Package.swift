@@ -154,8 +154,25 @@ let CommonTargets: [Target] = [
     name: "Locking"
   ),
   .target(
+    name: "IEEE802"
+  ),
+  .target(
+    name: "MarvellRMU",
+    dependencies: [
+      "Locking",
+      "AsyncExtensions",
+      "SocketAddress",
+      .product(name: "Algorithms", package: "swift-algorithms"),
+      .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
+      .product(name: "Logging", package: "swift-log"),
+      .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
+      .product(name: "SystemPackage", package: "swift-system"),
+    ]
+  ),
+  .target(
     name: "MRP",
     dependencies: [
+      "IEEE802",
       "Locking",
       "AsyncExtensions",
       "SocketAddress",
