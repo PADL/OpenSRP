@@ -14,15 +14,15 @@
 // limitations under the License.
 //
 
-import IEEE802
+import SystemPackage
 
 public protocol Serializable: Sendable {
   func serialize(into: inout SerializationContext) throws
 }
 
-extension Serializable {
+public extension Serializable {
   func serialized() throws -> [UInt8] {
-    var serializationContext = SerializationContext(bytes: [])
+    var serializationContext = SerializationContext()
     try serialize(into: &serializationContext)
     return serializationContext.bytes
   }
@@ -35,13 +35,15 @@ public protocol Deserializble: Sendable {
 public protocol SerDes: Serializable, Deserializble {}
 
 public struct SerializationContext {
-  private(set) var bytes = [UInt8]()
+  public private(set) var bytes = [UInt8]()
 
-  mutating func reserveCapacity(_ capacity: Int) {
+  public init() {}
+
+  public mutating func reserveCapacity(_ capacity: Int) {
     bytes.reserveCapacity(capacity)
   }
 
-  mutating func serialize(_ bytes: [UInt8], at index: Int? = nil) {
+  public mutating func serialize(_ bytes: [UInt8], at index: Int? = nil) {
     if let index {
       precondition(self.bytes.count >= index + bytes.count)
       self.bytes.replaceSubrange(index..<(index + bytes.count), with: bytes)
@@ -50,96 +52,96 @@ public struct SerializationContext {
     }
   }
 
-  mutating func serialize(uint8: UInt8, at index: Int? = nil) {
+  public mutating func serialize(uint8: UInt8, at index: Int? = nil) {
     serialize([uint8], at: index)
   }
 
-  mutating func serialize(uint16: UInt16, at index: Int? = nil) {
+  public mutating func serialize(uint16: UInt16, at index: Int? = nil) {
     serialize(uint16.bigEndianBytes, at: index)
   }
 
-  mutating func serialize(uint32: UInt32, at index: Int? = nil) {
+  public mutating func serialize(uint32: UInt32, at index: Int? = nil) {
     serialize(uint32.bigEndianBytes, at: index)
   }
 
-  mutating func serialize(uint64: UInt64, at index: Int? = nil) {
+  public mutating func serialize(uint64: UInt64, at index: Int? = nil) {
     serialize(uint64.bigEndianBytes, at: index)
   }
 
-  mutating func serialize(eui48: EUI48, at index: Int? = nil) {
+  public mutating func serialize(eui48: EUI48, at index: Int? = nil) {
     let bytes = [eui48.0, eui48.1, eui48.2, eui48.3, eui48.4, eui48.5]
     serialize(bytes, at: index)
   }
 
-  var position: Int { bytes.count }
+  public var position: Int { bytes.count }
 }
 
 public struct DeserializationContext {
   private let bytes: [UInt8]
-  private(set) var position: Int
+  public private(set) var position: Int
 
-  init(_ bytes: [UInt8]) {
+  public init(_ bytes: [UInt8]) {
     self.bytes = bytes
     position = 0
   }
 
-  var count: Int { bytes.count }
+  public var count: Int { bytes.count }
 
-  func assertRemainingLength(isAtLeast count: Int) throws {
+  public func assertRemainingLength(isAtLeast count: Int) throws {
     guard position + count <= bytes.count else {
-      throw MRPError.badPduLength
+      throw Errno.outOfRange
     }
   }
 
-  mutating func deserialize(count: Int) throws -> ArraySlice<UInt8> {
+  public mutating func deserialize(count: Int) throws -> ArraySlice<UInt8> {
     try assertRemainingLength(isAtLeast: count)
     defer { position += count }
     return bytes[position..<(position + count)]
   }
 
-  func peek(count: Int) throws -> ArraySlice<UInt8> {
+  public func peek(count: Int) throws -> ArraySlice<UInt8> {
     try assertRemainingLength(isAtLeast: count)
     return bytes[position..<(position + count)]
   }
 
-  mutating func deserialize() throws -> UInt8 {
+  public mutating func deserialize() throws -> UInt8 {
     try deserialize(count: 1).first!
   }
 
-  mutating func deserialize() throws -> UInt16 {
+  public mutating func deserialize() throws -> UInt16 {
     try UInt16(bigEndianBytes: deserialize(count: 2))
   }
 
-  mutating func deserialize() throws -> UInt32 {
+  public mutating func deserialize() throws -> UInt32 {
     try UInt32(bigEndianBytes: deserialize(count: 4))
   }
 
-  mutating func deserialize() throws -> UInt64 {
+  public mutating func deserialize() throws -> UInt64 {
     try UInt64(bigEndianBytes: deserialize(count: 8))
   }
 
-  mutating func deserialize() throws -> EUI48 {
+  public mutating func deserialize() throws -> EUI48 {
     let bytes = try Array(deserialize(count: 6))
     return (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5])
   }
 
-  mutating func deserializeRemaining() -> ArraySlice<UInt8> {
+  public mutating func deserializeRemaining() -> ArraySlice<UInt8> {
     bytes[position..<bytes.count]
   }
 
-  func peek() throws -> UInt8 {
+  public func peek() throws -> UInt8 {
     try peek(count: 1).first!
   }
 
-  func peek() throws -> UInt16 {
+  public func peek() throws -> UInt16 {
     try UInt16(bigEndianBytes: peek(count: 2))
   }
 
-  func peek() throws -> UInt32 {
+  public func peek() throws -> UInt32 {
     try UInt32(bigEndianBytes: peek(count: 4))
   }
 
-  func peek() throws -> UInt64 {
+  public func peek() throws -> UInt64 {
     try UInt64(bigEndianBytes: peek(count: 8))
   }
 }
@@ -171,60 +173,5 @@ extension FixedWidthInteger {
 
   func serialize(into bytes: inout [UInt8]) throws {
     bytes += bigEndianBytes
-  }
-}
-
-extension IEEE802Packet: SerDes {
-  init(
-    hwHeader: [UInt8],
-    payload: [UInt8]
-  ) throws {
-    var deserializationContext = DeserializationContext(hwHeader + payload)
-    try self.init(deserializationContext: &deserializationContext)
-  }
-
-  public init(
-    deserializationContext: inout DeserializationContext
-  ) throws {
-    let destMacAddress: EUI48 = try deserializationContext.deserialize()
-    let sourceMacAddress: EUI48 = try deserializationContext.deserialize()
-    let tci: TCI?
-    var etherType: UInt16 = try deserializationContext.deserialize()
-    if etherType == Self.IEEE8021QTagged {
-      tci = try TCI(deserializationContext: &deserializationContext)
-      etherType = try deserializationContext.deserialize()
-    } else {
-      tci = nil
-    }
-    let payload = Array(deserializationContext.deserializeRemaining())
-    self.init(
-      destMacAddress: destMacAddress,
-      tci: tci,
-      sourceMacAddress: sourceMacAddress,
-      etherType: etherType,
-      payload: payload
-    )
-  }
-
-  public func serialize(into serializationContext: inout SerializationContext) throws {
-    serializationContext.reserveCapacity(2 * Int(6) + 6 + 2 + payload.count)
-    serializationContext.serialize(eui48: destMacAddress)
-    serializationContext.serialize(eui48: sourceMacAddress)
-    if let tci {
-      serializationContext.serialize(uint16: Self.IEEE8021QTagged)
-      try tci.serialize(into: &serializationContext)
-    }
-    serializationContext.serialize(uint16: etherType)
-    serializationContext.serialize(payload)
-  }
-}
-
-extension IEEE802Packet.TCI: SerDes {
-  public func serialize(into serializationContext: inout SerializationContext) throws {
-    serializationContext.serialize(uint16: tci)
-  }
-
-  public init(deserializationContext: inout DeserializationContext) throws {
-    try self.init(tci: deserializationContext.deserialize())
   }
 }

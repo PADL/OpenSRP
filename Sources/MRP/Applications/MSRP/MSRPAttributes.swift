@@ -14,6 +14,8 @@
 // limitations under the License.
 //
 
+import IEEE802
+
 enum MSRPAttributeType: AttributeType, CaseIterable {
   // Talker Advertise Vector (25 octets)
   case talkerAdvertise = 1

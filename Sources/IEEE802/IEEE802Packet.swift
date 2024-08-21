@@ -102,3 +102,58 @@ public struct IEEE802Packet: Sendable, CustomStringConvertible {
       "vid: \(vid ?? 0), etherType: \(_etherTypeString), packetLength: \(payload.count)"
   }
 }
+
+extension IEEE802Packet: SerDes {
+  init(
+    hwHeader: [UInt8],
+    payload: [UInt8]
+  ) throws {
+    var deserializationContext = DeserializationContext(hwHeader + payload)
+    try self.init(deserializationContext: &deserializationContext)
+  }
+
+  public init(
+    deserializationContext: inout DeserializationContext
+  ) throws {
+    let destMacAddress: EUI48 = try deserializationContext.deserialize()
+    let sourceMacAddress: EUI48 = try deserializationContext.deserialize()
+    let tci: TCI?
+    var etherType: UInt16 = try deserializationContext.deserialize()
+    if etherType == Self.IEEE8021QTagged {
+      tci = try TCI(deserializationContext: &deserializationContext)
+      etherType = try deserializationContext.deserialize()
+    } else {
+      tci = nil
+    }
+    let payload = Array(deserializationContext.deserializeRemaining())
+    self.init(
+      destMacAddress: destMacAddress,
+      tci: tci,
+      sourceMacAddress: sourceMacAddress,
+      etherType: etherType,
+      payload: payload
+    )
+  }
+
+  public func serialize(into serializationContext: inout SerializationContext) throws {
+    serializationContext.reserveCapacity(2 * Int(6) + 6 + 2 + payload.count)
+    serializationContext.serialize(eui48: destMacAddress)
+    serializationContext.serialize(eui48: sourceMacAddress)
+    if let tci {
+      serializationContext.serialize(uint16: Self.IEEE8021QTagged)
+      try tci.serialize(into: &serializationContext)
+    }
+    serializationContext.serialize(uint16: etherType)
+    serializationContext.serialize(payload)
+  }
+}
+
+extension IEEE802Packet.TCI: SerDes {
+  public func serialize(into serializationContext: inout SerializationContext) throws {
+    serializationContext.serialize(uint16: tci)
+  }
+
+  public init(deserializationContext: inout DeserializationContext) throws {
+    try self.init(tci: deserializationContext.deserialize())
+  }
+}

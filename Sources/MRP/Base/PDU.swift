@@ -15,6 +15,7 @@
 //
 
 import Algorithms
+import IEEE802
 
 public typealias ProtocolVersion = UInt8
 

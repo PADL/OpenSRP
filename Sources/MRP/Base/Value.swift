@@ -18,6 +18,8 @@
 // by the FirstValue and NumberOfValues includes the attribute value associated
 // with the state machine.
 
+import IEEE802
+
 public protocol Value: SerDes, Equatable {
   var index: UInt64 { get }
 

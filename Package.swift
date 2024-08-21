@@ -154,12 +154,16 @@ let CommonTargets: [Target] = [
     name: "Locking"
   ),
   .target(
-    name: "IEEE802"
+    name: "IEEE802",
+    dependencies: [
+      .product(name: "SystemPackage", package: "swift-system"),
+    ]
   ),
   .target(
     name: "MarvellRMU",
     dependencies: [
       "Locking",
+      "IEEE802",
       "AsyncExtensions",
       "SocketAddress",
       .product(name: "Algorithms", package: "swift-algorithms"),

@@ -53,7 +53,7 @@ extension Bridge {
     on port: P,
     controller: isolated MRPController<P>
   ) async throws {
-    var serializationContext = SerializationContext(bytes: [])
+    var serializationContext = SerializationContext()
     try pdu.serialize(into: &serializationContext, application: application)
 
     let packet = IEEE802Packet(
