@@ -80,7 +80,7 @@ public struct MAPContextIdentifier: Identifiable, Sendable, Hashable, Equatable,
 
   var tci: IEEE802Packet.TCI? {
     if self != MAPBaseSpanningTreeContext {
-      IEEE802Packet.TCI(tci: id)
+      IEEE802Packet.TCI(id)
     } else {
       nil
     }

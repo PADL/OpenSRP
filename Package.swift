@@ -140,8 +140,8 @@ let CommonPackageDependencies: [Package.Dependency] = [
 
 let CommonProducts: [Product] = [
   .library(
-    name: "Locking",
-    targets: ["Locking"]
+    name: "MarvellRMU",
+    targets: ["MarvellRMU"]
   ),
   .library(
     name: "MRP",
@@ -180,6 +180,7 @@ let CommonTargets: [Target] = [
       "Locking",
       "AsyncExtensions",
       "SocketAddress",
+      "MarvellRMU",
       .product(name: "Algorithms", package: "swift-algorithms"),
       .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
       .product(name: "Logging", package: "swift-log"),

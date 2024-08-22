@@ -62,8 +62,12 @@ public struct IEEE802Packet: Sendable, CustomStringConvertible {
       }
     }
 
-    public init(tci: UInt16) {
-      self.tci = tci
+    public init(_ value: UInt16) {
+      tci = value
+    }
+
+    public init() {
+      self.init(0)
     }
   }
 
@@ -154,6 +158,6 @@ extension IEEE802Packet.TCI: SerDes {
   }
 
   public init(deserializationContext: inout DeserializationContext) throws {
-    try self.init(tci: deserializationContext.deserialize())
+    try self.init(deserializationContext.deserialize())
   }
 }
