@@ -22,6 +22,7 @@ import AsyncExtensions
 import CLinuxSockAddr
 import CNetLink
 import Glibc
+import IEEE802
 import IORing
 import IORingUtils
 import NetLink

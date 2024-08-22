@@ -108,7 +108,7 @@ public struct IEEE802Packet: Sendable, CustomStringConvertible {
 }
 
 extension IEEE802Packet: SerDes {
-  init(
+  public init(
     hwHeader: [UInt8],
     payload: [UInt8]
   ) throws {

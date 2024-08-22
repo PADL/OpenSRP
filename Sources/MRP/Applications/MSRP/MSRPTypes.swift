@@ -142,6 +142,7 @@ public enum TSNFailureCode: UInt8, SerDes, Equatable {
 
   public init(deserializationContext: inout DeserializationContext) throws {
     guard let value = try Self(rawValue: deserializationContext.deserialize()) else {
+      debugPrint("failed to decode: \(deserializationContext)")
       throw MRPError.invalidFailureCode
     }
     self = value

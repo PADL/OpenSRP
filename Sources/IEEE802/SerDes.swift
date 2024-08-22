@@ -14,6 +14,7 @@
 // limitations under the License.
 //
 
+import Foundation
 import SystemPackage
 
 public protocol Serializable: Sendable {
@@ -76,7 +77,7 @@ public struct SerializationContext {
   public var position: Int { bytes.count }
 }
 
-public struct DeserializationContext {
+public struct DeserializationContext: CustomStringConvertible {
   private let bytes: [UInt8]
   public private(set) var position: Int
 
@@ -86,6 +87,10 @@ public struct DeserializationContext {
   }
 
   public var count: Int { bytes.count }
+
+  public var description: String {
+    "DeserializationContext(bytes: \(bytes.map { String(format: "%02hhX", $0) }.joined()), position: \(position))"
+  }
 
   public func assertRemainingLength(isAtLeast count: Int) throws {
     guard position + count <= bytes.count else {
