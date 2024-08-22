@@ -4,7 +4,8 @@ nft delete table bridge nat >/dev/null 2>&1
 
 set -e
 
-#ip link set dev br0.100 type vlan mvrp on
+ip link set dev br0.50 type vlan mvrp on
+ip link set dev br0.51 type vlan mvrp on
 
 nft add table bridge nat
 nft add chain bridge nat PREROUTING { type filter hook prerouting priority dstnat\; policy accept\; }
