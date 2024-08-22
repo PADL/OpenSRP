@@ -340,11 +340,11 @@ Sendable {
   }
 
   public var defaultPVid: UInt16? {
-    _bridgePort!._pvid
+    _bridgePort?._pvid
   }
 
   public func getVlans(controller: isolated MRPController<Port>) async -> Set<VLAN> {
-    if let vlans = _bridgePort!._vlans {
+    if let vlans = _bridgePort?._vlans {
       Set(vlans.map { VLAN(vid: $0) })
     } else {
       Set()
@@ -515,11 +515,13 @@ Sendable {
   }
 
   private func _add(vlan: VLAN) async throws {
-    try await _bridgePort!._add(vlan: vlan)
+    guard let _bridgePort else { throw MRPError.internalError }
+    try await _bridgePort._add(vlan: vlan)
   }
 
   private func _remove(vlan: VLAN) async throws {
-    try await _bridgePort!._remove(vlan: vlan)
+    guard let _bridgePort else { throw MRPError.internalError }
+    try await _bridgePort._remove(vlan: vlan)
   }
 
   public func tx(
