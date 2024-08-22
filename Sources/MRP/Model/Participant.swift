@@ -58,7 +58,7 @@ public struct EventContext<A: Application>: Sendable, CustomStringConvertible {
   fileprivate let registrar: Registrar?
 
   public var description: String {
-    "EventContext(event: \(event), attributeType: \(attributeType), attributeSubtype: \(attributeSubtype ?? 0), attributeValue: \(attributeValue), smFlags: \(smFlags), state A \(applicant) R \(registrar?.description ?? "-"))"
+    "EventContext(event: \(event), eventSource: \(eventSource), attributeType: \(attributeType), attributeSubtype: \(attributeSubtype ?? 0), attributeValue: \(attributeValue), smFlags: \(smFlags), state A \(applicant) R \(registrar?.description ?? "-"))"
   }
 }
 
@@ -631,7 +631,7 @@ private typealias ParticipantApplyFunction<A: Application> =
   @Sendable (_AttributeValueState<A>) throws -> ()
 
 private final class _AttributeValueState<A: Application>: @unchecked
-Sendable, Hashable, Equatable {
+Sendable, Hashable, Equatable, CustomStringConvertible {
   typealias P = Participant<A>
   static func == (lhs: _AttributeValueState<A>, rhs: _AttributeValueState<A>) -> Bool {
     lhs.attributeType == rhs.attributeType &&
@@ -652,6 +652,10 @@ Sendable, Hashable, Equatable {
 
   var registrarState: Registrar.State? {
     registrar?.state
+  }
+
+  var description: String {
+    "\(type(of: self))(attributeType: \(attributeType), attributeSubtype: \(attributeSubtype ?? 0), attributeValue: \(value), A \(applicant) R \(registrar?.description ?? "-"))"
   }
 
   private init(
