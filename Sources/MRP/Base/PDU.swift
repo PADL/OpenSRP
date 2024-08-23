@@ -321,24 +321,33 @@ struct Message {
     application: some Application
   ) throws {
     attributeType = try deserializationContext.deserialize()
+
     // attributeLength is the length, in octets, of an attribute's firstValue
     let attributeLength: AttributeLength = try deserializationContext.deserialize()
+
     // attributeListLength is optional and is the length, in octets, of the entire attribute list
     // this can account for variable length attributes
     var attributeListLength: AttributeListLength?
     var attributeListPosition = 0
+
     if application.hasAttributeListLength {
       attributeListLength = try deserializationContext.deserialize()
+      guard attributeListLength! <= deserializationContext.bytesRemaining
+      else { throw MRPError.badPduLength }
       attributeListPosition = deserializationContext.position
     }
 
     var attributeList = [VectorAttribute<V>]()
 
     repeat {
-      let mark: UInt16 = try deserializationContext.peek()
-      if mark == EndMark {
-        break
+      if let attributeListLength {
+        if deserializationContext
+          .position == attributeListPosition + Int(attributeListLength) - 2 { break }
+      } else {
+        let mark: UInt16 = try deserializationContext.peek()
+        if mark == EndMark { break }
       }
+
       let vectorAttribute = try VectorAttribute<V>(
         attributeType: attributeType,
         attributeLength: attributeLength,
@@ -346,12 +355,6 @@ struct Message {
         application: application
       )
       attributeList.append(vectorAttribute)
-      // if an attribute list length was provided, check we haven't overrun it
-      if let attributeListLength,
-         deserializationContext.position >= attributeListPosition + Int(attributeListLength)
-      {
-        break
-      }
     } while deserializationContext.position < deserializationContext.count
 
     let endMark: UInt16 = try deserializationContext.deserialize()
