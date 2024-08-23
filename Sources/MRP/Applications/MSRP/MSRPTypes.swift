@@ -110,6 +110,7 @@ enum MSRPProtocolVersion: ProtocolVersion {
 }
 
 public enum TSNFailureCode: UInt8, SerDes, Equatable {
+  case unknown = 0 // this is seen with LeaveAll PDUs
   case insufficientBandwidth = 1
   case insufficientBridgeResources = 2
   case insufficientBandwidthForTrafficClass = 3
@@ -142,7 +143,6 @@ public enum TSNFailureCode: UInt8, SerDes, Equatable {
 
   public init(deserializationContext: inout DeserializationContext) throws {
     guard let value = try Self(rawValue: deserializationContext.deserialize()) else {
-      debugPrint("failed to decode: \(deserializationContext)")
       throw MRPError.invalidFailureCode
     }
     self = value
