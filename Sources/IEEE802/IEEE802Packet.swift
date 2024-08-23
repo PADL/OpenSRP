@@ -103,7 +103,8 @@ public struct IEEE802Packet: Sendable, CustomStringConvertible {
   public var description: String {
     "IEEE802Packet(destMacAddress: \(_macAddressToString(destMacAddress)), " +
       "sourceMacAddress: \(_macAddressToString(sourceMacAddress)), " +
-      "vid: \(vid ?? 0), etherType: \(_etherTypeString), packetLength: \(payload.count)"
+      "vid: \(vid ?? 0), etherType: \(_etherTypeString), packetLength: \(payload.count), " +
+      "payload: \(_bytesToHex(payload))"
   }
 }
 
