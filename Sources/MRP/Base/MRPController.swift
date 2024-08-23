@@ -374,7 +374,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
   ) throws {
     for application in _applications.values {
       logger
-        .trace("added MAP context  \(contextIdentifier):\(context) for application \(application)")
+        .trace("updated MAP context \(contextIdentifier):\(context) for application \(application)")
       try application.didUpdate(contextIdentifier: contextIdentifier, with: context)
     }
   }
@@ -386,7 +386,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
     for application in _applications.values {
       logger
         .trace(
-          "removed MAP context  \(contextIdentifier):\(context) for application \(application)"
+          "removed MAP context \(contextIdentifier):\(context) for application \(application)"
         )
       try application.didRemove(contextIdentifier: contextIdentifier, with: context)
     }
