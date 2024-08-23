@@ -96,7 +96,7 @@ public struct IEEE802Packet: Sendable, CustomStringConvertible {
   }
 
   private var _etherTypeString: String {
-    "0x" + _byteToHex(UInt8((etherType >> 8) & 0xff)) + _byteToHex(UInt8(etherType & 0xff))
+    "0x" + _byteToHex(UInt8((etherType >> 8) & 0xFF)) + _byteToHex(UInt8(etherType & 0xFF))
   }
 
   public var description: String {
