@@ -38,7 +38,7 @@ protocol MSRPAwareBridge<P>: Bridge where P: AVBPort {
 
 extension AVBPort {
   var systemID: UInt64 {
-    UInt64(eui48: macAddress)
+    0x8000_0000_0000_0000 | UInt64(eui48: macAddress)
   }
 }
 
