@@ -396,7 +396,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
     logger.debug("controller starting TX on port \(port)")
     var periodicTimer = _periodicTimers[port.id]
     if periodicTimer == nil {
-      periodicTimer = Timer {
+      periodicTimer = Timer(label: "periodictimer") {
         try await self._apply { @Sendable application in
           try await application.periodic()
         }

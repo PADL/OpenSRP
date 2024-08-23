@@ -221,7 +221,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     // instance of this timer is required on a per-Port, per-MRP Participant
     // basis. The value of JoinTime used to initialize this timer is determined
     // in accordance with 10.7.11.
-    _jointimer = Timer(onExpiry: _onJoinTimerExpired)
+    _jointimer = Timer(label: "jointimer", onExpiry: _onJoinTimerExpired)
     _jointimer.start(interval: JoinTime)
 
     // The Leave All Period Timer, leavealltimer, controls the frequency with
@@ -475,9 +475,11 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     }
   }
 
-  private func _txDequeue() async throws -> MRPDU {
+  private func _txDequeue() async throws -> MRPDU? {
     guard let application else { throw MRPError.internalError }
     let enqueuedMessages = try _packMessages(with: _enqueuedEvents)
+    if enqueuedMessages.isEmpty { return nil }
+
     let pdu = MRPDU(
       protocolVersion: application.protocolVersion,
       messages: enqueuedMessages
@@ -552,8 +554,9 @@ public final actor Participant<A: Application>: Equatable, Hashable {
 
   func tx() async throws {
     guard let application, let controller else { throw MRPError.internalError }
+    guard let pdu = try await _txDequeue() else { return }
     try await controller.bridge.tx(
-      pdu: _txDequeue(),
+      pdu: pdu,
       for: application,
       contextIdentifier: contextIdentifier,
       on: port,

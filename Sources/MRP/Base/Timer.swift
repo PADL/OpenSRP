@@ -37,13 +37,19 @@ import Locking
 //
 // e) A stop action sets a timer to the stopped state.
 
-final class Timer: Sendable {
+final class Timer: CustomStringConvertible, Sendable {
   typealias Action = @Sendable () async throws -> ()
 
+  private let _label: String
   private let _onExpiry: Action
   private let _task: ManagedCriticalState<Task<(), Error>?>
 
-  init(onExpiry: @escaping Action) {
+  var description: String {
+    "Timer(\(_label))"
+  }
+
+  init(label: String, onExpiry: @escaping Action) {
+    _label = label
     _onExpiry = onExpiry
     _task = ManagedCriticalState<Task<(), Error>?>(nil)
   }
@@ -51,11 +57,17 @@ final class Timer: Sendable {
   func start(interval: Duration) {
     _task.withCriticalRegion { task in
       task?.cancel() // in case stop() was not called
-      task = Task<(), Error> {
+      task = Task<(), Error> { try await _loop(interval: interval) }
+    }
+  }
+
+  private func _loop(interval: Duration) async throws {
+    repeat {
+      do {
         try await Task.sleep(for: interval, clock: .continuous)
         try await _onExpiry()
-      }
-    }
+      } catch {}
+    } while !Task.isCancelled
   }
 
   func stop() {

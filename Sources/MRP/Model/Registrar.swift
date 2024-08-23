@@ -37,7 +37,7 @@ struct Registrar: Sendable, CustomStringConvertible {
   private var _leavetimer: Timer!
 
   init(onLeaveTimerExpired: @escaping Timer.Action) {
-    _leavetimer = Timer(onExpiry: onLeaveTimerExpired)
+    _leavetimer = Timer(label: "leavetimer", onExpiry: onLeaveTimerExpired)
   }
 
   // note: this function has side effects, it will start/stop leavetimer

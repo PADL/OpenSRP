@@ -33,7 +33,7 @@ struct LeaveAll: Sendable, CustomStringConvertible {
 
   init(interval leaveAllTime: Duration, onLeaveAllTimerExpired: @escaping Timer.Action) {
     _leaveAllTime = leaveAllTime
-    _leaveAllTimer = Timer(onExpiry: onLeaveAllTimerExpired)
+    _leaveAllTimer = Timer(label: "leaveAllTimer", onExpiry: onLeaveAllTimerExpired)
     if _leaveAllTime != Duration.zero {
       _leaveAllTimer.start(interval: leaveAllTime)
     }
