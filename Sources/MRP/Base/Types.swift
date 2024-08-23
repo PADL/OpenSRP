@@ -91,9 +91,12 @@ public typealias MAPContext<P: Port> = Set<P>
 
 let MAPBaseSpanningTreeContext = MAPContextIdentifier(0)
 
+// 20 centiseconds
 let JoinTime = Duration.seconds(0.2)
+// 60-100 centiseconds
 let LeaveTime = Duration.seconds(1)
-let LeaveAllTime = 1.0
+// 1000 centiseconds
+let LeaveAllTime = 10.0
 
 struct MRPFlag: OptionSet, Sendable {
   typealias RawValue = UInt8
