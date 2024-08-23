@@ -76,6 +76,20 @@ public struct SerializationContext {
   public var position: Int { bytes.count }
 }
 
+// don't want to use Foundation, hence no String(format:)
+func _byteToHex(_ byte: UInt8, uppercase: Bool = false) -> String {
+  let s = String(byte, radix: 16, uppercase: uppercase)
+  if byte & 0xf0 == 0 {
+    return "0" + s
+  } else {
+    return s
+  }
+}
+
+func _bytesToHex(_ bytes: [UInt8], uppercase: Bool = false) -> String {
+  bytes.map { _byteToHex($0) }.joined()
+}
+
 public struct DeserializationContext: CustomStringConvertible {
   private let bytes: [UInt8]
   public private(set) var position: Int
@@ -88,7 +102,7 @@ public struct DeserializationContext: CustomStringConvertible {
   public var count: Int { bytes.count }
 
   public var description: String {
-    "DeserializationContext(bytes: \(bytes.map { String($0, radix: 16, uppercase: false) }.joined()), position: \(position))"
+    "DeserializationContext(bytes: \(_bytesToHex(bytes)), position: \(position))"
   }
 
   public func assertRemainingLength(isAtLeast count: Int) throws {

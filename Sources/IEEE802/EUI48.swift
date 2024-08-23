@@ -62,7 +62,7 @@ public func _hashMacAddress(_ macAddress: EUI48, into hasher: inout Hasher) {
 }
 
 private func _hexFormat(_ value: UInt8, colonSuffix: Bool = true) -> String {
-  String(value, radix: 16, uppercase: false) + (colonSuffix ? ":" : "")
+  _byteToHex(value) + (colonSuffix ? ":" : "")
 }
 
 public func _macAddressToString(_ macAddress: EUI48) -> String {
