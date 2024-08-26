@@ -74,7 +74,7 @@ private final class MRPDaemon: AsyncParsableCommand {
   var excludeVlan: [UInt16] = []
 
   @Option(name: .shortAndLong, help: "Log level")
-  var logLevel: Logger.Level = .trace
+  var logLevel: Logger.Level = .debug
 
   @Flag(name: .long, help: "Enable MMRP")
   var enableMMRP: Bool = false
