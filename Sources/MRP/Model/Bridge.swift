@@ -63,6 +63,11 @@ extension Bridge {
       etherType: application.etherType,
       payload: serializationContext.bytes
     )
-    try await tx(packet, on: port.id, controller: controller)
+    do {
+      try await tx(packet, on: port, controller: controller)
+    } catch {
+      controller.logger.error("failed to send packet \(packet) on \(port): \(error)")
+      throw error
+    }
   }
 }
