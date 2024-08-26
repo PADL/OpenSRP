@@ -136,7 +136,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     contextIdentifier.hash(into: &hasher)
   }
 
-  fileprivate enum EnqueuedEvent {
+  fileprivate enum EnqueuedEvent: Equatable {
     struct AttributeEvent: Equatable {
       let attributeEvent: MRP.AttributeEvent
       let attributeValue: _AttributeValueState<A>
@@ -433,7 +433,11 @@ public final actor Participant<A: Application>: Equatable, Hashable {
   private func _txEnqueue(_ event: EnqueuedEvent) {
     _logger.trace("enqueing event \(event)")
     if let index = _enqueuedEvents.index(forKey: event.attributeType) {
-      _enqueuedEvents.values[index].append(event)
+      if let eventIndex = _enqueuedEvents.values[index].firstIndex(where: { $0 == event }) {
+        _enqueuedEvents.values[index][eventIndex] = event
+      } else {
+        _enqueuedEvents.values[index].append(event)
+      }
     } else {
       _enqueuedEvents[event.attributeType] = [event]
     }
@@ -555,6 +559,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
   func tx() async throws {
     guard let application, let controller else { throw MRPError.internalError }
     guard let pdu = try await _txDequeue() else { return }
+    _logger.debug("application \(application) sending PDU \(pdu)")
     try await controller.bridge.tx(
       pdu: pdu,
       for: application,
