@@ -64,7 +64,7 @@ extension Bridge {
       payload: serializationContext.bytes
     )
     do {
-      try await tx(packet, on: port, controller: controller)
+      try await tx(packet, on: port.id, controller: controller)
     } catch {
       controller.logger.error("failed to send packet \(packet) on \(port): \(error)")
       throw error
