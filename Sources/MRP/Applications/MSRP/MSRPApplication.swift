@@ -81,7 +81,7 @@ struct MSRPPortState<P: AVBPort>: Sendable {
   init(msrp: MSRPApplication<P>, port: P) throws {
     let isAvbCapable = port.isAvbCapable || msrp._forceAvbCapable
     msrpPortEnabledStatus = isAvbCapable
-    srpDomainBoundaryPort = .init(uniqueKeysWithValues: SRclassID.allCases.map { (
+    srpDomainBoundaryPort = .init(uniqueKeysWithValues: msrp._allSRClassIDs.map { (
       $0,
       !isAvbCapable
     ) })
@@ -964,29 +964,33 @@ extension MSRPApplication {
         "MSRP: updating port parameters for port \(port) streamID \(streamID) declaration type \(String(describing: mergedDeclarationType)) talker \(talkerRegistration.1)"
       )
 
-    if mergedDeclarationType == .listenerReady || mergedDeclarationType == .listenerReadyFailed {
-      // increase (if necessary) bandwidth first before updating dynamic reservation entries
-      try await _updateOperIdleSlope(
+    do {
+      if mergedDeclarationType == .listenerReady || mergedDeclarationType == .listenerReadyFailed {
+        // increase (if necessary) bandwidth first before updating dynamic reservation entries
+        try await _updateOperIdleSlope(
+          participant: talkerRegistration.0,
+          portState: portState,
+          streamID: streamID,
+          talkerRegistration: talkerRegistration.1
+        )
+      }
+      try await _updateDynamicReservationEntries(
         participant: talkerRegistration.0,
         portState: portState,
         streamID: streamID,
+        declarationType: mergedDeclarationType,
         talkerRegistration: talkerRegistration.1
       )
-    }
-    try await _updateDynamicReservationEntries(
-      participant: talkerRegistration.0,
-      portState: portState,
-      streamID: streamID,
-      declarationType: mergedDeclarationType,
-      talkerRegistration: talkerRegistration.1
-    )
-    if mergedDeclarationType == nil || mergedDeclarationType == .listenerAskingFailed {
-      try await _updateOperIdleSlope(
-        participant: talkerRegistration.0,
-        portState: portState,
-        streamID: streamID,
-        talkerRegistration: talkerRegistration.1
-      )
+      if mergedDeclarationType == nil || mergedDeclarationType == .listenerAskingFailed {
+        try await _updateOperIdleSlope(
+          participant: talkerRegistration.0,
+          portState: portState,
+          streamID: streamID,
+          talkerRegistration: talkerRegistration.1
+        )
+      }
+    } catch {
+      guard _forceAvbCapable else { throw error }
     }
   }
 
@@ -1281,11 +1285,13 @@ extension MSRPApplication {
     }
   }
 
+  fileprivate var _allSRClassIDs: [SRclassID] {
+    Array((_maxSRClass.rawValue...SRclassID.A.rawValue).map { SRclassID(rawValue: $0)! })
+  }
+
   private func _declareDomains(port: P) async throws {
     let participant = try findParticipant(port: port)
-    for srClassID in (_maxSRClass.rawValue...SRclassID.A.rawValue)
-      .map({ SRclassID(rawValue: $0)! })
-    {
+    for srClassID in _allSRClassIDs {
       try await _declareDomain(srClassID: srClassID, on: participant)
     }
   }
