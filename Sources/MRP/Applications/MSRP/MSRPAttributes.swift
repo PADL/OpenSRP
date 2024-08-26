@@ -266,16 +266,18 @@ struct MSRPDomainValue: Value, Equatable {
   }
 
   public func makeValue(relativeTo index: UInt64) throws -> Self {
-    let value = UInt64(srClassID.rawValue) + index
-    guard value < 8 else {
-      throw MRPError.invalidAttributeValue
-    }
-    guard let srClassID = SRclassID(rawValue: UInt8(value)) else {
+    let srClassID = UInt64(srClassID.rawValue) + index
+    guard srClassID <= SRclassID.A.rawValue else {
       throw MRPError.invalidSRclassID
     }
-    guard let srClassPriority = SRclassPriority(rawValue: UInt8(value)) else {
+    let srClassPriority = UInt64(srClassPriority.rawValue) + index
+    guard srClassPriority <= SRclassPriority.NC.rawValue else {
       throw MRPError.invalidSRclassPriority
     }
-    return Self(srClassID: srClassID, srClassPriority: srClassPriority, srClassVID: SR_PVID.vid)
+    return Self(
+      srClassID: SRclassID(rawValue: UInt8(srClassID))!,
+      srClassPriority: SRclassPriority(rawValue: UInt8(srClassPriority))!,
+      srClassVID: SR_PVID.vid
+    )
   }
 }
