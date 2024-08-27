@@ -233,6 +233,8 @@ private extension LinuxPort {
   }
 
   func _add(vlan: VLAN) async throws {
+    guard let rtnl = _rtnl as? RTNLLinkBridge else { throw Errno.noSuchAddressOrDevice }
+
     var flags = Int32(0)
 
     if _untaggedVlans?.contains(vlan.vid) ?? false {
@@ -244,18 +246,13 @@ private extension LinuxPort {
       flags |= BRIDGE_VLAN_INFO_PVID
     }
 
-    try await (_rtnl as! RTNLLinkBridge).add(
-      vlans: Set([vlan.vid]),
-      flags: UInt16(flags),
-      socket: _bridge!._nlLinkSocket
-    )
+    try await rtnl.add(vlans: Set([vlan.vid]), flags: UInt16(flags), socket: _bridge!._nlLinkSocket)
   }
 
   func _remove(vlan: VLAN) async throws {
-    try await (_rtnl as! RTNLLinkBridge).remove(
-      vlans: Set([vlan.vid]),
-      socket: _bridge!._nlLinkSocket
-    )
+    guard let rtnl = _rtnl as? RTNLLinkBridge else { throw Errno.noSuchAddressOrDevice }
+
+    try await rtnl.remove(vlans: Set([vlan.vid]), socket: _bridge!._nlLinkSocket)
   }
 }
 
@@ -263,7 +260,6 @@ public final class LinuxBridge: Bridge, CustomStringConvertible, @unchecked
 Sendable {
   public typealias Port = LinuxPort
 
-  private let _txSocket: Socket
   fileprivate let _nlLinkSocket: NLSocket
   private let _nlNfLog: NFNLLog
   private let _nlQDiscHandle: Int?
@@ -607,8 +603,10 @@ fileprivate final class FilterRegistration: Equatable, Hashable, Sendable, Custo
 
 extension LinuxBridge: MMRPAwareBridge {
   func register(groupAddress: EUI48, vlan: VLAN?, on ports: Set<P>) async throws {
+    guard let rtnl = bridgePort._rtnl as? RTNLLinkBridge else { throw Errno.noSuchAddressOrDevice }
+
     for port in ports {
-      try await (bridgePort._rtnl as! RTNLLinkBridge).add(
+      try await rtnl.add(
         link: port._rtnl,
         groupAddresses: [groupAddress],
         vlanID: vlan?.vid,
@@ -618,8 +616,10 @@ extension LinuxBridge: MMRPAwareBridge {
   }
 
   func deregister(groupAddress: EUI48, vlan: VLAN?, from ports: Set<P>) async throws {
+    guard let rtnl = bridgePort._rtnl as? RTNLLinkBridge else { throw Errno.noSuchAddressOrDevice }
+
     for port in ports {
-      try await (bridgePort._rtnl as! RTNLLinkBridge).remove(
+      try await rtnl.remove(
         link: port._rtnl,
         groupAddresses: [groupAddress],
         vlanID: vlan?.vid,
