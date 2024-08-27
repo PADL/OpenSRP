@@ -16,7 +16,6 @@
 
 import ArgumentParser
 import Logging
-@_spi(SwiftMRPPrivate)
 import MRP
 import ServiceLifecycle
 

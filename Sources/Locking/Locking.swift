@@ -113,7 +113,7 @@ private struct Lock {
   }
 }
 
-public struct ManagedCriticalState<State> {
+package struct ManagedCriticalState<State> {
   private final class LockedBuffer: ManagedBuffer<State, Lock.Primitive> {
     deinit {
       withUnsafeMutablePointerToElements { Lock.deinitialize($0) }

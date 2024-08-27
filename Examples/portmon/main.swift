@@ -16,7 +16,6 @@
 
 import IEEE802
 import Logging
-@_spi(SwiftMRPPrivate)
 import MRP
 
 @main

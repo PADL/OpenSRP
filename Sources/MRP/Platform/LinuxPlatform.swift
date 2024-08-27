@@ -375,8 +375,7 @@ Sendable {
     return bridgePorts.first!
   }
 
-  @_spi(SwiftMRPPrivate)
-  public var bridgePort: Port {
+  package var bridgePort: Port {
     _bridgePort!
   }
 
