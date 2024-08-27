@@ -370,21 +370,22 @@ struct Message {
   ) throws {
     serializationContext.serialize(uint8: attributeType)
     let attributeLengthPosition = serializationContext.position
-    serializationContext.serialize(uint8: AttributeLength(0))
-    var attributeLength: AttributeLength = 0
+    var attributeLength = AttributeLength(0)
+    serializationContext.serialize(uint8: attributeLength)
     var attributeListLengthPosition: Int?
     if application.hasAttributeListLength {
       attributeListLengthPosition = serializationContext.position
+      serializationContext.serialize(uint16: 0)
     }
     for attribute in attributeList {
       try attributeLength = attribute.serialize(into: &serializationContext)
     }
     serializationContext.serialize(uint16: EndMark)
+    serializationContext.serialize(uint8: attributeLength, at: attributeLengthPosition)
     if let attributeListLengthPosition {
       let attributeListLength = UInt16(serializationContext.position - attributeListLengthPosition)
       serializationContext.serialize(uint16: attributeListLength, at: attributeListLengthPosition)
     }
-    serializationContext.serialize(uint8: attributeLength, at: attributeLengthPosition)
   }
 }
 
