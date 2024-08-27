@@ -56,7 +56,7 @@ private func _makeLinkLayerAddress(
   family: sa_family_t = sa_family_t(AF_PACKET),
   macAddress: EUI48? = nil,
   etherType: UInt16 = UInt16(ETH_P_ALL),
-  packetType: UInt8 = UInt8(PACKET_HOST),
+  packetType: UInt8 = 0,
   index: Int? = nil
 ) -> sockaddr_ll {
   var sll = sockaddr_ll()
@@ -64,8 +64,8 @@ private func _makeLinkLayerAddress(
   sll.sll_protocol = etherType.bigEndian
   sll.sll_ifindex = CInt(index ?? 0)
   sll.sll_pkttype = packetType
-  sll.sll_halen = UInt8(ETH_ALEN)
   if let macAddress {
+    sll.sll_halen = UInt8(ETH_ALEN)
     sll.sll_addr.0 = macAddress.0
     sll.sll_addr.1 = macAddress.1
     sll.sll_addr.2 = macAddress.2
@@ -80,7 +80,7 @@ private func _makeLinkLayerAddressBytes(
   family: sa_family_t = sa_family_t(AF_PACKET),
   macAddress: EUI48? = nil,
   etherType: UInt16 = UInt16(ETH_P_ALL),
-  packetType: UInt8 = UInt8(PACKET_HOST),
+  packetType: UInt8 = 0,
   index: Int? = nil
 ) -> [UInt8] {
   var sll = _makeLinkLayerAddress(
@@ -138,11 +138,14 @@ public struct LinuxPort: Port, Sendable, CustomStringConvertible {
   }
 
   fileprivate let _rtnl: RTNLLink
+  fileprivate let _txSocket: Socket
   fileprivate weak var _bridge: LinuxBridge?
 
   init(rtnl: RTNLLink, bridge: LinuxBridge) throws {
     _rtnl = rtnl
     _bridge = bridge
+    _txSocket = try Socket(ring: IORing.shared, domain: sa_family_t(AF_PACKET), type: SOCK_RAW)
+    // shouldn't need to join multicast group if we are only sending packets
   }
 
   public var description: String {
@@ -277,7 +280,6 @@ Sendable {
 
   public init(name: String, netFilterGroup group: Int, qDiscHandle: Int? = nil) throws {
     _bridgeName = name
-    _txSocket = try Socket(ring: IORing.shared, domain: sa_family_t(AF_PACKET), type: SOCK_RAW)
     _nlLinkSocket = try NLSocket(protocol: NETLINK_ROUTE)
     _nlNfLog = try NFNLLog(group: UInt16(group))
     _nlQDiscHandle = qDiscHandle
@@ -522,19 +524,21 @@ Sendable {
 
   public func tx(
     _ packet: IEEE802Packet,
-    on portID: P.ID,
+    on port: P,
     controller: isolated MRPController<Port>
   ) async throws {
-    var serializationContext = SerializationContext()
-    let packetType = _isMulticast(macAddress: packet.destMacAddress) ?
-      UInt8(PACKET_MULTICAST) : UInt8(PACKET_HOST)
     let address = _makeLinkLayerAddressBytes(
       macAddress: packet.destMacAddress,
-      packetType: packetType,
-      index: portID
+      etherType: packet.etherType,
+      index: port.id
     )
+
+    var serializationContext = SerializationContext()
     try packet.serialize(into: &serializationContext)
-    try await _txSocket.sendMessage(.init(name: address, buffer: serializationContext.bytes))
+    try await port._txSocket.sendMessage(.init(
+      name: address,
+      buffer: serializationContext.bytes
+    ))
   }
 
   public var rxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)> {

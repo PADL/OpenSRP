@@ -41,7 +41,7 @@ public protocol Bridge<P>: Sendable {
   // local and non-link-local packets
   func getVlans(controller: isolated MRPController<P>) async -> Set<VLAN>
 
-  func tx(_ packet: IEEE802Packet, on: P.ID, controller: isolated MRPController<P>) async throws
+  func tx(_ packet: IEEE802Packet, on: P, controller: isolated MRPController<P>) async throws
   var rxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)> { get throws }
 }
 
@@ -64,7 +64,7 @@ extension Bridge {
       payload: serializationContext.bytes
     )
     do {
-      try await tx(packet, on: port.id, controller: controller)
+      try await tx(packet, on: port, controller: controller)
     } catch {
       controller.logger.error("failed to send packet \(packet) on \(port): \(error)")
       throw error
