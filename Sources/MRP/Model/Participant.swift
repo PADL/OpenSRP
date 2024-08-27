@@ -559,7 +559,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
   func tx() async throws {
     guard let application, let controller else { throw MRPError.internalError }
     guard let pdu = try await _txDequeue() else { return }
-    _logger.debug("application \(application) sending PDU \(pdu)")
+    _logger.debug("sending PDU \(pdu) port \(port.name) application \(type(of: application))")
     try await controller.bridge.tx(
       pdu: pdu,
       for: application,
