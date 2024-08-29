@@ -184,12 +184,12 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     for port in context {
       if port.isAvbCapable, let bridge = (controller?.bridge as? any MSRPAwareBridge<P>) {
         srClassPriorityMap[port.id] = try? await bridge.getSRClassPriorityMap(port: port)
-        _logger.trace("MSRP: allocating port state for \(port), prio map \(srClassPriorityMap)")
+        _logger.debug("MSRP: allocating port state for \(port), prio map \(srClassPriorityMap)")
       } else if _forceAvbCapable {
         srClassPriorityMap[port.id] = DefaultSRClassPriorityMap
-        _logger.trace("MRRP: forcing port \(port) to advertise as AVB capable")
+        _logger.debug("MRRP: forcing port \(port) to advertise as AVB capable")
       } else {
-        _logger.trace("MRRP: port \(port) is not AVB capable, skipping")
+        _logger.debug("MRRP: port \(port) is not AVB capable, skipping")
       }
     }
 
@@ -204,7 +204,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     }
 
     for port in context {
-      _logger.trace("MSRP: declaring domains for port \(port)")
+      _logger.debug("MSRP: declaring domains for port \(port)")
       try await _declareDomains(port: port)
     }
   }
@@ -229,7 +229,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
 
     Task {
       for port in context {
-        _logger.trace("MSRP: re-declaring domains for port \(port)")
+        _logger.debug("MSRP: re-declaring domains for port \(port)")
         try await _declareDomains(port: port)
       }
     }
@@ -243,7 +243,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
 
     _portStates.withCriticalRegion {
       for port in context {
-        _logger.trace("MSRP: port \(port) disappeared, removing")
+        _logger.debug("MSRP: port \(port) disappeared, removing")
         $0.removeValue(forKey: port.id)
       }
     }
@@ -325,7 +325,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
         (contextAttributeType != attributeType || contextAttributeSubtype != attributeSubtype)
       if isIncluded {
         _logger
-          .trace(
+          .debug(
             "MSRP: forcing immediate leave for stream \(streamID) owing to attribute change: \(attributeType)->\(contextAttributeType) \(String(describing: attributeSubtype))->\(String(describing: contextAttributeSubtype))"
           )
       }
@@ -611,7 +611,7 @@ extension MSRPApplication {
         bandwidthUsed: bandwidthUsed
       ) else {
         _logger
-          .trace(
+          .debug(
             "MSRP: bandwidth limit reached for class \(srClassID), port \(port), link speed \(port.linkSpeed), deltas \(_deltaBandwidths), used \(bandwidthUsed)"
           )
         return false
@@ -736,7 +736,7 @@ extension MSRPApplication {
             priorityAndRank: priorityAndRank,
             accumulatedLatency: accumulatedLatency
           )
-          _logger.trace("MSRP: propagating talker advertise \(talkerAdvertise) to port \(port)")
+          _logger.debug("MSRP: propagating talker advertise \(talkerAdvertise) to port \(port)")
           try await participant.join(
             attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
             attributeValue: talkerAdvertise,
@@ -754,7 +754,7 @@ extension MSRPApplication {
             failureCode: error.failureCode
           )
           _logger
-            .trace(
+            .debug(
               "MSRP: propagating talker failed \(talkerFailed) on port \(port), error \(error)"
             )
           try await participant.join(
@@ -775,7 +775,7 @@ extension MSRPApplication {
           systemID: failureInformation!.systemID,
           failureCode: failureInformation!.failureCode
         )
-        _logger.trace("MSRP: propagating talker failed \(talkerFailed) to port \(port), transitive")
+        _logger.debug("MSRP: propagating talker failed \(talkerFailed) to port \(port), transitive")
         try await participant.join(
           attributeType: MSRPAttributeType.talkerFailed.rawValue,
           attributeValue: talkerFailed,
@@ -888,14 +888,14 @@ extension MSRPApplication {
     if talkerRegistration is MSRPTalkerAdvertiseValue,
        declarationType == .listenerReady || declarationType == .listenerReadyFailed
     {
-      _logger.trace("MSRP: registering MDB entries for \(talkerRegistration.dataFrameParameters)")
+      _logger.debug("MSRP: registering MDB entries for \(talkerRegistration.dataFrameParameters)")
       try await bridge.register(
         groupAddress: talkerRegistration.dataFrameParameters.destinationAddress,
         vlan: talkerRegistration.dataFrameParameters.vlanIdentifier,
         on: [participant.port]
       )
     } else {
-      _logger.trace("MSRP: deregistering MDB entries for \(talkerRegistration.dataFrameParameters)")
+      _logger.debug("MSRP: deregistering MDB entries for \(talkerRegistration.dataFrameParameters)")
       try await bridge.deregister(
         groupAddress: talkerRegistration.dataFrameParameters.destinationAddress,
         vlan: talkerRegistration.dataFrameParameters.vlanIdentifier,
@@ -932,7 +932,7 @@ extension MSRPApplication {
       }
     }
 
-    _logger.trace("MSRP: adjusting idle slope, port \(participant.port), streams \(streams)")
+    _logger.debug("MSRP: adjusting idle slope, port \(participant.port), streams \(streams)")
 
     try await bridge.adjustCreditBasedShaper(
       application: self,
@@ -960,7 +960,7 @@ extension MSRPApplication {
     guard let portState else { throw MRPError.portNotFound }
 
     _logger
-      .trace(
+      .debug(
         "MSRP: updating port parameters for port \(port) streamID \(streamID) declaration type \(String(describing: mergedDeclarationType)) talker \(talkerRegistration.1)"
       )
 
@@ -1053,7 +1053,7 @@ extension MSRPApplication {
     else { throw MRPError.doNotPropagateAttribute } // don't recursively invoke MAP
 
     _logger
-      .trace(
+      .debug(
         "MSRP: join for attribute \(attributeType) subtype \(String(describing: attributeSubtype)) value \(attributeValue) source \(eventSource) port \(port)"
       )
 
@@ -1215,7 +1215,7 @@ extension MSRPApplication {
     else { throw MRPError.doNotPropagateAttribute } // don't recursively invoke MAP
 
     _logger
-      .trace(
+      .debug(
         "MSRP: leave for attribute \(attributeType) subtype \(String(describing: attributeSubtype)) value \(attributeValue) source \(eventSource) port \(port)"
       )
 
