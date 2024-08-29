@@ -1049,8 +1049,14 @@ extension MSRPApplication {
     else { throw MRPError.unknownAttributeType }
 
     // 35.2.4 (d) A MAD_Join.indication adds a new attribute to MAD (with isNew TRUE)
-    guard isNew, eventSource == .timer || eventSource == .local || eventSource == .peer
-    else { throw MRPError.doNotPropagateAttribute } // don't recursively invoke MAP
+    guard isNew && (eventSource == .timer || eventSource == .local || eventSource == .peer) else {
+      _logger
+        .trace(
+          "MSRP: ignoring join indication for attribute \(attributeType) isNew \(isNew) subtype \(String(describing: attributeSubtype)) value \(attributeValue) source \(eventSource) port \(port)"
+        )
+      // don't recursively invoke MAP
+      throw MRPError.doNotPropagateAttribute
+    }
 
     _logger
       .debug(
@@ -1212,7 +1218,14 @@ extension MSRPApplication {
     else { throw MRPError.unknownAttributeType }
 
     guard eventSource == .timer || eventSource == .local || eventSource == .peer
-    else { throw MRPError.doNotPropagateAttribute } // don't recursively invoke MAP
+    else {
+      _logger
+        .trace(
+          "MSRP: ignoring leave indication for attribute \(attributeType) subtype \(String(describing: attributeSubtype)) value \(attributeValue) source \(eventSource) port \(port)"
+        )
+      // don't recursively invoke MAP
+      throw MRPError.doNotPropagateAttribute
+    }
 
     _logger
       .debug(
