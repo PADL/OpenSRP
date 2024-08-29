@@ -493,7 +493,7 @@ extension MSRPApplication {
            matching: .matchEqual(MMRPMACValue(macAddress: dataFrameParameters.destinationAddress))
          ) == nil
       {
-        _logger.debug("MSRP: pruning talker stream \(streamID) on port \(port)")
+        _logger.trace("MSRP: pruning talker stream \(streamID) on port \(port)")
         return true
       }
     }
@@ -709,6 +709,10 @@ extension MSRPApplication {
         isNew: isNew,
         eventSource: eventSource
       ) else {
+        _logger
+          .debug(
+            "MSRP: pruned talker declaration for stream \(streamID) destination \(dataFrameParameters) on port \(port)"
+          )
         return
       }
 
@@ -1049,7 +1053,7 @@ extension MSRPApplication {
     else { throw MRPError.unknownAttributeType }
 
     // 35.2.4 (d) A MAD_Join.indication adds a new attribute to MAD (with isNew TRUE)
-    guard isNew && (eventSource == .timer || eventSource == .local || eventSource == .peer) else {
+    guard eventSource == .timer || eventSource == .local || eventSource == .peer else {
       _logger
         .trace(
           "MSRP: ignoring join indication for attribute \(attributeType) isNew \(isNew) subtype \(String(describing: attributeSubtype)) value \(attributeValue) source \(eventSource) port \(port)"
