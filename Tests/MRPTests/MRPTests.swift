@@ -18,6 +18,7 @@
 import XCTest
 @preconcurrency
 import AsyncExtensions
+import IEEE802
 import Logging
 import SystemPackage
 
@@ -44,7 +45,7 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
 
   var vlans: Set<MRP.VLAN> { [] }
 
-  var macAddress: MRP.EUI48 { (0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF) }
+  var macAddress: EUI48 { (0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF) }
 
   var mtu: UInt { 1500 }
 
@@ -65,7 +66,7 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
 
 struct MockBridge: MRP.Bridge, CustomStringConvertible {
   var notifications = AsyncEmptySequence<MRP.PortNotification<MockPort>>().eraseToAnyAsyncSequence()
-  var rxPackets = AsyncEmptySequence<(Int, MRP.IEEE802Packet)>().eraseToAnyAsyncSequence()
+  var rxPackets = AsyncEmptySequence<(Int, IEEE802Packet)>().eraseToAnyAsyncSequence()
 
   func getPorts(controller: isolated MRPController<P>) async throws -> Set<MockPort> {
     [MockPort(id: 0)]
@@ -77,12 +78,12 @@ struct MockBridge: MRP.Bridge, CustomStringConvertible {
   func getVlans(controller: isolated MRPController<P>) async -> Set<MRP.VLAN> { [] }
 
   func register(
-    groupAddress: MRP.EUI48,
+    groupAddress: EUI48,
     etherType: UInt16,
     controller: isolated MRPController<P>
   ) async throws {}
   func deregister(
-    groupAddress: MRP.EUI48,
+    groupAddress: EUI48,
     etherType: UInt16,
     controller: isolated MRPController<P>
   ) async throws {}
@@ -91,8 +92,8 @@ struct MockBridge: MRP.Bridge, CustomStringConvertible {
   func shutdown(controller: isolated MRPController<P>) async throws {}
 
   func tx(
-    _ packet: MRP.IEEE802Packet,
-    on: Int,
+    _ packet: IEEE802Packet,
+    on port: P,
     controller: isolated MRPController<P>
   ) async throws {}
 }
