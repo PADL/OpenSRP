@@ -381,7 +381,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
 
       // .Begin resets state to .MT without genering a leave event; leaveNow() should
       // only be called when we are about to replace the value
-      try await attributeValueState.handle(event: .Begin, eventSource: eventSource)
+      try await attributeValueState.handle(event: .rLA, eventSource: eventSource)
     }
   }
 
