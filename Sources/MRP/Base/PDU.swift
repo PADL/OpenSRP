@@ -383,7 +383,10 @@ struct Message {
     serializationContext.serialize(uint16: EndMark)
     serializationContext.serialize(uint8: attributeLength, at: attributeLengthPosition)
     if let attributeListLengthPosition {
-      let attributeListLength = UInt16(serializationContext.position - attributeListLengthPosition - 2)
+      let attributeListLength = UInt16(
+        serializationContext
+          .position - attributeListLengthPosition - 2
+      )
       serializationContext.serialize(uint16: attributeListLength, at: attributeListLengthPosition)
     }
   }
