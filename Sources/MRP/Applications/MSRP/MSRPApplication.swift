@@ -686,19 +686,17 @@ extension MSRPApplication {
     isNew: Bool,
     eventSource: ParticipantEventSource
   ) async throws {
-    var portState: MSRPPortState<P>?
-
-    withPortState(port: port) {
-      portState = $0
-    }
-    guard let portState else { throw MRPError.portNotFound }
-
     // TL;DR: propagate Talker declarations to other ports
     try await apply(for: contextIdentifier) { participant in
       guard participant.port != port else { return } // don't propagate to source port
 
+      let port = participant.port
+      var portState: MSRPPortState<P>?
+      withPortState(port: port) { portState = $0 }
+      guard let portState else { return }
+
       guard await !_shouldPruneTalkerDeclaration(
-        port: participant.port,
+        port: port,
         portState: portState,
         streamID: streamID,
         declarationType: declarationType,
@@ -722,7 +720,7 @@ extension MSRPApplication {
       if declarationType == .talkerAdvertise {
         do {
           try await _canBridgeTalker(
-            port: participant.port,
+            port: port,
             portState: portState,
             streamID: streamID,
             declarationType: declarationType,
@@ -740,7 +738,10 @@ extension MSRPApplication {
             priorityAndRank: priorityAndRank,
             accumulatedLatency: accumulatedLatency
           )
-          _logger.debug("MSRP: propagating talker advertise \(talkerAdvertise) to port \(port)")
+          _logger
+            .debug(
+              "MSRP: propagating talker advertise \(talkerAdvertise) to port \(port)"
+            )
           try await participant.join(
             attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
             attributeValue: talkerAdvertise,
@@ -779,7 +780,10 @@ extension MSRPApplication {
           systemID: failureInformation!.systemID,
           failureCode: failureInformation!.failureCode
         )
-        _logger.debug("MSRP: propagating talker failed \(talkerFailed) to port \(port), transitive")
+        _logger
+          .debug(
+            "MSRP: propagating talker failed \(talkerFailed) to port \(port), transitive"
+          )
         try await participant.join(
           attributeType: MSRPAttributeType.talkerFailed.rawValue,
           attributeValue: talkerFailed,
