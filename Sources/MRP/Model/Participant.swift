@@ -379,8 +379,6 @@ public final actor Participant<A: Application>: Equatable, Hashable {
         return
       }
 
-      // .Begin resets state to .MT without genering a leave event; leaveNow() should
-      // only be called when we are about to replace the value
       try await attributeValueState.handle(event: .rLA, eventSource: eventSource)
     }
   }
@@ -525,7 +523,6 @@ public final actor Participant<A: Application>: Equatable, Hashable {
         try await _deregisterAttributeValueState(eventSource: eventSource) {
           attributeType, _, _ in attributeType == message.attributeType
         }
-        // try await _handleLeaveAll(event: .rLA, eventSource: eventSource)
       }
 
       let packedEvents = try vectorAttribute.attributeEvents
