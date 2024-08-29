@@ -190,12 +190,7 @@ public struct MSRPDataFrameParameters: Value, Equatable {
   let vlanIdentifier: VLAN
 
   private var _value: UInt64 {
-    UInt64(destinationAddress.0 << 56) |
-      UInt64(destinationAddress.1 << 48) |
-      UInt64(destinationAddress.2 << 40) |
-      UInt64(destinationAddress.3 << 32) |
-      UInt64(destinationAddress.4 << 24) |
-      UInt64(destinationAddress.5 << 16)
+    UInt64(eui48: destinationAddress)
   }
 
   public var index: UInt64 {
@@ -234,24 +229,18 @@ public struct MSRPDataFrameParameters: Value, Equatable {
     vlanIdentifier = try VLAN(deserializationContext: &deserializationContext)
   }
 
-  private init(_ value: UInt64) {
-    destinationAddress = (
-      UInt8((value >> 56) & 0xFF),
-      UInt8((value >> 48) & 0xFF),
-      UInt8((value >> 40) & 0xFF),
-      UInt8((value >> 32) & 0xFF),
-      UInt8((value >> 24) & 0xFF),
-      UInt8((value >> 16) & 0xFF)
-    )
-    vlanIdentifier = VLAN(vid: UInt16(value & 0x1FFF))
+  private init(_ value: UInt64) throws {
+    destinationAddress = try value.asEUI48()
+    vlanIdentifier = SR_PVID
   }
 
   init() {
-    self.init(0)
+    try! self.init(0)
   }
 
   public func makeValue(relativeTo index: UInt64) throws -> Self {
-    Self(_value + index)
+    let destinationAddress = try (UInt64(eui48: destinationAddress) + index).asEUI48()
+    return Self(destinationAddress: destinationAddress, vlanIdentifier: vlanIdentifier)
   }
 }
 

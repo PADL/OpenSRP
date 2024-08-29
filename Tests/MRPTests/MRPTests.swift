@@ -99,6 +99,12 @@ struct MockBridge: MRP.Bridge, CustomStringConvertible {
 }
 
 final class MRPTests: XCTestCase {
+  func testEUI48() async throws {
+    let eui48: EUI48 = (0, 0, 0, 0, 0x1, 0xFF)
+    XCTAssertEqual(UInt64(eui48: eui48), 0x1FF)
+    XCTAssertTrue(try! _isEqualMacAddress(eui48, UInt64(0x1FF).asEUI48()))
+  }
+
   func testBasic() async throws {
     let logger = Logger(label: "com.padl.MRPTests")
     let bridge = MockBridge()

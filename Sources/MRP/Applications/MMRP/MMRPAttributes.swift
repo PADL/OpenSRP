@@ -91,15 +91,7 @@ struct MMRPMACValue: Value, Equatable, Hashable {
   }
 
   var macAddress: EUI48 {
-    precondition((_macAddress & 0xFFFF_0000_0000_0000) == 0)
-    return (
-      UInt8((_macAddress >> 40) & 0xFF),
-      UInt8((_macAddress >> 32) & 0xFF),
-      UInt8((_macAddress >> 24) & 0xFF),
-      UInt8((_macAddress >> 16) & 0xFF),
-      UInt8((_macAddress >> 8) & 0xFF),
-      UInt8((_macAddress >> 0) & 0xFF)
-    )
+    try! _macAddress.asEUI48()
   }
 
   init(macAddress: EUI48) {

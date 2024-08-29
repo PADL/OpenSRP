@@ -14,17 +14,34 @@
 // limitations under the License.
 //
 
+import SystemPackage
+
 public typealias EUI48 = (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8)
 
 public extension UInt64 {
   init(eui48: EUI48) {
     self =
-      UInt64(eui48.0 << 40) |
-      UInt64(eui48.1 << 32) |
-      UInt64(eui48.2 << 24) |
-      UInt64(eui48.3 << 16) |
-      UInt64(eui48.4 << 8) |
-      UInt64(eui48.5 << 0)
+      UInt64(eui48.0) << 40 |
+      UInt64(eui48.1) << 32 |
+      UInt64(eui48.2) << 24 |
+      UInt64(eui48.3) << 16 |
+      UInt64(eui48.4) << 8 |
+      UInt64(eui48.5) << 0
+  }
+
+  func asEUI48() throws -> EUI48 {
+    guard (self & 0xFFFF_0000_0000_0000) == 0 else {
+      throw Errno.invalidArgument
+    }
+
+    return (
+      UInt8((self >> 40) & 0xFF),
+      UInt8((self >> 32) & 0xFF),
+      UInt8((self >> 24) & 0xFF),
+      UInt8((self >> 16) & 0xFF),
+      UInt8((self >> 8) & 0xFF),
+      UInt8((self >> 0) & 0xFF)
+    )
   }
 }
 
