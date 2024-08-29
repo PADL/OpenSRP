@@ -352,8 +352,7 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     return attributeValues
   }
 
-  fileprivate func _removeAttributeValueState(_ attributeValueState: _AttributeValueState<A>) {
-    // TODO: debugging
+  fileprivate func _purgeAttributeValueState(_ attributeValueState: _AttributeValueState<A>) {
     guard let index = _attributes.index(forKey: attributeValueState.attributeType) else {
       return
     }
@@ -364,7 +363,14 @@ public final actor Participant<A: Application>: Equatable, Hashable {
     _ isIncluded: @Sendable (AttributeType, AttributeSubtype?, any Value)
       -> Bool
   ) async throws {
-    await _apply { attributeValueState in
+    try await _deregisterAttributeValueState(eventSource: .application, isIncluded)
+  }
+
+  private func _deregisterAttributeValueState(
+    eventSource: ParticipantEventSource,
+    _ isIncluded: @Sendable (AttributeType, AttributeSubtype?, any Value) -> Bool
+  ) async throws {
+    try await _apply { attributeValueState in
       guard isIncluded(
         attributeValueState.attributeType,
         attributeValueState.attributeSubtype,
@@ -373,7 +379,9 @@ public final actor Participant<A: Application>: Equatable, Hashable {
         return
       }
 
-      await _removeAttributeValueState(attributeValueState)
+      // .Begin resets state to .MT without genering a leave event; leaveNow() should
+      // only be called when we are about to replace the value
+      try await attributeValueState.handle(event: .Begin, eventSource: eventSource)
     }
   }
 
@@ -512,6 +520,14 @@ public final actor Participant<A: Application>: Equatable, Hashable {
       port.macAddress
     ) ? .local : .peer
     for vectorAttribute in message.attributeList {
+      // 10.6 Protocol operation: process LeaveAll first,
+      if vectorAttribute.leaveAllEvent == .LeaveAll {
+        try await _deregisterAttributeValueState(eventSource: eventSource) {
+          attributeType, _, _ in attributeType == message.attributeType
+        }
+        // try await _handleLeaveAll(event: .rLA, eventSource: eventSource)
+      }
+
       let packedEvents = try vectorAttribute.attributeEvents
       guard packedEvents.count >= vectorAttribute.numberOfValues else {
         throw MRPError.badVectorAttribute
@@ -530,10 +546,6 @@ public final actor Participant<A: Application>: Equatable, Hashable {
           with: attribute,
           eventSource: eventSource
         )
-      }
-
-      if vectorAttribute.leaveAllEvent == .LeaveAll {
-        try await _handleLeaveAll(event: .rLA, eventSource: eventSource)
       }
     }
   }
@@ -831,7 +843,7 @@ Sendable, Hashable, Equatable, CustomStringConvertible {
       )
 
       if context.registrar?.state == .MT {
-        await context.participant._removeAttributeValueState(self)
+        await context.participant._purgeAttributeValueState(self)
       }
     }
   }
