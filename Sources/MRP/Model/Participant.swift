@@ -76,7 +76,7 @@ public enum AttributeValueFilter: Sendable {
   case matchRelative((any Value, UInt64))
   case matchRelativeWithSubtype((AttributeSubtype?, any Value, UInt64))
 
-  fileprivate var _value: AnyValue? {
+  fileprivate var _value: (any Value)? {
     get throws {
       switch self {
       case .matchAny:
@@ -88,11 +88,11 @@ public enum AttributeValueFilter: Sendable {
       case let .matchEqual(value):
         fallthrough
       case .matchEqualWithSubtype(let (_, value)):
-        return AnyValue(value)
+        return value
       case .matchRelative(let (value, index)):
         fallthrough
       case .matchRelativeWithSubtype(let (_, value, index)):
-        return try AnyValue(value.makeValue(relativeTo: index))
+        return try value.makeValue(relativeTo: index)
       }
     }
   }
@@ -680,12 +680,12 @@ Sendable, Hashable, Equatable, CustomStringConvertible {
     self.value = value
   }
 
-  init(participant: P, type: AttributeType, subtype: AttributeSubtype?, value: AnyValue) {
-    precondition(!(value.value is AnyValue))
+  init(participant: P, type: AttributeType, subtype: AttributeSubtype?, value: some Value) {
+    precondition(!(value is AnyValue))
     _participant = Weak(participant)
     attributeType = type
     attributeSubtype = subtype
-    self.value = value
+    self.value = AnyValue(value)
     if participant._type != .applicantOnly {
       registrar = Registrar(onLeaveTimerExpired: onLeaveTimerExpired)
     }
@@ -723,7 +723,7 @@ Sendable, Hashable, Equatable, CustomStringConvertible {
       }
 
       if let filterValue = try filter._value {
-        guard value == filterValue else { return false }
+        guard value == AnyValue(filterValue) else { return false }
       } else if case let .matchAnyIndex(filterIndex) = filter {
         guard value.index == filterIndex else { return false }
       }
