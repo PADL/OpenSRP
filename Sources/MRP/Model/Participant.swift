@@ -124,7 +124,7 @@ public enum ParticipantEventSource: Sendable {
   case application
 }
 
-public final actor Participant<A: Application>: Equatable, Hashable {
+public final actor Participant<A: Application>: Equatable, Hashable, CustomStringConvertible {
   public static func == (lhs: Participant<A>, rhs: Participant<A>) -> Bool {
     lhs.application == rhs.application && lhs.port == rhs.port && lhs.contextIdentifier == rhs
       .contextIdentifier
@@ -213,6 +213,10 @@ public final actor Participant<A: Application>: Equatable, Hashable {
 
     _logger = controller.logger
     await _initTimers()
+  }
+
+  public nonisolated var description: String {
+    "Participant(application: \(type(of: application!)), _type: \(_type), port: \(port))"
   }
 
   private func _initTimers() async {
