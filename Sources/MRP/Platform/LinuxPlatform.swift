@@ -807,11 +807,12 @@ extension LinuxBridge: MSRPAwareBridge {
     let qDiscs = try await _nlLinkSocket.getQDiscs(
       family: sa_family_t(AF_UNSPEC),
       interfaceIndex: port.id
-    )
-    guard let qDisc = try await qDiscs.collect().compactMap({ $0 as? RTNLMQPrioQDisc }).first else {
-      return nil
-    }
-    guard let parent = _nlQDiscHandle, qDisc.parent == parent else {
+    ).filter { $0.index == port.id }.collect()
+
+    guard let qDisc = qDiscs.compactMap({ $0 as? RTNLMQPrioQDisc }).first,
+          let parent = _nlQDiscHandle,
+          qDisc.handle >> 16 == parent
+    else {
       return nil
     }
     return qDisc.srClassPriorityMap?.1
@@ -825,11 +826,16 @@ extension LinuxBridge: MSRPAwareBridge {
 fileprivate extension RTNLMQPrioQDisc {
   var srClassPriorityMap: (LinuxPort.ID, SRClassPriorityMap)? {
     guard let priorityMap else { return nil }
-    return (index, SRClassPriorityMap(uniqueKeysWithValues: priorityMap.compactMap { up, tc in
-      guard let srClassID = _mapTCToSRClassID(tc) else { return nil }
+
+    var srClassPriorityMap = SRClassPriorityMap()
+
+    for (up, tc) in priorityMap {
+      guard let srClassID = _mapTCToSRClassID(tc) else { continue }
       let srClassPriority = _mapUPToSRClassPriority(up)
-      return (srClassID, srClassPriority)
-    }))
+      srClassPriorityMap[srClassID] = srClassPriority
+    }
+
+    return (index, srClassPriorityMap)
   }
 }
 
