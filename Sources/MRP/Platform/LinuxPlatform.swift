@@ -94,23 +94,18 @@ private func _makeLinkLayerAddressBytes(
   }
 }
 
-private func _getEthChannelCount(name: String) throws -> (Int, Int) {
-  let fileHandle = try FileHandle(
-    fileDescriptor: socket(CInt(AF_PACKET), Int32(SOCK_DGRAM.rawValue), 0),
-    closeOnDealloc: true
-  )
+// TODO: use NetLink to avoid blocking I/O
+private func _ethToolIoctl<T>(fileHandle: FileHandle, name: String, arg: inout T) throws {
+  guard name.count < Int(IFNAMSIZ) else { throw Errno.outOfRange }
 
-  var channels = ethtool_channels()
-  channels.cmd = UInt32(ETHTOOL_GCHANNELS)
-  try withUnsafeMutablePointer(to: &channels) {
-    try $0.withMemoryRebound(to: CChar.self, capacity: MemoryLayout<ethtool_channels>.size) {
+  try withUnsafeMutablePointer(to: &arg) {
+    try $0.withMemoryRebound(to: CChar.self, capacity: MemoryLayout<T>.size) {
       var ifr = ifreq()
       ifr.ifr_ifru.ifru_data = UnsafeMutablePointer($0)
-      // note: we are trusting here that the string is ASCII and not UTF-8
-      try withUnsafePointer(to: ifr.ifr_ifrn.ifrn_name) {
-        let baseAddress = $0.propertyBasePointer(to: \.0)!
-        guard name.count < Int(IFNAMSIZ) else { throw Errno.outOfRange }
-        memcpy(UnsafeMutableRawPointer(mutating: baseAddress), name, name.count + 1)
+
+      withUnsafeMutablePointer(to: &ifr.ifr_ifrn.ifrn_name) {
+        let start = $0.propertyBasePointer(to: \.0)!
+        memcpy(start, name, name.count)
       }
 
       if ioctl(fileHandle.fileDescriptor, UInt(SIOCETHTOOL), &ifr) < 0 {
@@ -118,11 +113,121 @@ private func _getEthChannelCount(name: String) throws -> (Int, Int) {
       }
     }
   }
-
-  return (Int(channels.rx_count), Int(channels.tx_count))
 }
 
-public struct LinuxPort: Port, Sendable, CustomStringConvertible {
+struct EthernetChannelParameterSet: Sendable {
+  let rx: Int
+  let tx: Int
+  let other: Int
+  let combined: Int
+}
+
+struct EthernetChannelParameters: Sendable {
+  let max: EthernetChannelParameterSet
+  let current: EthernetChannelParameterSet
+
+  init(_ channels: ethtool_channels) {
+    self.max = EthernetChannelParameterSet(
+      rx: Int(channels.max_rx),
+      tx: Int(channels.max_tx),
+      other: Int(channels.max_other),
+      combined: Int(channels.max_combined)
+    )
+    current = EthernetChannelParameterSet(
+      rx: Int(channels.rx_count),
+      tx: Int(channels.tx_count),
+      other: Int(channels.other_count),
+      combined: Int(channels.combined_count)
+    )
+  }
+}
+
+private func _getEthChannelCount(
+  fileHandle: FileHandle,
+  name: String
+) throws -> EthernetChannelParameters {
+  var channels = ethtool_channels()
+  channels.cmd = UInt32(ETHTOOL_GCHANNELS)
+  try _ethToolIoctl(fileHandle: fileHandle, name: name, arg: &channels)
+  return EthernetChannelParameters(channels)
+}
+
+private func _getEthLinkSettings(
+  fileHandle: FileHandle,
+  name: String
+) throws -> (ethtool_link_settings, [UInt32]) {
+  var linkSettingsBuffer = [UInt8](
+    repeating: 0,
+    count: MemoryLayout<ethtool_link_settings>.size + 3 * Int(SCHAR_MAX)
+  )
+  try _ethToolIoctl(fileHandle: fileHandle, name: name, arg: &linkSettingsBuffer)
+
+  return try withUnsafeMutablePointer(to: &linkSettingsBuffer) {
+    try $0.withMemoryRebound(to: ethtool_link_settings.self, capacity: 1) { linkSettings in
+      guard linkSettings.pointee.link_mode_masks_nwords < 0 && linkSettings.pointee
+        .cmd == UInt32(ETHTOOL_GLINKSETTINGS)
+      else {
+        throw Errno.invalidArgument
+      }
+
+      linkSettings.pointee.link_mode_masks_nwords = -linkSettings.pointee.link_mode_masks_nwords
+      try _ethToolIoctl(fileHandle: fileHandle, name: name, arg: &linkSettings.pointee)
+
+      guard linkSettings.pointee.link_mode_masks_nwords > 0 && linkSettings.pointee
+        .cmd == UInt32(ETHTOOL_GLINKSETTINGS)
+      else {
+        throw Errno.invalidArgument
+      }
+
+      // layout is:
+      // __u32 reserved[7];
+      // __u32 map_supported[link_mode_masks_nwords];
+      // __u32 map_advertising[link_mode_masks_nwords];
+      // __u32 map_lp_advertising[link_mode_masks_nwords];
+
+      let linkModes = withUnsafePointer(to: &linkSettings.pointee.reserved.6) {
+        Array(UnsafeBufferPointer<UInt32>(
+          start: $0 + 1,
+          count: 3 * Int(linkSettings.pointee.link_mode_masks_nwords)
+        ))
+      }
+
+      return (linkSettings.pointee, linkModes)
+    }
+  }
+}
+
+private func _getEthLinkSettingsCompat(
+  fileHandle: FileHandle,
+  name: String
+) throws -> (ethtool_link_settings, [UInt32]) {
+  var legacyLinkSettings = ethtool_cmd()
+  legacyLinkSettings.cmd = UInt32(ETHTOOL_GSET)
+  try _ethToolIoctl(fileHandle: fileHandle, name: name, arg: &legacyLinkSettings)
+
+  var linkSettings = ethtool_link_settings()
+
+  linkSettings.cmd = UInt32(ETHTOOL_GLINKSETTINGS)
+
+  linkSettings.speed = UInt32(legacyLinkSettings.speed)
+  linkSettings.duplex = legacyLinkSettings.duplex
+  linkSettings.port = legacyLinkSettings.port
+  linkSettings.phy_address = legacyLinkSettings.phy_address
+  linkSettings.autoneg = legacyLinkSettings.autoneg
+  linkSettings.mdio_support = legacyLinkSettings.mdio_support
+  linkSettings.eth_tp_mdix = legacyLinkSettings.eth_tp_mdix
+  linkSettings.eth_tp_mdix_ctrl = legacyLinkSettings.eth_tp_mdix_ctrl
+
+  let linkModes: [UInt32] = [
+    legacyLinkSettings.supported,
+    legacyLinkSettings.advertising,
+    legacyLinkSettings.lp_advertising,
+  ]
+
+  return (linkSettings, linkModes)
+}
+
+public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
   public static func timeSinceEpoch() throws -> UInt32 {
     var tv = timeval()
     guard gettimeofday(&tv, nil) == 0 else {
@@ -139,6 +244,8 @@ public struct LinuxPort: Port, Sendable, CustomStringConvertible {
 
   fileprivate let _rtnl: RTNLLink
   fileprivate let _txSocket: Socket
+  private let _linkSettings: (ethtool_link_settings, [UInt32])
+  private let _channels: EthernetChannelParameters?
   fileprivate weak var _bridge: LinuxBridge?
 
   init(rtnl: RTNLLink, bridge: LinuxBridge) throws {
@@ -146,10 +253,24 @@ public struct LinuxPort: Port, Sendable, CustomStringConvertible {
     _bridge = bridge
     _txSocket = try Socket(ring: IORing.shared, domain: sa_family_t(AF_PACKET), type: SOCK_RAW)
     // shouldn't need to join multicast group if we are only sending packets
+
+    let fileHandle = try FileHandle(
+      fileDescriptor: socket(CInt(AF_PACKET), Int32(SOCK_DGRAM.rawValue), 0),
+      closeOnDealloc: true
+    )
+
+    do {
+      _linkSettings = try _getEthLinkSettings(fileHandle: fileHandle, name: _rtnl.name)
+    } catch {
+      _linkSettings = try _getEthLinkSettingsCompat(fileHandle: fileHandle, name: _rtnl.name)
+    }
+
+    // we allow this to fail, port won't be AVB capable but that is OK
+    _channels = try? _getEthChannelCount(fileHandle: fileHandle, name: _rtnl.name)
   }
 
   public var description: String {
-    "LinuxPort(name: \(name), id: \(id))"
+    "LinuxPort(name: \(name), id: \(id), isAvbCapable: \(isAvbCapable))"
   }
 
   public func hash(into hasher: inout Hasher) {
@@ -165,7 +286,11 @@ public struct LinuxPort: Port, Sendable, CustomStringConvertible {
   }
 
   public var isPointToPoint: Bool {
-    _rtnl.flags & IFF_POINTOPOINT != 0
+    _operPointToPointMAC || _rtnl.flags & IFF_POINTOPOINT != 0
+  }
+
+  private var _operPointToPointMAC: Bool {
+    _linkSettings.0.duplex == DUPLEX_FULL
   }
 
   public var _isBridgeSelf: Bool {
@@ -206,15 +331,12 @@ public struct LinuxPort: Port, Sendable, CustomStringConvertible {
   }
 
   public var linkSpeed: UInt {
-    1_000_000
+    UInt(_linkSettings.0.speed) * 1000
   }
-}
 
-extension LinuxPort: AVBPort {
   public var isAvbCapable: Bool {
-    // TODO: may need to revisit this
-    guard let channelCount = try? _getEthChannelCount(name: name) else { return false }
-    return channelCount.1 > 2
+    guard let _channels else { return false }
+    return _channels.current.tx > 2 || _channels.current.combined > 2
   }
 
   public func getPortTcMaxLatency(for: SRclassPriority) -> Int {
@@ -711,12 +833,12 @@ fileprivate extension RTNLMQPrioQDisc {
   }
 }
 
-fileprivate extension UnsafePointer {
+fileprivate extension UnsafeMutablePointer {
   func propertyBasePointer<Property>(to property: KeyPath<Pointee, Property>)
-    -> UnsafePointer<Property>?
+    -> UnsafeMutablePointer<Property>?
   {
     guard let offset = MemoryLayout<Pointee>.offset(of: property) else { return nil }
-    return (UnsafeRawPointer(self) + offset).assumingMemoryBound(to: Property.self)
+    return (UnsafeMutableRawPointer(self) + offset).assumingMemoryBound(to: Property.self)
   }
 }
 #endif
