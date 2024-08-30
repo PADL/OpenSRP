@@ -178,7 +178,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   private var _attributes = [AttributeType: Set<_AttributeValueState<A>>]()
   private var _enqueuedEvents = EnqueuedEvents()
   private var _leaveAll: LeaveAll!
-  private var _jointimer: Timer!
+  private var _jointimer: Timer?
   private nonisolated let _controller: Weak<MRPController<A.P>>
   private nonisolated let _application: Weak<A>
 
@@ -225,8 +225,13 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     // instance of this timer is required on a per-Port, per-MRP Participant
     // basis. The value of JoinTime used to initialize this timer is determined
     // in accordance with 10.7.11.
-    _jointimer = Timer(label: "jointimer", onExpiry: _onJoinTimerExpired)
-    _jointimer.start(interval: JoinTime)
+    if _type != .pointToPoint {
+      // only required for shared media, in the point-to-point case packets
+      // are transmitted immediately
+      let jointimer = Timer(label: "jointimer", onExpiry: _onJoinTimerExpired)
+      jointimer.start(interval: JoinTime)
+      _jointimer = jointimer
+    }
 
     // The Leave All Period Timer, leavealltimer, controls the frequency with
     // which the LeaveAll state machine generates LeaveAll PDUs. The timer is
@@ -242,8 +247,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   }
 
   deinit {
-    _jointimer.stop()
-    _leaveAll.stopLeaveAllTimer()
+    _jointimer?.stop()
+    _leaveAll?.stopLeaveAllTimer()
   }
 
   @Sendable
@@ -435,7 +440,9 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       messages.append(Message(attributeType: attributeType, attributeList: vectorAttributes))
     }
 
-    _logger.trace("packed events \(events) into \(messages)")
+    if !messages.isEmpty {
+      _logger.trace("packed events \(events) into \(messages)")
+    }
 
     return messages
   }
@@ -548,6 +555,9 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
           eventSource: eventSource
         )
       }
+    }
+    if _type == .pointToPoint {
+      try await _onJoinTimerExpired()
     }
   }
 
