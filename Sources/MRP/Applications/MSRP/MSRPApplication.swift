@@ -43,6 +43,7 @@ extension AVBPort {
 }
 
 private let DefaultSRClassPriorityMap: SRClassPriorityMap = [.A: .CA, .B: .EE]
+private let DefaultDeltaBandwidths: [SRclassID: Int] = [.A: 75, .B: 0]
 
 struct MSRPPortState<P: AVBPort>: Sendable {
   var mediaType: MSRPPortMediaType { .accessControlPort }
@@ -133,7 +134,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     latencyMaxFrameSize: UInt16 = 2000,
     srPVid: VLAN = SR_PVID,
     maxSRClass: SRclassID = .B,
-    deltaBandwidths: [SRclassID: Int] = [.A: 75, .B: 0],
+    deltaBandwidths: [SRclassID: Int]? = nil,
     forceAvbCapable: Bool = false
   ) async throws {
     _controller = Weak(controller)
@@ -143,7 +144,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     _latencyMaxFrameSize = latencyMaxFrameSize
     _srPVid = srPVid
     _maxSRClass = maxSRClass
-    _deltaBandwidths = deltaBandwidths
+    _deltaBandwidths = deltaBandwidths ?? DefaultDeltaBandwidths
     _forceAvbCapable = forceAvbCapable
     _mmrp = try? await controller.application(for: MMRPEtherType)
     try await controller.register(application: self)
@@ -580,12 +581,20 @@ extension MSRPApplication {
   ) async throws -> Bool {
     var bandwidthUsed = [SRclassID: Int]()
 
+    let provisionalTalker = MSRPTalkerAdvertiseValue(
+      streamID: 0, // don't care about this
+      dataFrameParameters: dataFrameParameters,
+      tSpec: tSpec,
+      priorityAndRank: priorityAndRank,
+      accumulatedLatency: 0 // or this
+    )
+
     let participant = try findParticipant(port: port)
     let talkers = await participant.findAttributes(
       attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
       matching: .matchAny
     )
-    for talker in talkers.map({ $0.1 as! MSRPTalkerAdvertiseValue }) {
+    for talker in [provisionalTalker] + talkers.map({ $0.1 as! MSRPTalkerAdvertiseValue }) {
       guard let srClassID = await portState
         .reverseMapSrClassPriority(priority: talker.priorityAndRank.dataFramePriority)
       else {

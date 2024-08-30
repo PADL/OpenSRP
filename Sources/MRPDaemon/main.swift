@@ -139,7 +139,7 @@ private final class MRPDaemon: AsyncParsableCommand {
         talkerPruning: enableTalkerPruning,
         maxFanInPorts: maxFanInPorts,
         srPVid: VLAN(id: srPVid),
-        deltaBandwidths: deltaBandwidths,
+        deltaBandwidths: deltaBandwidths.isEmpty ? nil : deltaBandwidths,
         forceAvbCapable: forceAvbCapable
       )
     }
