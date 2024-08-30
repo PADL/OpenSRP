@@ -253,19 +253,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
 
   @Sendable
   private func _onJoinTimerExpired() async throws {
-    // this will send a .tx/.txLA event to all attributes which will then make
-    // the appropriate state transitions, potentially triggering the encoding
-    // of a vector
-    switch _leaveAll.state {
-    case .Active:
-      try await _handleLeaveAll(
-        event: .tx,
-        eventSource: .timer
-      ) // sets LeaveAll to passive and emits sLA action
-      try await _apply(event: .txLA, eventSource: .timer)
-    case .Passive:
-      try await _apply(event: .tx, eventSource: .timer)
-    }
+    precondition(_type != .pointToPoint)
+    try await _txOpportunity()
   }
 
   @Sendable
@@ -296,6 +285,22 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
         event: event,
         eventSource: eventSource
       )
+    }
+  }
+
+  private func _txOpportunity() async throws {
+    // this will send a .tx/.txLA event to all attributes which will then make
+    // the appropriate state transitions, potentially triggering the encoding
+    // of a vector
+    switch _leaveAll.state {
+    case .Active:
+      try await _handleLeaveAll(
+        event: .tx,
+        eventSource: .timer
+      ) // sets LeaveAll to passive and emits sLA action
+      try await _apply(event: .txLA, eventSource: .timer)
+    case .Passive:
+      try await _apply(event: .tx, eventSource: .timer)
     }
   }
 
@@ -556,9 +561,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
         )
       }
     }
-    if _type == .pointToPoint {
-      try await _onJoinTimerExpired()
-    }
+    if _type == .pointToPoint { try await _txOpportunity() }
   }
 
   fileprivate func _getSmFlags(for attributeType: AttributeType) throws
@@ -604,6 +607,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   func flush() async throws {
     try await _apply(event: .Flush, eventSource: .internal)
     try await _handleLeaveAll(event: .Flush, eventSource: .internal)
+    if _type == .pointToPoint { try await _txOpportunity() }
   }
 
   // A Re-declare! event signals to the Applicant and Registrar state machines
@@ -635,6 +639,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       with: attribute,
       eventSource: eventSource
     )
+    if _type == .pointToPoint { try await _txOpportunity() }
   }
 
   func leave(
@@ -652,6 +657,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       with: attribute,
       eventSource: eventSource
     )
+    if _type == .pointToPoint { try await _txOpportunity() }
   }
 }
 
