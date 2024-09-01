@@ -121,7 +121,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
   fileprivate let _maxFanInPorts: Int
   fileprivate let _srPVid: VLAN
   fileprivate let _maxSRClass: SRclassID
-  fileprivate var _portStates = ManagedCriticalState<[P.ID: MSRPPortState<P>]>([:])
+  fileprivate let _portStates = ManagedCriticalState<[P.ID: MSRPPortState<P>]>([:])
   fileprivate let _mmrp: MMRPApplication<P>?
   fileprivate var _priorityMapNotificationTask: Task<(), Error>?
   fileprivate let _deltaBandwidths: [SRclassID: Int]
