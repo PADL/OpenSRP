@@ -307,7 +307,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   private func _findAttributeValueState(
     attributeType: AttributeType,
     matching filter: AttributeValueFilter,
-    createIfMissing: Bool = true
+    createIfMissing: Bool
   ) throws -> _AttributeValueState<A> {
     if let attributeValue = _attributes[attributeType]?
       .first(where: { $0.matches(attributeType: attributeType, matching: filter) })
@@ -521,9 +521,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     with attributeValue: _AttributeValueState<A>,
     eventSource: ParticipantEventSource
   ) async throws {
-    let protocolEvent = attributeEvent.protocolEvent
     try await attributeValue.handle(
-      event: protocolEvent,
+      event: attributeEvent.protocolEvent,
       eventSource: eventSource
     )
   }
@@ -552,7 +551,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
             vectorAttribute.applicationEvents?[i],
             vectorAttribute.firstValue.value,
             UInt64(i)
-          ))
+          )),
+          createIfMissing: true
         ) else { continue }
         try await _handle(
           attributeEvent: packedEvents[i],
@@ -632,13 +632,10 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   ) async throws {
     let attribute = try _findAttributeValueState(
       attributeType: attributeType,
-      matching: .matchEqualWithSubtype((attributeSubtype, attributeValue))
+      matching: .matchEqualWithSubtype((attributeSubtype, attributeValue)),
+      createIfMissing: true
     )
-    try await _handle(
-      attributeEvent: isNew ? .New : .JoinMt,
-      with: attribute,
-      eventSource: eventSource
-    )
+    try await attribute.handle(event: isNew ? .New : .Join, eventSource: eventSource)
     if _type == .pointToPoint { try await _txOpportunity() }
   }
 
@@ -650,13 +647,10 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   ) async throws {
     let attribute = try _findAttributeValueState(
       attributeType: attributeType,
-      matching: .matchEqualWithSubtype((attributeSubtype, attributeValue))
+      matching: .matchEqualWithSubtype((attributeSubtype, attributeValue)),
+      createIfMissing: false
     )
-    try await _handle(
-      attributeEvent: .Lv,
-      with: attribute,
-      eventSource: eventSource
-    )
+    try await attribute.handle(event: .Lv, eventSource: eventSource)
     if _type == .pointToPoint { try await _txOpportunity() }
   }
 }
@@ -826,8 +820,8 @@ Sendable, Hashable, Equatable, CustomStringConvertible {
     case .sJ_:
       // The [sJ] variant indicates that the action is only necessary in cases
       // where transmitting the value, rather than terminating a vector and
-      // starting a new one, makes for more optimal/ encoding; i.e.,
-      // transmitting the value is not necessary for correct/ protocol
+      // starting a new one, makes for more optimal encoding; i.e.,
+      // transmitting the value is not necessary for correct protocol
       // operation.
       guard let registrar else { break }
       attributeEvent = (registrar.state == .IN) ? .JoinIn : .JoinMt
