@@ -888,15 +888,7 @@ Sendable, Hashable, Equatable, CustomStringConvertible {
     guard let application = context.participant.application else { throw MRPError.internalError }
     switch action {
     case .New:
-      try await application.joinIndicated(
-        contextIdentifier: context.participant.contextIdentifier,
-        port: context.participant.port,
-        attributeType: context.attributeType,
-        attributeSubtype: context.attributeSubtype,
-        attributeValue: context.attributeValue,
-        isNew: true,
-        eventSource: context.eventSource
-      )
+      fallthrough
     case .Join:
       try await application.joinIndicated(
         contextIdentifier: context.participant.contextIdentifier,
@@ -904,7 +896,7 @@ Sendable, Hashable, Equatable, CustomStringConvertible {
         attributeType: context.attributeType,
         attributeSubtype: context.attributeSubtype,
         attributeValue: context.attributeValue,
-        isNew: false,
+        isNew: action == .New,
         eventSource: context.eventSource
       )
     case .Lv:
