@@ -57,7 +57,7 @@ struct MSRPPortState<P: AVBPort>: Sendable {
   var talkerVlanPruning: Bool { false }
   var srClassPriorityMap = SRClassPriorityMap()
 
-  func reverseMapSrClassPriority(priority: SRclassPriority) async -> SRclassID? {
+  func reverseMapSrClassPriority(priority: SRclassPriority) -> SRclassID? {
     srClassPriorityMap.first(where: { $0.value == priority })?.key
   }
 
@@ -595,7 +595,7 @@ extension MSRPApplication {
       matching: .matchAny
     )
     for talker in [provisionalTalker] + talkers.map({ $0.1 as! MSRPTalkerAdvertiseValue }) {
-      guard let srClassID = await portState
+      guard let srClassID = portState
         .reverseMapSrClassPriority(priority: talker.priorityAndRank.dataFramePriority)
       else {
         continue
@@ -643,19 +643,22 @@ extension MSRPApplication {
     eventSource: ParticipantEventSource
   ) async throws {
     do {
-      guard let srClassID = await portState
+      guard portState.msrpPortEnabledStatus else {
+        _logger.error("MSRP: port \(port) is not enabled")
+        throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
+      }
+
+      // TODO: should we check explicitly for false
+      guard let srClassID = portState
         .reverseMapSrClassPriority(priority: priorityAndRank.dataFramePriority),
-        portState.srpDomainBoundaryPort[srClassID] == false
+        portState.srpDomainBoundaryPort[srClassID] != true
       else {
-        _logger
-          .info(
-            "MSRP: port \(port) is a SRP domain boundary port for \(priorityAndRank), cannot bridge"
-          )
+        _logger.error("MSRP: port \(port) is a SRP domain boundary port for \(priorityAndRank)")
         throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
       }
 
       guard await !_isFanInPortLimitReached() else {
-        _logger.info("MSRP: max fan in port limit reached")
+        _logger.error("MSRP: fan in port limit reached")
         throw MSRPFailure(systemID: port.systemID, failureCode: .fanInPortLimitReached)
       }
 
@@ -667,12 +670,13 @@ extension MSRPApplication {
         priorityAndRank: priorityAndRank
       )
       else {
-        _logger.info("MSRP: bandwidth limit exceeded for stream \(streamID) on port \(port)")
+        _logger.error("MSRP: bandwidth limit exceeded for stream \(streamID) on port \(port)")
         throw MSRPFailure(systemID: port.systemID, failureCode: .insufficientBandwidth)
       }
     } catch let error as MSRPFailure {
       throw error
     } catch {
+      _logger.error("MSRP: cannot bridge talker: generic error \(error)")
       throw MSRPFailure(systemID: port.systemID, failureCode: .outOfMSRPResources)
     }
   }
@@ -939,7 +943,7 @@ extension MSRPApplication {
     var streams = [SRclassID: [MSRPTSpec]]()
 
     for talker in talkers.map({ $0.1 as! MSRPTalkerAdvertiseValue }) {
-      guard let classID = await portState
+      guard let classID = portState
         .reverseMapSrClassPriority(priority: talker.priorityAndRank.dataFramePriority)
       else { continue }
       if let index = streams.index(forKey: classID) {
@@ -1026,7 +1030,7 @@ extension MSRPApplication {
     eventSource: ParticipantEventSource
   ) async throws {
     guard let talkerRegistration = try? await _findTalkerRegistration(for: streamID) else {
-      _logger.info("MSRP: could not find talker registration for listener stream \(streamID)")
+      _logger.error("MSRP: could not find talker registration for listener stream \(streamID)")
       return
     }
 
@@ -1124,7 +1128,7 @@ extension MSRPApplication {
     case .listener:
       let attributeValue = (attributeValue as! MSRPListenerValue)
       guard let declarationType = try? MSRPDeclarationType(attributeSubtype: attributeSubtype)
-      else { return }
+      else { throw MRPError.invalidMSRPDeclarationType }
       try await _onRegisterAttachIndication(
         contextIdentifier: contextIdentifier,
         port: port,
@@ -1137,9 +1141,12 @@ extension MSRPApplication {
       let domain = (attributeValue as! MSRPDomainValue)
       withPortState(port: port) { portState in
         let srClassPriority = portState.srClassPriorityMap[domain.srClassID]
-        portState
-          .srpDomainBoundaryPort[domain.srClassID] = (srClassPriority == domain.srClassPriority) ==
-          false
+        let isSrpDomainBoundaryPort = srClassPriority != domain.srClassPriority
+        _logger
+          .debug(
+            "MSRP: port \(port) srClassID \(domain.srClassID) local srClassPriority \(String(describing: srClassPriority)) peer srClassPriority \(domain.srClassPriority): \(isSrpDomainBoundaryPort ? "is" : "not") a domain boundary port"
+          )
+        portState.srpDomainBoundaryPort[domain.srClassID] = isSrpDomainBoundaryPort
       }
     }
     throw MRPError.doNotPropagateAttribute
@@ -1273,7 +1280,7 @@ extension MSRPApplication {
       )
     case .listener:
       guard let declarationType = try? MSRPDeclarationType(attributeSubtype: attributeSubtype)
-      else { return }
+      else { throw MRPError.invalidMSRPDeclarationType }
       try await _onDeregisterAttachIndication(
         contextIdentifier: contextIdentifier,
         port: port,
@@ -1284,7 +1291,7 @@ extension MSRPApplication {
     case .domain:
       let domain = (attributeValue as! MSRPDomainValue)
       withPortState(port: port) { portState in
-        portState.srpDomainBoundaryPort[domain.srClassID] = true
+        portState.srpDomainBoundaryPort[domain.srClassID] = nil
       }
     }
     throw MRPError.doNotPropagateAttribute
