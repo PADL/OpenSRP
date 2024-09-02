@@ -919,7 +919,7 @@ extension MSRPApplication {
       )
     } else {
       _logger.debug("MSRP: deregistering MDB entries for \(talkerRegistration.dataFrameParameters)")
-      try await bridge.deregister(
+      try? await bridge.deregister(
         groupAddress: talkerRegistration.dataFrameParameters.destinationAddress,
         vlan: talkerRegistration.dataFrameParameters.vlanIdentifier,
         from: [participant.port]
