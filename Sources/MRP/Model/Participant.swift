@@ -482,6 +482,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     } else {
       _enqueuedEvents[event.attributeType] = [event]
     }
+    // make sure same attribute event doesn't ever get encoded twice
+    precondition(_enqueuedEvents[event.attributeType]?.filter { $0 == event }.count ?? 0 <= 1)
   }
 
   fileprivate func _txEnqueue(
