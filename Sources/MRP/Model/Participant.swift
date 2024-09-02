@@ -124,6 +124,58 @@ public enum ParticipantEventSource: Sendable {
   case application
 }
 
+private enum EnqueuedEvent<A: Application>: Equatable {
+  struct AttributeEvent: Equatable {
+    let attributeEvent: MRP.AttributeEvent
+    let attributeValue: _AttributeValueState<A>
+    let canOmitEncoding: Bool
+  }
+
+  case attributeEvent(AttributeEvent)
+  case leaveAllEvent(AttributeType)
+
+  var attributeType: AttributeType {
+    switch self {
+    case let .attributeEvent(attributeEvent):
+      attributeEvent.attributeValue.attributeType
+    case let .leaveAllEvent(attributeType):
+      attributeType
+    }
+  }
+
+  var isLeaveAll: Bool {
+    switch self {
+    case .attributeEvent:
+      false
+    case .leaveAllEvent:
+      true
+    }
+  }
+
+  var unsafeAttributeEvent: AttributeEvent {
+    switch self {
+    case let .attributeEvent(attributeEvent):
+      attributeEvent
+    case .leaveAllEvent:
+      fatalError("attemped to unsafely unwrap LeaveAll event")
+    }
+  }
+
+  func canBeReplacedBy(event: Self) -> Bool {
+    if self == event {
+      // we were replaced with an identical event within the current jointimer window
+      true
+    } else if case let .attributeEvent(self) = self, case let .attributeEvent(event) = event {
+      // another event with the same attribute type and value had canOmitEncoding set,
+      // which allows it to be elided from the transmitted packet
+      self.canOmitEncoding && self.attributeValue == event.attributeValue
+    } else {
+      // this is a new event
+      false
+    }
+  }
+}
+
 public final actor Participant<A: Application>: Equatable, Hashable, CustomStringConvertible {
   public static func == (lhs: Participant<A>, rhs: Participant<A>) -> Bool {
     lhs.application == rhs.application && lhs.port == rhs.port && lhs.contextIdentifier == rhs
@@ -136,59 +188,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     contextIdentifier.hash(into: &hasher)
   }
 
-  fileprivate enum EnqueuedEvent: Equatable {
-    struct AttributeEvent: Equatable {
-      let attributeEvent: MRP.AttributeEvent
-      let attributeValue: _AttributeValueState<A>
-      let canOmitEncoding: Bool
-    }
-
-    case attributeEvent(AttributeEvent)
-    case leaveAllEvent(AttributeType)
-
-    var attributeType: AttributeType {
-      switch self {
-      case let .attributeEvent(attributeEvent):
-        attributeEvent.attributeValue.attributeType
-      case let .leaveAllEvent(attributeType):
-        attributeType
-      }
-    }
-
-    var isLeaveAll: Bool {
-      switch self {
-      case .attributeEvent:
-        false
-      case .leaveAllEvent:
-        true
-      }
-    }
-
-    var unsafeAttributeEvent: AttributeEvent {
-      switch self {
-      case let .attributeEvent(attributeEvent):
-        attributeEvent
-      case .leaveAllEvent:
-        fatalError("attemped to unsafely unwrap LeaveAll event")
-      }
-    }
-
-    func canBeReplacedBy(event: Self) -> Bool {
-      if self == event {
-        // we were replaced with an identical event within the current jointimer window
-        true
-      } else if case let .attributeEvent(self) = self, case let .attributeEvent(event) = event {
-        // another event with the same attribute type and value had canOmitEncoding set,
-        // which allows it to be elided from the transmitted packet
-        self.canOmitEncoding && self.attributeValue == event.attributeValue
-      } else {
-        // this is a new event
-        false
-      }
-    }
-  }
-
-  private typealias EnqueuedEvents = [AttributeType: [EnqueuedEvent]]
+  private typealias EnqueuedEvents = [AttributeType: [EnqueuedEvent<A>]]
 
   private var _attributes = [AttributeType: Set<_AttributeValueState<A>>]()
   private var _enqueuedEvents = EnqueuedEvents()
@@ -231,7 +231,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   }
 
   public nonisolated var description: String {
-    "Participant(application: \(type(of: application!)), _type: \(_type), port: \(port))"
+    "Participant(application: \(application!.name), _type: \(_type), port: \(port))"
   }
 
   private func _initTimers() async {
@@ -423,7 +423,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
         .sorted(by: {
           $0.attributeValue.index < $1.attributeValue.index
         })
-      let attributeEventChunks: [[EnqueuedEvent.AttributeEvent]] = attributeEvents
+      let attributeEventChunks: [[EnqueuedEvent<A>.AttributeEvent]] = attributeEvents
         .reduce(into: []) {
           try? $0.last?.last?.attributeValue.advanced(by: 1) == $1.attributeValue ?
             $0[$0.index(before: $0.endIndex)].append($1) : $0.append([$1])
@@ -469,7 +469,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     return messages
   }
 
-  private func _txEnqueue(_ event: EnqueuedEvent) {
+  private func _txEnqueue(_ event: EnqueuedEvent<A>) {
     _logger.trace("enqueing event \(event)")
     if let index = _enqueuedEvents.index(forKey: event.attributeType) {
       if let eventIndex = _enqueuedEvents.values[index]
@@ -491,7 +491,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     attributeValue: _AttributeValueState<A>,
     canOmitEncoding: Bool
   ) {
-    let event = EnqueuedEvent.AttributeEvent(
+    let event = EnqueuedEvent<A>.AttributeEvent(
       attributeEvent: attributeEvent,
       attributeValue: attributeValue,
       canOmitEncoding: canOmitEncoding
@@ -709,7 +709,7 @@ Sendable, Hashable, Equatable, CustomStringConvertible {
   }
 
   var description: String {
-    "\(type(of: self))(attributeType: \(attributeType), attributeSubtype: \(attributeSubtype ?? 0), attributeValue: \(value), A \(applicant) R \(registrar?.description ?? "-"))"
+    "_AttributeValueState(attributeType: \(attributeType), attributeSubtype: \(attributeSubtype ?? 0), attributeValue: \(value), A \(applicant) R \(registrar?.description ?? "-"))"
   }
 
   private init(
