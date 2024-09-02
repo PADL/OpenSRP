@@ -26,12 +26,16 @@ enum Command: CaseIterable {
   case del_vlan
   case add_group
   case del_group
+  case add_cbs
+  case del_cbs
 }
 
 typealias CommandHandler = (Command, NLSocket, RTNLLinkBridge, String) async throws -> ()
 
 func usage() -> Never {
-  print("Usage: \(CommandLine.arguments[0]) [add_vlan|del_vlan|add_group|del_group] [ifname] [vid]")
+  print(
+    "Usage: \(CommandLine.arguments[0]) [add_vlan|del_vlan|add_group|del_group|add_cbs|del_cbs] [ifname] [vid|mac-address|parent:handle]"
+  )
   exit(1)
 }
 
@@ -71,7 +75,7 @@ func add_group(
   link: RTNLLinkBridge,
   arg: String
 ) async throws {
-  let bridge = try await findBridge(index: link.master, socket: gSocket)
+  let bridge = try await findBridge(index: link.master, socket: socket)
   let groupAddress = try RTNLLink.parseMacAddressString(arg)
   try await bridge.add(link: link, groupAddresses: [groupAddress], socket: socket)
 }
@@ -82,12 +86,57 @@ func del_group(
   link: RTNLLinkBridge,
   arg: String
 ) async throws {
-  let bridge = try await findBridge(index: link.master, socket: gSocket)
+  let bridge = try await findBridge(index: link.master, socket: socket)
   let groupAddress = try RTNLLink.parseMacAddressString(arg)
   try await bridge.remove(link: link, groupAddresses: [groupAddress], socket: socket)
 }
 
-var gSocket: NLSocket!
+func stringToHandle(_ string: String) throws -> (UInt32, UInt32) {
+  let s = string.split(separator: ":")
+  guard s.count == 2 else {
+    throw Errno.invalidArgument
+  }
+  guard let h1 = UInt32(s[0]), let h2 = UInt32(s[1]) else {
+    throw Errno.invalidArgument
+  }
+  return (h1, h2)
+}
+
+func add_cbs(
+  command: Command,
+  socket: NLSocket,
+  link: RTNLLinkBridge,
+  arg: String
+) async throws {
+  let (handle, parent) = try stringToHandle(arg)
+  // TODO: make these configurable
+  // https://tsn.readthedocs.io/qdiscs.html
+  try await link.add(
+    handle: handle,
+    parent: parent,
+    hiCredit: 153,
+    loCredit: -1389,
+    idleSlope: 98688,
+    sendSlope: -901_312,
+    socket: socket
+  )
+}
+
+func del_cbs(
+  command: Command,
+  socket: NLSocket,
+  link: RTNLLinkBridge,
+  arg: String
+) async throws {
+  let (handle, parent) = try stringToHandle(arg)
+  try await link.remove(
+    handle: handle,
+    parent: parent,
+    socket: socket
+  )
+}
+
+private var gSocket: NLSocket!
 
 @main
 enum nltool {
@@ -111,6 +160,8 @@ enum nltool {
         .del_vlan: del_vlan,
         .add_group: add_group,
         .del_group: del_group,
+        .add_cbs: add_cbs,
+        .del_cbs: del_cbs,
       ]
       let commandHandler = commands[command]!
       try await commandHandler(command, socket, link, CommandLine.arguments[3])
