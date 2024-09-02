@@ -254,6 +254,8 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     "MSRPApplication(controller: \(controller!), participants: \(_participants.criticalState), portStates: \(_portStates.criticalState)"
   }
 
+  public var name: String { "MSRP" }
+
   public func deserialize(
     attributeOfType attributeType: AttributeType,
     from deserializationContext: inout DeserializationContext

@@ -74,6 +74,8 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationEve
     "MMRPApplication(controller: \(controller!), participants: \(_participants.criticalState))"
   }
 
+  public var name: String { "MMRP" }
+
   public func deserialize(
     attributeOfType attributeType: AttributeType,
     from deserializationContext: inout DeserializationContext

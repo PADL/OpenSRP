@@ -67,6 +67,8 @@ public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationEve
     "MVRPApplication(controller: \(controller!), vlanExclusions: \(_vlanExclusions), participants: \(_participants.criticalState))"
   }
 
+  public var name: String { "MVRP" }
+
   public func deserialize(
     attributeOfType attributeType: AttributeType,
     from deserializationContext: inout DeserializationContext

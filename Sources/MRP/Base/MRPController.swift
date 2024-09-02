@@ -342,7 +342,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
       controller: self
     )
     _applications[application.etherType] = application
-    logger.info("registered application \(application)")
+    logger.info("registered application \(application.name)")
   }
 
   func deregister(application: some Application<P>) async throws {
@@ -354,7 +354,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
       etherType: application.etherType,
       controller: self
     )
-    logger.info("deregistered application \(application)")
+    logger.info("deregistered application \(application.name)")
   }
 
   private func _didAdd(
@@ -363,7 +363,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
   ) async throws {
     for application in _applications.values {
       logger
-        .trace("added MAP context \(contextIdentifier):\(context) for application \(application)")
+        .trace("added MAP context \(contextIdentifier):\(context) for application \(application.name)")
       try await application.didAdd(contextIdentifier: contextIdentifier, with: context)
     }
   }
@@ -374,7 +374,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
   ) throws {
     for application in _applications.values {
       logger
-        .trace("updated MAP context \(contextIdentifier):\(context) for application \(application)")
+        .trace("updated MAP context \(contextIdentifier):\(context) for application \(application.name)")
       try application.didUpdate(contextIdentifier: contextIdentifier, with: context)
     }
   }
@@ -386,7 +386,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
     for application in _applications.values {
       logger
         .trace(
-          "removed MAP context \(contextIdentifier):\(context) for application \(application)"
+          "removed MAP context \(contextIdentifier):\(context) for application \(application.name)"
         )
       try application.didRemove(contextIdentifier: contextIdentifier, with: context)
     }
