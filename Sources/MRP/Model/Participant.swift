@@ -768,10 +768,12 @@ Sendable, Hashable, Equatable, CustomStringConvertible {
         guard attributeSubtype == filterSubtype else { return false }
       }
 
-      if let filterValue = try filter._value {
-        guard value == AnyValue(filterValue) else { return false }
+      if case let .matchIndex(filter) = filter {
+        guard value.index == filter.index else { return false }
       } else if case let .matchAnyIndex(filterIndex) = filter {
         guard value.index == filterIndex else { return false }
+      } else if let filterValue = try filter._value {
+        guard value == AnyValue(filterValue) else { return false }
       }
 
       return true
