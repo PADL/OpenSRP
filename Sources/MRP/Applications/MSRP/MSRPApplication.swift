@@ -1007,6 +1007,7 @@ extension MSRPApplication {
         )
       }
     } catch {
+      _logger.error("MSRP: failed to update port parameters for stream \(streamID): \(error)")
       guard _forceAvbCapable else { throw error }
     }
   }
@@ -1025,6 +1026,7 @@ extension MSRPApplication {
     eventSource: ParticipantEventSource
   ) async throws {
     guard let talkerRegistration = try? await _findTalkerRegistration(for: streamID) else {
+      _logger.info("MSRP: could not find talker registration for listener stream \(streamID)")
       return
     }
 
@@ -1037,6 +1039,12 @@ extension MSRPApplication {
       talkerRegistration: talkerRegistration.1,
       isJoin: true
     )
+
+    _logger
+      .trace(
+        "MSRP: propagating merged listener declaration \(declarationType) for stream \(streamID) to participant \(talkerRegistration)"
+      )
+
     try await talkerRegistration.0.join(
       attributeType: MSRPAttributeType.listener.rawValue,
       attributeSubtype: mergedDeclarationType!.attributeSubtype!.rawValue,
@@ -1044,7 +1052,6 @@ extension MSRPApplication {
       isNew: isNew,
       eventSource: .map
     )
-
     try await _updatePortParameters(
       port: port,
       streamID: streamID,
