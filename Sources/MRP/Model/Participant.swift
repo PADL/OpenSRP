@@ -140,6 +140,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     struct AttributeEvent: Equatable {
       let attributeEvent: MRP.AttributeEvent
       let attributeValue: _AttributeValueState<A>
+      let canOmitEncoding: Bool
     }
 
     case attributeEvent(AttributeEvent)
@@ -169,6 +170,20 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
         attributeEvent
       case .leaveAllEvent:
         fatalError("attemped to unsafely unwrap LeaveAll event")
+      }
+    }
+
+    func canBeReplacedBy(event: Self) -> Bool {
+      if self == event {
+        // we were replaced with an identical event within the current jointimer window
+        true
+      } else if case let .attributeEvent(self) = self, case let .attributeEvent(event) = event {
+        // another event with the same attribute type and value had canOmitEncoding set,
+        // which allows it to be elided from the transmitted packet
+        self.canOmitEncoding && self.attributeValue == event.attributeValue
+      } else {
+        // this is a new event
+        false
       }
     }
   }
@@ -415,7 +430,9 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
         }
 
       var vectorAttributes: [VectorAttribute<AnyValue>] = attributeEventChunks
-        .map { attributeEventChunk in
+        .compactMap { attributeEventChunk in
+          guard !attributeEventChunk.isEmpty else { return nil }
+
           let attributeSubtypes: [AttributeSubtype]? = if application
             .hasAttributeSubtype(for: attributeType)
           {
@@ -432,7 +449,9 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
           )
         }
 
-      if vectorAttributes.count == 0, leaveAll {
+      if !vectorAttributes.isEmpty {
+        messages.append(Message(attributeType: attributeType, attributeList: vectorAttributes))
+      } else if leaveAll {
         let vectorAttribute = try VectorAttribute<AnyValue>(
           leaveAllEvent: .LeaveAll,
           firstValue: AnyValue(application.makeNullValue(for: attributeType)),
@@ -441,8 +460,6 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
         )
         vectorAttributes.append(vectorAttribute)
       }
-
-      messages.append(Message(attributeType: attributeType, attributeList: vectorAttributes))
     }
 
     if !messages.isEmpty {
@@ -455,7 +472,9 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   private func _txEnqueue(_ event: EnqueuedEvent) {
     _logger.trace("enqueing event \(event)")
     if let index = _enqueuedEvents.index(forKey: event.attributeType) {
-      if let eventIndex = _enqueuedEvents.values[index].firstIndex(where: { $0 == event }) {
+      if let eventIndex = _enqueuedEvents.values[index]
+        .firstIndex(where: { $0.canBeReplacedBy(event: event) })
+      {
         _enqueuedEvents.values[index][eventIndex] = event
       } else {
         _enqueuedEvents.values[index].append(event)
@@ -467,11 +486,13 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
 
   fileprivate func _txEnqueue(
     attributeEvent: AttributeEvent,
-    attributeValue: _AttributeValueState<A>
+    attributeValue: _AttributeValueState<A>,
+    canOmitEncoding: Bool
   ) {
     let event = EnqueuedEvent.AttributeEvent(
       attributeEvent: attributeEvent,
-      attributeValue: attributeValue
+      attributeValue: attributeValue,
+      canOmitEncoding: canOmitEncoding
     )
     _txEnqueue(.attributeEvent(event))
   }
@@ -839,7 +860,8 @@ Sendable, Hashable, Equatable, CustomStringConvertible {
     if let attributeEvent {
       await context.participant._txEnqueue(
         attributeEvent: attributeEvent,
-        attributeValue: self
+        attributeValue: self,
+        canOmitEncoding: action == .sJ_ || action == .sL_ || action == .s_
       )
     }
   }
