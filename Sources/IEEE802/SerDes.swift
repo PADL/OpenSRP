@@ -68,6 +68,22 @@ public struct SerializationContext {
     serialize(uint64.bigEndianBytes, at: index)
   }
 
+  public mutating func serialize(int8: Int8, at index: Int? = nil) {
+    serialize([UInt8(bitPattern: int8)], at: index)
+  }
+
+  public mutating func serialize(int16: Int16, at index: Int? = nil) {
+    serialize(int16.bigEndianBytes, at: index)
+  }
+
+  public mutating func serialize(int32: Int32, at index: Int? = nil) {
+    serialize(int32.bigEndianBytes, at: index)
+  }
+
+  public mutating func serialize(int64: Int64, at index: Int? = nil) {
+    serialize(int64.bigEndianBytes, at: index)
+  }
+
   public mutating func serialize(eui48: EUI48, at index: Int? = nil) {
     let bytes = [eui48.0, eui48.1, eui48.2, eui48.3, eui48.4, eui48.5]
     serialize(bytes, at: index)
@@ -77,7 +93,7 @@ public struct SerializationContext {
 }
 
 // don't want to use Foundation, hence no String(format:)
-func _byteToHex(_ byte: UInt8, uppercase: Bool = false) -> String {
+package func _byteToHex(_ byte: UInt8, uppercase: Bool = false) -> String {
   let s = String(byte, radix: 16, uppercase: uppercase)
   if byte & 0xF0 == 0 {
     return "0" + s
@@ -86,7 +102,7 @@ func _byteToHex(_ byte: UInt8, uppercase: Bool = false) -> String {
   }
 }
 
-func _bytesToHex(_ bytes: [UInt8], uppercase: Bool = false) -> String {
+package func _bytesToHex(_ bytes: [UInt8], uppercase: Bool = false) -> String {
   bytes.map { _byteToHex($0) }.joined()
 }
 
@@ -140,6 +156,22 @@ public struct DeserializationContext: CustomStringConvertible {
 
   public mutating func deserialize() throws -> UInt64 {
     try UInt64(bigEndianBytes: deserialize(count: 8))
+  }
+
+  public mutating func deserialize() throws -> Int8 {
+    try Int8(bitPattern: deserialize(count: 1).first!)
+  }
+
+  public mutating func deserialize() throws -> Int16 {
+    try Int16(bigEndianBytes: deserialize(count: 2))
+  }
+
+  public mutating func deserialize() throws -> Int32 {
+    try Int32(bigEndianBytes: deserialize(count: 4))
+  }
+
+  public mutating func deserialize() throws -> Int64 {
+    try Int64(bigEndianBytes: deserialize(count: 8))
   }
 
   public mutating func deserialize() throws -> EUI48 {

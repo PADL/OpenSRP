@@ -70,6 +70,10 @@ PlatformProducts = [
     name: "portmon",
     targets: ["portmon"]
   ),
+  .executable(
+    name: "pmctool",
+    targets: ["pmctool"]
+  ),
 ]
 PlatformTargets = [
   .systemLibrary(
@@ -117,6 +121,11 @@ PlatformTargets = [
     name: "portmon",
     dependencies: ["MRP", "NetLink"],
     path: "Examples/portmon"
+  ),
+  .executableTarget(
+    name: "pmctool",
+    dependencies: ["PMC"],
+    path: "Examples/pmctool"
   ),
 ]
 
@@ -174,6 +183,21 @@ let CommonTargets: [Target] = [
     ]
   ),
   .target(
+    name: "PMC",
+    dependencies: [
+      "IEEE802",
+      "AsyncExtensions",
+      "SocketAddress",
+      .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
+      .product(name: "SystemPackage", package: "swift-system"),
+    ] + PlatformTargetDependencies,
+    cSettings: PlatformCSettings,
+    swiftSettings: [
+      .enableExperimentalFeature("StrictConcurrency"),
+    ],
+    linkerSettings: PlatformLinkerSettings
+  ),
+  .target(
     name: "MRP",
     dependencies: [
       "IEEE802",
@@ -181,6 +205,7 @@ let CommonTargets: [Target] = [
       "AsyncExtensions",
       "SocketAddress",
       "MarvellRMU",
+      "PMC",
       .product(name: "Algorithms", package: "swift-algorithms"),
       .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
       .product(name: "Logging", package: "swift-log"),
