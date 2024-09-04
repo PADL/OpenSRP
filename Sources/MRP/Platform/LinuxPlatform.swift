@@ -391,7 +391,7 @@ private extension LinuxPort {
   }
 }
 
-public final class LinuxBridge: Bridge, CustomStringConvertible, @unchecked Sendable {
+public actor LinuxBridge: Bridge, CustomStringConvertible, @unchecked Sendable {
   public typealias Port = LinuxPort
 
   fileprivate let _nlLinkSocket: NLSocket
@@ -424,10 +424,6 @@ public final class LinuxBridge: Bridge, CustomStringConvertible, @unchecked Send
     _pmc = try await PTPManagementClient(path: ptpManagementClientSocketPath)
   }
 
-  deinit {
-    try? _shutdown()
-  }
-
   public nonisolated var description: String {
     "LinuxBridge(name: \(_bridgeName))"
   }
@@ -458,7 +454,7 @@ public final class LinuxBridge: Bridge, CustomStringConvertible, @unchecked Send
     }
   }
 
-  public var notifications: AnyAsyncSequence<PortNotification<Port>> {
+  public nonisolated var notifications: AnyAsyncSequence<PortNotification<Port>> {
     _portNotificationChannel.eraseToAnyAsyncSequence()
   }
 
@@ -481,7 +477,7 @@ public final class LinuxBridge: Bridge, CustomStringConvertible, @unchecked Send
   }
 
   public func getVlans(controller: isolated MRPController<Port>) async -> Set<VLAN> {
-    if let vlans = _bridgePort?._vlans {
+    if let vlans = await _bridgePort?._vlans {
       Set(vlans.map { VLAN(vid: $0) })
     } else {
       Set()
@@ -573,7 +569,7 @@ public final class LinuxBridge: Bridge, CustomStringConvertible, @unchecked Send
   public func register(
     groupAddress: EUI48,
     etherType: UInt16,
-    controller: isolated MRPController<Port>
+    controller: MRPController<Port>
   ) async throws {
     guard _isLinkLocal(macAddress: groupAddress) else { return }
     _linkLocalRegistrations.insert(FilterRegistration(
@@ -585,7 +581,7 @@ public final class LinuxBridge: Bridge, CustomStringConvertible, @unchecked Send
   public func deregister(
     groupAddress: EUI48,
     etherType: UInt16,
-    controller: isolated MRPController<Port>
+    controller: MRPController<Port>
   ) async throws {
     guard _isLinkLocal(macAddress: groupAddress) else { return }
     _linkLocalRegistrations.remove(FilterRegistration(
@@ -594,7 +590,7 @@ public final class LinuxBridge: Bridge, CustomStringConvertible, @unchecked Send
     ))
   }
 
-  public func run(controller: isolated MRPController<Port>) async throws {
+  public func run(controller: MRPController<Port>) async throws {
     _bridgePort = try await _getBridgePort(name: _bridgeName)
     _bridgeIndex = _bridgePort!._rtnl.index
 
@@ -646,7 +642,7 @@ public final class LinuxBridge: Bridge, CustomStringConvertible, @unchecked Send
     _bridgeIndex = 0
   }
 
-  public func shutdown(controller: isolated MRPController<Port>) async throws {
+  public func shutdown(controller: MRPController<Port>) async throws {
     try _shutdown()
   }
 
@@ -663,7 +659,7 @@ public final class LinuxBridge: Bridge, CustomStringConvertible, @unchecked Send
   public func tx(
     _ packet: IEEE802Packet,
     on port: P,
-    controller: isolated MRPController<Port>
+    controller: MRPController<Port>
   ) async throws {
     let address = _makeLinkLayerAddressBytes(
       macAddress: packet.destMacAddress,
@@ -679,7 +675,7 @@ public final class LinuxBridge: Bridge, CustomStringConvertible, @unchecked Send
     ))
   }
 
-  public var rxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)> {
+  public nonisolated var rxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)> {
     _rxPacketsChannel.eraseToAnyAsyncSequence()
   }
 
@@ -835,7 +831,9 @@ extension LinuxBridge: MSRPAwareBridge {
     return qDisc.srClassPriorityMap?.1
   }
 
-  var srClassPriorityMapNotifications: AnyAsyncSequence<SRClassPriorityMapNotification<Port>> {
+  nonisolated var srClassPriorityMapNotifications: AnyAsyncSequence<
+    SRClassPriorityMapNotification<Port>
+  > {
     _srClassPriorityMapNotificationChannel.eraseToAnyAsyncSequence()
   }
 
