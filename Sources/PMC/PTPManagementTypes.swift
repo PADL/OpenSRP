@@ -179,6 +179,8 @@ struct PTPManagementTLV: SerDes, Sendable {
         return try DefaultDataSet(deserializationContext: &deserializationContext)
       case .PORT_DATA_SET:
         return try PortDataSet(deserializationContext: &deserializationContext)
+      case .PORT_DATA_SET_NP:
+        return try PortDataSetNP(deserializationContext: &deserializationContext)
       case .PORT_PROPERTIES_NP:
         return try PortPropertiesNP(deserializationContext: &deserializationContext)
       default:
@@ -486,5 +488,30 @@ public struct PortPropertiesNP: PTPManagementRepresentable {
     portState = try PTP.PortState(deserializationContext: &deserializationContext)
     timestamping = try Timestamping(deserializationContext: &deserializationContext)
     interface = try PTP.PTPText(deserializationContext: &deserializationContext)
+  }
+}
+
+public struct PortDataSetNP: PTPManagementRepresentable {
+  static var managementId: PTPManagementID { .PORT_DATA_SET_NP }
+
+  public let neighborPropDelayThresh: UInt32
+  public let asCapable: Int32
+
+  init(
+    neighborPropDelayThresh: UInt32,
+    asCapable: Int32
+  ) {
+    self.neighborPropDelayThresh = neighborPropDelayThresh
+    self.asCapable = asCapable
+  }
+
+  public func serialize(into serializationContext: inout IEEE802.SerializationContext) throws {
+    serializationContext.serialize(uint32: neighborPropDelayThresh)
+    serializationContext.serialize(int32: asCapable)
+  }
+
+  public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
+    neighborPropDelayThresh = try deserializationContext.deserialize()
+    asCapable = try deserializationContext.deserialize()
   }
 }
