@@ -46,7 +46,7 @@ private final class MRPDaemon: AsyncParsableCommand {
   var nfGroup: Int = 10
 
   @Option(name: .shortAndLong, help: "QDisc handle")
-  var qDiscHandle: Int = 0x9000
+  var qDiscHandle: UInt16 = 0x9000
 
   @Flag(name: .long, help: "Force ports to advertise as AVB capable")
   var forceAvbCapable: Bool = false

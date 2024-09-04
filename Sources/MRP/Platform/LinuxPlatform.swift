@@ -396,7 +396,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible, @unchecked Sendable {
 
   fileprivate let _nlLinkSocket: NLSocket
   private let _nlNfLog: NFNLLog
-  private let _nlQDiscHandle: Int?
+  private let _nlQDiscHandle: UInt16?
   private var _nlNfLogMonitorTask: Task<(), Error>!
   private var _nlLinkMonitorTask: Task<(), Error>!
   private let _bridgeName: String
@@ -414,7 +414,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible, @unchecked Sendable {
   public init(
     name: String,
     netFilterGroup group: Int,
-    qDiscHandle: Int? = nil,
+    qDiscHandle: UInt16? = nil,
     ptpManagementClientSocketPath: String? = nil
   ) async throws {
     _bridgeName = name
@@ -460,10 +460,10 @@ public actor LinuxBridge: Bridge, CustomStringConvertible, @unchecked Sendable {
 
   private func _handleTCNotification(_ tcMessage: RTNLTCMessage) throws {
     // all we are really interested is in SR class remappings
-    guard let qdisc = tcMessage.tc as? RTNLMQPrioQDisc,
+    guard let qDisc = tcMessage.tc as? RTNLMQPrioQDisc,
           let _nlQDiscHandle,
-          qdisc.parent == _nlQDiscHandle,
-          let srClassPriorityMap = qdisc.srClassPriorityMap else { return }
+          qDisc.handle >> 16 == _nlQDiscHandle,
+          let srClassPriorityMap = qDisc.srClassPriorityMap else { return }
     let tcNotification: SRClassPriorityMapNotification<Port> = if case .new = tcMessage {
       .added(srClassPriorityMap)
     } else {
@@ -802,12 +802,12 @@ extension LinuxBridge: MSRPAwareBridge {
     hiCredit: Int,
     loCredit: Int
   ) async throws {
-    guard let parent = _nlQDiscHandle else {
+    guard let _nlQDiscHandle else {
       throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
     }
     try await port._rtnl.add(
-      handle: 1 + UInt32(_mapSRClassIDToTC(srClass)),
-      parent: UInt32(parent),
+      handle: 0, // this allows the kernel to assign a handle
+      parent: UInt32(_nlQDiscHandle) << 16 | UInt32(1 + _mapSRClassIDToTC(srClass)),
       hiCredit: Int32(hiCredit),
       loCredit: Int32(loCredit),
       idleSlope: Int32(idleSlope),
@@ -823,8 +823,8 @@ extension LinuxBridge: MSRPAwareBridge {
     ).filter { $0.index == port.id }.collect()
 
     guard let qDisc = qDiscs.compactMap({ $0 as? RTNLMQPrioQDisc }).first,
-          let parent = _nlQDiscHandle,
-          qDisc.handle >> 16 == parent
+          let _nlQDiscHandle,
+          qDisc.handle >> 16 == _nlQDiscHandle
     else {
       return nil
     }
