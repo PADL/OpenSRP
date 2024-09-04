@@ -35,6 +35,7 @@ enum MRPError: Error {
   case internalError
   case participantNotFound
   case portAlreadyExists
+  case portLatencyIsNegative
   case portNotFound
   case unknownApplication
   case unknownAttributeType

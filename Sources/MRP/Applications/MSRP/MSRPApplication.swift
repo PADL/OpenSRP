@@ -730,12 +730,16 @@ extension MSRPApplication {
       }
 
       var accumulatedLatency = accumulatedLatency
-      if let portTcMaxLatency = try? await port
-        .getPortTcMaxLatency(for: priorityAndRank.dataFramePriority), portTcMaxLatency > 0,
-        portTcMaxLatency < UInt32.max
-      {
+      do {
+        let portTcMaxLatency = try await port
+          .getPortTcMaxLatency(for: priorityAndRank.dataFramePriority)
+        guard portTcMaxLatency >= 0 else { throw MRPError.portLatencyIsNegative }
         accumulatedLatency += UInt32(portTcMaxLatency)
-      } else {
+      } catch {
+        _logger
+          .error(
+            "MSRP: failed to request max latency for \(port) priority \(priorityAndRank.dataFramePriority): \(error)"
+          )
         accumulatedLatency += 500 // clause 35.2.2.8.6, 500ns default
       }
 
