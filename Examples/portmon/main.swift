@@ -48,7 +48,7 @@ actor PortMonitor {
   }
 
   func run() async throws {
-    let bridge = try B(
+    let bridge = try await B(
       name: CommandLine.arguments.count > 1 ? CommandLine
         .arguments[1] : "br0",
       netFilterGroup: 10

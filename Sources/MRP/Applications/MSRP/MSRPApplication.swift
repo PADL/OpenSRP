@@ -729,8 +729,15 @@ extension MSRPApplication {
         return
       }
 
-      let accumulatedLatency = accumulatedLatency +
-        UInt32(port.getPortTcMaxLatency(for: priorityAndRank.dataFramePriority))
+      var accumulatedLatency = accumulatedLatency
+      if let portTcMaxLatency = try? await port
+        .getPortTcMaxLatency(for: priorityAndRank.dataFramePriority), portTcMaxLatency > 0,
+        portTcMaxLatency < UInt32.max
+      {
+        accumulatedLatency += UInt32(portTcMaxLatency)
+      } else {
+        accumulatedLatency += 500 // clause 35.2.2.8.6, 500ns default
+      }
 
       if declarationType == .talkerAdvertise {
         do {

@@ -28,7 +28,8 @@ public enum PTP {
     case responseMessageTypeMismatch
     case unknownMessageType
     case unknownEnumerationValue
-    case unknownPTPVersion
+    case unknownPort
+    case unknownVersion
     case unknownTLVType
     case unsupportedManagementID
     case valueTooLarge

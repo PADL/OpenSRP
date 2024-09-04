@@ -111,7 +111,11 @@ private final class MRPDaemon: AsyncParsableCommand {
     logger = Logger(label: "com.padl.mrpd")
     logger.logLevel = logLevel
 
-    let bridge = try B(name: bridgeInterface, netFilterGroup: nfGroup, qDiscHandle: qDiscHandle)
+    let bridge = try await B(
+      name: bridgeInterface,
+      netFilterGroup: nfGroup,
+      qDiscHandle: qDiscHandle
+    )
     let controller = try await MRPController<P>(
       bridge: bridge,
       logger: logger,

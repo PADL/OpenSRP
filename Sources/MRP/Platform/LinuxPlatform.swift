@@ -26,6 +26,7 @@ import IEEE802
 import IORing
 import IORingUtils
 import NetLink
+import PMC
 import SocketAddress
 import SystemPackage
 
@@ -339,8 +340,17 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
     return _channels.current.tx > 2 || _channels.current.combined > 2
   }
 
-  public func getPortTcMaxLatency(for: SRclassPriority) -> Int {
-    500
+  private func _getMeanLinkDelay() async throws -> PTP.TimeInterval {
+    guard let _bridge else { throw MRPError.internalError }
+    let portNumber = try await _bridge._getPtpPortProperties(for: self).portIdentity.portNumber
+    let portDataSet = try await _bridge._pmc.getPortDataSet(portNumber: portNumber)
+    return portDataSet.meanLinkDelay
+  }
+
+  public func getPortTcMaxLatency(for: SRclassPriority) async throws -> Int {
+    // PTP timeinterval is nanoseconds * (1 << 16)
+    let meanLinkDelay = try await _getMeanLinkDelay()
+    return Int(meanLinkDelay >> 16)
   }
 }
 
@@ -381,8 +391,7 @@ private extension LinuxPort {
   }
 }
 
-public final class LinuxBridge: Bridge, CustomStringConvertible, @unchecked
-Sendable {
+public final class LinuxBridge: Bridge, CustomStringConvertible, @unchecked Sendable {
   public typealias Port = LinuxPort
 
   fileprivate let _nlLinkSocket: NLSocket
@@ -399,12 +408,20 @@ Sendable {
   private var _linkLocalRxTasks = [LinkLocalRXTaskKey: Task<(), Error>]()
   private let _srClassPriorityMapNotificationChannel =
     AsyncChannel<SRClassPriorityMapNotification<Port>>()
+  fileprivate let _pmc: PTPManagementClient
+  private var _portPropertiesCache = [Port.ID: PortPropertiesNP]()
 
-  public init(name: String, netFilterGroup group: Int, qDiscHandle: Int? = nil) throws {
+  public init(
+    name: String,
+    netFilterGroup group: Int,
+    qDiscHandle: Int? = nil,
+    ptpManagementClientSocketPath: String? = nil
+  ) async throws {
     _bridgeName = name
     _nlLinkSocket = try NLSocket(protocol: NETLINK_ROUTE)
     _nlNfLog = try NFNLLog(group: UInt16(group))
     _nlQDiscHandle = qDiscHandle
+    _pmc = try await PTPManagementClient(path: ptpManagementClientSocketPath)
   }
 
   deinit {
@@ -820,6 +837,21 @@ extension LinuxBridge: MSRPAwareBridge {
 
   var srClassPriorityMapNotifications: AnyAsyncSequence<SRClassPriorityMapNotification<Port>> {
     _srClassPriorityMapNotificationChannel.eraseToAnyAsyncSequence()
+  }
+
+  fileprivate func _getPtpPortProperties(for port: Port) async throws -> PortPropertiesNP {
+    if let portProperties = _portPropertiesCache[port.id] { return portProperties }
+    let defaultDataSet = try await _pmc.getDefaultDataSet()
+    for portNumber in 1...defaultDataSet.numberPorts {
+      if let portProperties = try? await _pmc.getPortPropertiesNP(portNumber: portNumber),
+         portProperties.interface.description == port.name
+      {
+        _portPropertiesCache[port.id] = portProperties
+        return portProperties
+      }
+    }
+    _portPropertiesCache[port.id] = nil
+    throw PTP.Error.unknownPort
   }
 }
 
