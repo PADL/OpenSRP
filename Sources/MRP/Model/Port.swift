@@ -43,7 +43,7 @@ public typealias SRClassPriorityMap = [SRclassID: SRclassPriority]
 
 public protocol AVBPort: Port {
   var isAvbCapable: Bool { get }
-  var isAsCapable: Bool { get }
+  var isAsCapable: Bool { get async throws }
 
   func getPortTcMaxLatency(for: SRclassPriority) async throws -> Int
 }
