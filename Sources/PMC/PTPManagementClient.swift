@@ -228,6 +228,42 @@ public actor PTPManagementClient {
     )
   }
 
+  public func getTime(
+    domainNumber: UInt8 = 0
+  ) async throws -> Time {
+    try await _request(domainNumber: domainNumber, action: .get, managementId: .TIME)
+  }
+
+  public func getClockAccuracy(
+    domainNumber: UInt8 = 0
+  ) async throws -> ClockAccuracy {
+    try await _request(domainNumber: domainNumber, action: .get, managementId: .CLOCK_ACCURACY)
+  }
+
+  public func getPriority1(
+    domainNumber: UInt8 = 0
+  ) async throws -> Priority1 {
+    try await _request(domainNumber: domainNumber, action: .get, managementId: .PRIORITY1)
+  }
+
+  public func getPriority2(
+    domainNumber: UInt8 = 0
+  ) async throws -> Priority2 {
+    try await _request(domainNumber: domainNumber, action: .get, managementId: .PRIORITY2)
+  }
+
+  public func getPortDataSetNP(
+    domainNumber: UInt8 = 0,
+    portNumber: UInt16
+  ) async throws -> PortDataSetNP {
+    try await _request(
+      domainNumber: domainNumber,
+      targetPortIdentity: PTP.PortIdentity(portNumber: portNumber),
+      action: .get,
+      managementId: .PORT_DATA_SET_NP
+    )
+  }
+
   public func getPortPropertiesNP(
     domainNumber: UInt8 = 0,
     portNumber: UInt16
@@ -238,11 +274,5 @@ public actor PTPManagementClient {
       action: .get,
       managementId: .PORT_PROPERTIES_NP
     )
-  }
-
-  public func getTime(
-    domainNumber: UInt8 = 0
-  ) async throws -> Time {
-    try await _request(domainNumber: domainNumber, action: .get, managementId: .TIME)
   }
 }

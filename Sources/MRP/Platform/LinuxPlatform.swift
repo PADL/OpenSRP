@@ -352,6 +352,15 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
     let meanLinkDelay = try await _getMeanLinkDelay()
     return Int(meanLinkDelay >> 16)
   }
+
+  public var isAsCapable: Bool {
+    get async throws {
+      guard let _bridge else { throw MRPError.internalError }
+      let portNumber = try await _bridge._getPtpPortProperties(for: self).portIdentity.portNumber
+      let portDataSet = try await _bridge._pmc.getPortDataSetNP(portNumber: portNumber)
+      return portDataSet.asCapable != 0
+    }
+  }
 }
 
 private extension LinuxPort {
