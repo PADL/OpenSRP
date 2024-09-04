@@ -84,6 +84,9 @@ private final class MRPDaemon: AsyncParsableCommand {
   @Flag(name: .long, help: "Enable MSRP")
   var enableMSRP: Bool = false
 
+  @Option(name: .long, help: "PTP management client domain socket path")
+  var pmcUdsPath: String? = nil
+
   enum CodingKeys: String, CodingKey {
     case bridgeInterface
     case nfGroup
@@ -100,6 +103,7 @@ private final class MRPDaemon: AsyncParsableCommand {
     case enableMMRP
     case enableMVRP
     case enableMSRP
+    case pmcUdsPath
   }
 
   var logger: Logger!
@@ -114,7 +118,8 @@ private final class MRPDaemon: AsyncParsableCommand {
     let bridge = try await B(
       name: bridgeInterface,
       netFilterGroup: nfGroup,
-      qDiscHandle: qDiscHandle
+      qDiscHandle: qDiscHandle,
+      ptpManagementClientSocketPath: pmcUdsPath
     )
     let controller = try await MRPController<P>(
       bridge: bridge,
