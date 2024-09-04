@@ -72,8 +72,7 @@ public actor PTPManagementClient {
   }
   #else
   private func _tx(_ buffer: [UInt8]) async throws {
-    fatalError("not implemented for platform")
-    throw Errno.notSupported
+    throw PTP.Error.notImplemented
   }
   #endif
 
@@ -100,7 +99,7 @@ public actor PTPManagementClient {
     let result: Result<PTPManagementRepresentable, Error> = result.flatMap { result in
       Result(catching: {
         guard result.actionField == .response || result.actionField == .acknowledge else {
-          throw Errno.invalidArgument
+          throw PTP.Error.invalidManagementActionField
         }
         return try result.managementTLV.data
       })
@@ -129,7 +128,7 @@ public actor PTPManagementClient {
         }
       }
     }, onCancel: {
-      Task { await _resume(sequenceId: sequenceId, with: .failure(Errno.canceled)) }
+      Task { await _resume(sequenceId: sequenceId, with: .failure(CancellationError())) }
     })
   }
 
@@ -156,7 +155,7 @@ public actor PTPManagementClient {
       managementTLV: managementTLV
     )
     guard let response = try await _request(request) as? T else {
-      throw Errno.invalidArgument
+      throw PTP.Error.responseMessageTypeMismatch
     }
     return response
   }

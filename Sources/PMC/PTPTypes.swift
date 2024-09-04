@@ -18,6 +18,22 @@ import IEEE802
 import SystemPackage
 
 public enum PTP {
+  public enum Error: Swift.Error {
+    case invalidManagementActionField
+    case invalidManagementTLVType
+    case invalidManagementTLVLength
+    case messageTruncated
+    case notImplemented
+    case ptpVersionUnsupported
+    case responseMessageTypeMismatch
+    case unknownMessageType
+    case unknownEnumerationValue
+    case unknownPTPVersion
+    case unknownTLVType
+    case unsupportedManagementID
+    case valueTooLarge
+  }
+
   public enum PtpVersion: UInt8, SerDes, Sendable {
     case v1 = 1
     case v2 = 2
@@ -29,7 +45,7 @@ public enum PTP {
     public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
       let rawValue: RawValue = try deserializationContext.deserialize()
       guard let value = Self(rawValue: rawValue) else {
-        throw Errno.invalidArgument
+        throw Error.unknownEnumerationValue
       }
       self = value
     }
@@ -54,7 +70,7 @@ public enum PTP {
     public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
       let rawValue: RawValue = try deserializationContext.deserialize()
       guard let value = Self(rawValue: rawValue) else {
-        throw Errno.invalidArgument
+        throw Error.unknownEnumerationValue
       }
       self = value
     }
@@ -75,7 +91,7 @@ public enum PTP {
     init(deserializationContext: inout IEEE802.DeserializationContext) throws {
       let rawValue: RawValue = try deserializationContext.deserialize()
       guard let value = Self(rawValue: rawValue) else {
-        throw Errno.invalidArgument
+        throw Error.unknownEnumerationValue
       }
       self = value
     }
@@ -95,7 +111,7 @@ public enum PTP {
     public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
       let rawValue: RawValue = try deserializationContext.deserialize()
       guard let value = Self(rawValue: rawValue) else {
-        throw Errno.invalidArgument
+        throw Error.unknownEnumerationValue
       }
       self = value
     }
@@ -175,7 +191,7 @@ public enum PTP {
     public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
       let rawValue: RawValue = try deserializationContext.deserialize()
       guard let value = Self(rawValue: rawValue) else {
-        throw Errno.invalidArgument
+        throw Error.unknownEnumerationValue
       }
       self = value
     }
@@ -422,7 +438,7 @@ public enum PTP {
     init(deserializationContext: inout IEEE802.DeserializationContext) throws {
       let rawValue: RawValue = try deserializationContext.deserialize()
       guard let value = Self(rawValue: rawValue) else {
-        throw Errno.invalidArgument
+        throw Error.unknownEnumerationValue
       }
       self = value
     }
@@ -511,7 +527,7 @@ public enum PTP {
     }
 
     public func serialize(into serializationContext: inout IEEE802.SerializationContext) throws {
-      guard text.count <= UInt8.max else { throw Errno.outOfRange }
+      guard text.count <= UInt8.max else { throw Error.valueTooLarge }
       serializationContext.serialize(uint8: UInt8(text.count))
       serializationContext.serialize(text)
     }
@@ -586,7 +602,7 @@ public enum PTP {
     public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
       let rawValue: RawValue = try deserializationContext.deserialize()
       guard let value = Self(rawValue: rawValue) else {
-        throw Errno.invalidArgument
+        throw Error.unknownEnumerationValue
       }
       self = value
     }
@@ -616,7 +632,7 @@ public enum PTP {
     public static let Size = 34
 
     let majorSdoId_messageType: UInt8
-    public let versionPTP: UInt8
+    public let versionPTP: PtpVersion
     public let messageLength: UInt16
     public let domainNumber: UInt8
     public let minorSdoId: UInt8
@@ -628,10 +644,6 @@ public enum PTP {
     public let sequenceId: UInt16
     let controlField: ControlField
     public let logMessageInterval: UInt8
-
-    public var ptpVersion: PtpVersion {
-      PtpVersion(rawValue: versionPTP)!
-    }
 
     public var majorSdoId: UInt8 {
       majorSdoId_messageType & Self.MajorSdoIdMask >> 4
@@ -660,7 +672,7 @@ public enum PTP {
 
     init(
       majorSdoId_messageType: UInt8,
-      versionPTP: UInt8,
+      versionPTP: PtpVersion,
       messageLength: UInt16,
       domainNumber: UInt8,
       minorSdoId: UInt8,
@@ -709,7 +721,7 @@ public enum PTP {
         majorSdoId_messageType: (majorSdoId.rawValue << 4) & Self.MajorSdoIdMask | messageType
           .rawValue & Self
           .MessageTypeMask,
-        versionPTP: versionPTP.rawValue,
+        versionPTP: versionPTP,
         messageLength: messageLength,
         domainNumber: domainNumber,
         minorSdoId: minorSdoId,
@@ -726,7 +738,7 @@ public enum PTP {
 
     public func serialize(into serializationContext: inout IEEE802.SerializationContext) throws {
       serializationContext.serialize(uint8: majorSdoId_messageType)
-      serializationContext.serialize(uint8: versionPTP)
+      try versionPTP.serialize(into: &serializationContext)
       serializationContext.serialize(uint16: messageLength)
       serializationContext.serialize(uint8: domainNumber)
       serializationContext.serialize(uint8: minorSdoId)
@@ -748,18 +760,12 @@ public enum PTP {
     public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
       majorSdoId_messageType = try deserializationContext.deserialize()
       guard MessageType(rawValue: majorSdoId_messageType & Self.MessageTypeMask) != nil else {
-        throw Errno.invalidArgument
+        throw Error.unknownMessageType
       }
-      versionPTP = try deserializationContext.deserialize()
-      guard PtpVersion(rawValue: versionPTP) != nil else {
-        throw Errno.invalidArgument
-      }
+      versionPTP = try PtpVersion(deserializationContext: &deserializationContext)
       messageLength = try deserializationContext.deserialize()
       guard messageLength <= deserializationContext.count else {
-        debugPrint(
-          "PTP message length \(messageLength) less than buffer count \(deserializationContext.count)"
-        )
-        throw Errno.outOfRange
+        throw Error.messageTruncated
       }
       domainNumber = try deserializationContext.deserialize()
       minorSdoId = try deserializationContext.deserialize()
@@ -800,7 +806,7 @@ public enum PTP {
     public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
       let rawValue: RawValue = try deserializationContext.deserialize()
       guard let value = Self(rawValue: rawValue) else {
-        throw Errno.invalidArgument
+        throw Error.unknownEnumerationValue
       }
       self = value
     }
@@ -873,11 +879,11 @@ public enum PTP {
       boundaryHops = try deserializationContext.deserialize()
       reserved_actionField = try deserializationContext.deserialize()
       guard ActionField(rawValue: reserved_actionField) != nil else {
-        throw Errno.invalidArgument
+        throw Error.invalidManagementActionField
       }
       reserved = try deserializationContext.deserialize()
       guard let tlvType = try TLVType(rawValue: deserializationContext.peek()) else {
-        throw Errno.invalidArgument
+        throw Error.unknownTLVType
       }
 
       switch tlvType {
@@ -888,7 +894,7 @@ public enum PTP {
           try PTPManagementErrorStatusTLV(deserializationContext: &deserializationContext)
         throw managementErrorStatus.managementErrorId
       default:
-        throw Errno.invalidArgument
+        throw Error.invalidManagementTLVType
       }
     }
   }

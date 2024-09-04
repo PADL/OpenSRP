@@ -36,7 +36,7 @@ public enum PTPManagementError: UInt16, Error, SerDes, Sendable {
   public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
     let rawValue: RawValue = try deserializationContext.deserialize()
     guard let value = Self(rawValue: rawValue) else {
-      throw Errno.invalidArgument
+      throw PTP.Error.unknownEnumerationValue
     }
     self = value
   }
@@ -110,7 +110,7 @@ enum PTPManagementID: UInt16, SerDes, Sendable {
   init(deserializationContext: inout IEEE802.DeserializationContext) throws {
     let rawValue: RawValue = try deserializationContext.deserialize()
     guard let value = Self(rawValue: rawValue) else {
-      throw Errno.invalidArgument
+      throw PTP.Error.unknownEnumerationValue
     }
     self = value
   }
@@ -150,7 +150,7 @@ struct PTPManagementTLV: SerDes, Sendable {
     tlvType = try PTP.TLVType(deserializationContext: &deserializationContext)
     let lengthField: UInt16 = try deserializationContext.deserialize()
     guard lengthField >= 2 else {
-      throw Errno.outOfRange
+      throw PTP.Error.invalidManagementTLVLength
     }
     self.lengthField = lengthField
     managementId = try PTPManagementID(deserializationContext: &deserializationContext)
@@ -174,7 +174,7 @@ struct PTPManagementTLV: SerDes, Sendable {
       case .PORT_PROPERTIES_NP:
         return try PortPropertiesNP(deserializationContext: &deserializationContext)
       default:
-        throw Errno.notSupported
+        throw PTP.Error.unsupportedManagementID
       }
     }
   }
@@ -202,7 +202,7 @@ struct PTPManagementErrorStatusTLV: SerDes, Sendable {
     tlvType = try PTP.TLVType(deserializationContext: &deserializationContext)
     let lengthField: UInt16 = try deserializationContext.deserialize()
     guard lengthField >= 8 else {
-      throw Errno.outOfRange
+      throw PTP.Error.invalidManagementTLVLength
     }
     self.lengthField = lengthField
     managementErrorId = try PTPManagementError(deserializationContext: &deserializationContext)
@@ -373,7 +373,7 @@ public struct PortPropertiesNP: PTPManagementRepresentable {
     public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
       let rawValue: RawValue = try deserializationContext.deserialize()
       guard let value = Self(rawValue: rawValue) else {
-        throw Errno.invalidArgument
+        throw PTP.Error.unknownEnumerationValue
       }
       self = value
     }
