@@ -239,4 +239,10 @@ public actor PTPManagementClient {
       managementId: .PORT_PROPERTIES_NP
     )
   }
+
+  public func getTime(
+    domainNumber: UInt8 = 0
+  ) async throws -> Time {
+    try await _request(domainNumber: domainNumber, action: .get, managementId: .TIME)
+  }
 }

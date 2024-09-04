@@ -167,6 +167,14 @@ struct PTPManagementTLV: SerDes, Sendable {
       switch managementId {
       case .NULL_PTP_MANAGEMENT:
         return try Null(deserializationContext: &deserializationContext)
+      case .TIME:
+        return try Time(deserializationContext: &deserializationContext)
+      case .PRIORITY1:
+        return try Priority1(deserializationContext: &deserializationContext)
+      case .PRIORITY2:
+        return try Priority2(deserializationContext: &deserializationContext)
+      case .CLOCK_ACCURACY:
+        return try ClockAccuracy(deserializationContext: &deserializationContext)
       case .DEFAULT_DATA_SET:
         return try DefaultDataSet(deserializationContext: &deserializationContext)
       case .PORT_DATA_SET:
@@ -284,6 +292,88 @@ public struct DefaultDataSet: PTPManagementRepresentable {
     clockIdentity = try PTP.ClockIdentity(deserializationContext: &deserializationContext)
     domainNumber = try deserializationContext.deserialize()
     reserved2 = try deserializationContext.deserialize()
+  }
+}
+
+public struct Time: PTPManagementRepresentable {
+  static var managementId: PTPManagementID { .TIME }
+
+  public let timestamp: PTP.Timestamp
+
+  init(timestamp: PTP.Timestamp) { self.timestamp = timestamp }
+
+  public func serialize(into serializationContext: inout IEEE802.SerializationContext) throws {
+    try timestamp.serialize(into: &serializationContext)
+  }
+
+  public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
+    timestamp = try PTP.Timestamp(deserializationContext: &deserializationContext)
+  }
+}
+
+public struct ClockAccuracy: PTPManagementRepresentable {
+  static var managementId: PTPManagementID { .CLOCK_ACCURACY }
+
+  public let clockAccuracy: UInt8
+  public let reserved: UInt8
+
+  init(clockAccuracy: UInt8) {
+    self.clockAccuracy = clockAccuracy
+    reserved = 0
+  }
+
+  public func serialize(into serializationContext: inout IEEE802.SerializationContext) throws {
+    serializationContext.serialize(uint8: clockAccuracy)
+    serializationContext.serialize(uint8: reserved)
+  }
+
+  public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
+    clockAccuracy = try deserializationContext.deserialize()
+    reserved = try deserializationContext.deserialize()
+  }
+}
+
+public struct Priority1: PTPManagementRepresentable {
+  static var managementId: PTPManagementID { .PRIORITY1 }
+
+  public let priority1: UInt8
+  public let reserved: UInt8
+
+  init(priority1: UInt8) {
+    self.priority1 = priority1
+    reserved = 0
+  }
+
+  public func serialize(into serializationContext: inout IEEE802.SerializationContext) throws {
+    serializationContext.serialize(uint8: priority1)
+    serializationContext.serialize(uint8: reserved)
+  }
+
+  public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
+    priority1 = try deserializationContext.deserialize()
+    reserved = try deserializationContext.deserialize()
+  }
+}
+
+public struct Priority2: PTPManagementRepresentable {
+  static var managementId: PTPManagementID { .PRIORITY2 }
+
+  public let priority2: UInt8
+  public let reserved: UInt8
+
+  init(priority2: UInt8) {
+    self.priority2 = priority2
+    reserved = 0
+  }
+
+  public func serialize(into serializationContext: inout IEEE802.SerializationContext) throws {
+    serializationContext.serialize(uint8: priority2)
+    serializationContext.serialize(uint8: reserved)
+  }
+
+  public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
+    priority2 = try deserializationContext.deserialize()
+    reserved = try deserializationContext.deserialize()
   }
 }
 
