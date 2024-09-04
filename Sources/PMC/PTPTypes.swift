@@ -26,6 +26,7 @@ public enum PTP {
     case notImplemented
     case ptpVersionUnsupported
     case responseMessageTypeMismatch
+    case responseTimedOut
     case unknownMessageType
     case unknownEnumerationValue
     case unknownPort

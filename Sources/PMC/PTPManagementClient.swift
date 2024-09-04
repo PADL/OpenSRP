@@ -154,10 +154,12 @@ public actor PTPManagementClient {
       actionField: actionField,
       managementTLV: managementTLV
     )
-    guard let response = try await _request(request) as? T else {
-      throw PTP.Error.responseMessageTypeMismatch
+    return try await withThrowingTimeout(of: .seconds(0.1)) {
+      guard let response = try await self._request(request) as? T else {
+        throw PTP.Error.responseMessageTypeMismatch
+      }
+      return response
     }
-    return response
   }
 
   private func _request<T: PTPManagementRepresentable>(
