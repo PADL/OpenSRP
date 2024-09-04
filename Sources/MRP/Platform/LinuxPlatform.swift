@@ -401,7 +401,7 @@ private extension LinuxPort {
 }
 
 public actor LinuxBridge: Bridge, CustomStringConvertible {
-  public typealias Port = LinuxPort
+  public typealias P = LinuxPort
 
   fileprivate let _nlLinkSocket: NLSocket
   private let _nlNfLog: NFNLLog
@@ -410,15 +410,15 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   private var _nlLinkMonitorTask: Task<(), Error>!
   private let _bridgeName: String
   private var _bridgeIndex: Int = 0
-  private var _bridgePort: Port?
-  private let _portNotificationChannel = AsyncChannel<PortNotification<Port>>()
-  private let _rxPacketsChannel = AsyncThrowingChannel<(Port.ID, IEEE802Packet), Error>()
+  private var _bridgePort: P?
+  private let _portNotificationChannel = AsyncChannel<PortNotification<P>>()
+  private let _rxPacketsChannel = AsyncThrowingChannel<(P.ID, IEEE802Packet), Error>()
   private var _linkLocalRegistrations = Set<FilterRegistration>()
   private var _linkLocalRxTasks = [LinkLocalRXTaskKey: Task<(), Error>]()
   private let _srClassPriorityMapNotificationChannel =
-    AsyncChannel<SRClassPriorityMapNotification<Port>>()
+    AsyncChannel<SRClassPriorityMapNotification<P>>()
   fileprivate let _pmc: PTPManagementClient
-  private var _portPropertiesCache = [Port.ID: PortPropertiesNP]()
+  private var _portPropertiesCache = [P.ID: PortPropertiesNP]()
 
   public init(
     name: String,
@@ -438,8 +438,8 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   }
 
   private func _handleLinkNotification(_ linkMessage: RTNLLinkMessage) throws {
-    var portNotification: PortNotification<Port>?
-    let port = try Port(rtnl: linkMessage.link, bridge: self)
+    var portNotification: PortNotification<P>?
+    let port = try P(rtnl: linkMessage.link, bridge: self)
     if port._isBridgeSelf, port._rtnl.index == _bridgeIndex {
       if case .new = linkMessage {
         _bridgePort = port
@@ -463,7 +463,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     }
   }
 
-  public nonisolated var notifications: AnyAsyncSequence<PortNotification<Port>> {
+  public nonisolated var notifications: AnyAsyncSequence<PortNotification<P>> {
     _portNotificationChannel.eraseToAnyAsyncSequence()
   }
 
@@ -473,7 +473,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
           let _nlQDiscHandle,
           qDisc.handle >> 16 == _nlQDiscHandle,
           let srClassPriorityMap = qDisc.srClassPriorityMap else { return }
-    let tcNotification: SRClassPriorityMapNotification<Port> = if case .new = tcMessage {
+    let tcNotification: SRClassPriorityMapNotification<P> = if case .new = tcMessage {
       .added(srClassPriorityMap)
     } else {
       .removed(srClassPriorityMap)
@@ -485,7 +485,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     _bridgePort?._pvid
   }
 
-  public func getVlans(controller: isolated MRPController<Port>) async -> Set<VLAN> {
+  public func getVlans(controller: isolated MRPController<P>) async -> Set<VLAN> {
     if let vlans = await _bridgePort?._vlans {
       Set(vlans.map { VLAN(vid: $0) })
     } else {
@@ -497,20 +497,20 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     _bridgePort!.name
   }
 
-  private func _getPorts(family: sa_family_t) async throws -> Set<Port> {
+  private func _getPorts(family: sa_family_t) async throws -> Set<P> {
     try await Set(
-      _nlLinkSocket.getLinks(family: family).map { try Port(rtnl: $0, bridge: self) }
+      _nlLinkSocket.getLinks(family: family).map { try P(rtnl: $0, bridge: self) }
         .collect()
     )
   }
 
-  private func _getMemberPorts() async throws -> Set<Port> {
+  private func _getMemberPorts() async throws -> Set<P> {
     try await _getPorts(family: sa_family_t(AF_BRIDGE)).filter {
       !$0._isBridgeSelf && $0._rtnl.master == _bridgeIndex
     }
   }
 
-  private func _getBridgePort(name: String) async throws -> Port {
+  private func _getBridgePort(name: String) async throws -> P {
     let bridgePorts = try await _getPorts(family: sa_family_t(AF_BRIDGE))
       .filter { $0._isBridgeSelf && $0.name == name }
     guard bridgePorts.count == 1 else {
@@ -519,17 +519,17 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     return bridgePorts.first!
   }
 
-  package var bridgePort: Port {
+  package var bridgePort: P {
     _bridgePort!
   }
 
   private struct LinkLocalRXTaskKey: Hashable {
-    let portID: Port.ID
+    let portID: P.ID
     let filterRegistration: FilterRegistration
   }
 
   private func _allocateLinkLocalRxTask(
-    port: Port,
+    port: P,
     filterRegistration: FilterRegistration
   ) -> Task<(), Error> {
     Task {
@@ -543,7 +543,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     }
   }
 
-  private func _addLinkLocalRxTask(port: Port) throws {
+  private func _addLinkLocalRxTask(port: P) throws {
     precondition(!port._isBridgeSelf)
     for filterRegistration in _linkLocalRegistrations {
       let key = LinkLocalRXTaskKey(portID: port.id, filterRegistration: filterRegistration)
@@ -557,12 +557,12 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     }
   }
 
-  private func _cancelLinkLocalRxTask(port: Port) throws {
+  private func _cancelLinkLocalRxTask(port: P) throws {
     precondition(!port._isBridgeSelf)
     try _cancelLinkLocalRxTask(portID: port.id)
   }
 
-  private func _cancelLinkLocalRxTask(portID: Port.ID) throws {
+  private func _cancelLinkLocalRxTask(portID: P.ID) throws {
     for filterRegistration in _linkLocalRegistrations {
       let key = LinkLocalRXTaskKey(portID: portID, filterRegistration: filterRegistration)
       guard let index = _linkLocalRxTasks.index(forKey: key) else { continue }
@@ -578,7 +578,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   public func register(
     groupAddress: EUI48,
     etherType: UInt16,
-    controller: MRPController<Port>
+    controller: MRPController<P>
   ) async throws {
     guard _isLinkLocal(macAddress: groupAddress) else { return }
     _linkLocalRegistrations.insert(FilterRegistration(
@@ -590,7 +590,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   public func deregister(
     groupAddress: EUI48,
     etherType: UInt16,
-    controller: MRPController<Port>
+    controller: MRPController<P>
   ) async throws {
     guard _isLinkLocal(macAddress: groupAddress) else { return }
     _linkLocalRegistrations.remove(FilterRegistration(
@@ -599,7 +599,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     ))
   }
 
-  public func run(controller: MRPController<Port>) async throws {
+  public func run(controller: MRPController<P>) async throws {
     _bridgePort = try await _getBridgePort(name: _bridgeName)
     _bridgeIndex = _bridgePort!._rtnl.index
 
@@ -651,7 +651,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     _bridgeIndex = 0
   }
 
-  public func shutdown(controller: MRPController<Port>) async throws {
+  public func shutdown(controller: MRPController<P>) async throws {
     try _shutdown()
   }
 
@@ -668,7 +668,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   public func tx(
     _ packet: IEEE802Packet,
     on port: P,
-    controller: MRPController<Port>
+    controller: MRPController<P>
   ) async throws {
     let address = _makeLinkLayerAddressBytes(
       macAddress: packet.destMacAddress,
@@ -816,7 +816,7 @@ extension LinuxBridge: MVRPAwareBridge {
 
 extension LinuxBridge: MSRPAwareBridge {
   func adjustCreditBasedShaper(
-    port: Port,
+    port: P,
     srClass: SRclassID,
     idleSlope: Int,
     sendSlope: Int,
@@ -853,12 +853,12 @@ extension LinuxBridge: MSRPAwareBridge {
   }
 
   nonisolated var srClassPriorityMapNotifications: AnyAsyncSequence<
-    SRClassPriorityMapNotification<Port>
+    SRClassPriorityMapNotification<P>
   > {
     _srClassPriorityMapNotificationChannel.eraseToAnyAsyncSequence()
   }
 
-  fileprivate func _getPtpPortProperties(for port: Port) async throws -> PortPropertiesNP {
+  fileprivate func _getPtpPortProperties(for port: P) async throws -> PortPropertiesNP {
     if let portProperties = _portPropertiesCache[port.id] { return portProperties }
     let defaultDataSet = try await _pmc.getDefaultDataSet()
     for portNumber in 1...defaultDataSet.numberPorts {
