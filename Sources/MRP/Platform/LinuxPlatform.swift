@@ -400,7 +400,7 @@ private extension LinuxPort {
   }
 }
 
-public actor LinuxBridge: Bridge, CustomStringConvertible, @unchecked Sendable {
+public actor LinuxBridge: Bridge, CustomStringConvertible {
   public typealias Port = LinuxPort
 
   fileprivate let _nlLinkSocket: NLSocket
