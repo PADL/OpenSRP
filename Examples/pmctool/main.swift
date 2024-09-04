@@ -28,7 +28,7 @@ typealias CommandHandler = (Command, PTPManagementClient, UInt16) async throws -
 
 func usage() -> Never {
   print(
-    "Usage: \(CommandLine.arguments[0]) [GET_DEFAULT_DATA_SET|GET_DEFAULT_DATA_SET|GET_PORT_DATA_SET|GET_PORT_PROPERTIES_NP] [port]"
+    "Usage: \(CommandLine.arguments[0]) [GET_NULL_PTP_MANAGEMENT|GET_DEFAULT_DATA_SET|GET_PORT_DATA_SET|GET_PORT_PROPERTIES_NP] [port]"
   )
   exit(1)
 }
