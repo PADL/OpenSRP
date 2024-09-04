@@ -283,6 +283,57 @@ public final class RTNLLinkBridge: RTNLLink {
   }
 
   public func add(
+    link: RTNLLink? = nil,
+    fdbEntry macAddress: LinkAddress,
+    updateIfPresent: Bool = true,
+    socket: NLSocket
+  ) async throws {
+    let bridgeIndex: Int?
+    let interfaceIndex: Int
+
+    if let link, link.index != index {
+      bridgeIndex = index
+      interfaceIndex = link.index
+    } else {
+      bridgeIndex = nil
+      interfaceIndex = index
+    }
+
+    try await socket._neighborRequest(
+      bridgeIndex: bridgeIndex,
+      interfaceIndex: interfaceIndex,
+      macAddress: macAddress,
+      moreFlags: _bridgeFlags,
+      operation: updateIfPresent ? .addOrUpdate : .add
+    )
+  }
+
+  public func remove(
+    link: RTNLLink? = nil,
+    fdbEntry macAddress: LinkAddress,
+    socket: NLSocket
+  ) async throws {
+    let bridgeIndex: Int?
+    let interfaceIndex: Int
+
+    if let link, link.index != index {
+      bridgeIndex = index
+      interfaceIndex = link.index
+    } else {
+      bridgeIndex = nil
+      interfaceIndex = index
+    }
+
+    try await socket._neighborRequest(
+      bridgeIndex: bridgeIndex,
+      interfaceIndex: interfaceIndex,
+      macAddress: macAddress,
+      moreFlags: _bridgeFlags,
+      operation: .delete
+    )
+  }
+
+  public func add(
     link: RTNLLink,
     groupAddresses: [LinkAddress],
     vlanID: UInt16? = nil,
@@ -596,6 +647,40 @@ public extension NLSocket {
     for groupAddress in groupAddresses {
       entry.addr.u.mac_addr = groupAddress
       try message.put(opaque: &entry, for: CInt(MDBA_MDB_ENTRY))
+    }
+    try await ackRequest(message: message)
+  }
+
+  fileprivate func _neighborRequest(
+    bridgeIndex: Int? = nil,
+    interfaceIndex: Int,
+    macAddress: RTNLLink.LinkAddress,
+    moreFlags: UInt16 = 0,
+    operation: NLMessage.Operation
+  ) async throws {
+    let message = try NLMessage(
+      socket: self,
+      type: operation != .delete ? RTM_NEWNEIGH : RTM_DELNEIGH,
+      flags: operation.flags
+    )
+    var msg = ndmsg()
+    msg.ndm_ifindex = Int32(interfaceIndex)
+    msg.ndm_family = UInt8(AF_BRIDGE)
+    msg.ndm_state = UInt16(NUD_NOARP | NUD_PERMANENT)
+    msg.ndm_flags = (moreFlags & UInt16(BRIDGE_FLAGS_SELF)) != 0 ? UInt8(NTF_SELF) : 0
+    if let _ = bridgeIndex {
+      msg.ndm_flags |= UInt8(NTF_MASTER)
+    }
+    try withUnsafeBytes(of: &msg) {
+      try message.append(Array($0))
+    }
+    try withUnsafePointer(to: macAddress) { pointer in
+      let start = pointer.propertyBasePointer(to: \.0)!
+      let macAddressBytes = [UInt8](UnsafeBufferPointer(start: start, count: Int(ETH_ALEN)))
+      try message.put(data: macAddressBytes, for: CInt(NDA_LLADDR))
+    }
+    if let bridgeIndex {
+      try message.put(u32: UInt32(bridgeIndex), for: CInt(NDA_MASTER))
     }
     try await ackRequest(message: message)
   }

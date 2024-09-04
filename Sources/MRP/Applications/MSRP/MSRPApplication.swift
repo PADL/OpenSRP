@@ -918,18 +918,14 @@ extension MSRPApplication {
     if talkerRegistration is MSRPTalkerAdvertiseValue,
        declarationType == .listenerReady || declarationType == .listenerReadyFailed
     {
-      _logger.debug("MSRP: registering MDB entries for \(talkerRegistration.dataFrameParameters)")
+      _logger.debug("MSRP: registering FDB entries for \(talkerRegistration.dataFrameParameters)")
       try await bridge.register(
-        groupAddress: talkerRegistration.dataFrameParameters.destinationAddress,
-        vlan: talkerRegistration.dataFrameParameters.vlanIdentifier,
-        on: [participant.port]
+        macAddress: talkerRegistration.dataFrameParameters.destinationAddress
       )
     } else {
-      _logger.debug("MSRP: deregistering MDB entries for \(talkerRegistration.dataFrameParameters)")
+      _logger.debug("MSRP: deregistering FDB entries for \(talkerRegistration.dataFrameParameters)")
       try? await bridge.deregister(
-        groupAddress: talkerRegistration.dataFrameParameters.destinationAddress,
-        vlan: talkerRegistration.dataFrameParameters.vlanIdentifier,
-        from: [participant.port]
+        macAddress: talkerRegistration.dataFrameParameters.destinationAddress
       )
     }
   }

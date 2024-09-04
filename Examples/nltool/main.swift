@@ -24,8 +24,10 @@ import SystemPackage
 enum Command: CaseIterable {
   case add_vlan
   case del_vlan
-  case add_group
-  case del_group
+  case add_fdb
+  case del_fdb
+  case add_mdb
+  case del_mdb
   case add_cbs
   case del_cbs
 }
@@ -34,7 +36,7 @@ typealias CommandHandler = (Command, NLSocket, RTNLLinkBridge, String) async thr
 
 func usage() -> Never {
   print(
-    "Usage: \(CommandLine.arguments[0]) [add_vlan|del_vlan|add_group|del_group|add_cbs|del_cbs] [ifname] [vid|mac-address|parent:handle]"
+    "Usage: \(CommandLine.arguments[0]) [add_vlan|del_vlan|add_fdb|del_fdb|add_mdb|del_mdb|add_cbs|del_cbs] [ifname] [vid|mac-address|parent:handle]"
   )
   exit(1)
 }
@@ -69,7 +71,29 @@ func del_vlan(command: Command, socket: NLSocket, link: RTNLLinkBridge, arg: Str
   try await link.remove(vlans: Set([vlan]), socket: socket)
 }
 
-func add_group(
+func add_fdb(
+  command: Command,
+  socket: NLSocket,
+  link: RTNLLinkBridge,
+  arg: String
+) async throws {
+  let bridge = try await findBridge(index: link.master, socket: socket)
+  let macAddress = try RTNLLink.parseMacAddressString(arg)
+  try await bridge.add(link: link, fdbEntry: macAddress, socket: socket)
+}
+
+func del_fdb(
+  command: Command,
+  socket: NLSocket,
+  link: RTNLLinkBridge,
+  arg: String
+) async throws {
+  let bridge = try await findBridge(index: link.master, socket: socket)
+  let macAddress = try RTNLLink.parseMacAddressString(arg)
+  try await bridge.remove(link: link, fdbEntry: macAddress, socket: socket)
+}
+
+func add_mdb(
   command: Command,
   socket: NLSocket,
   link: RTNLLinkBridge,
@@ -80,7 +104,7 @@ func add_group(
   try await bridge.add(link: link, groupAddresses: [groupAddress], socket: socket)
 }
 
-func del_group(
+func del_mdb(
   command: Command,
   socket: NLSocket,
   link: RTNLLinkBridge,
@@ -158,8 +182,10 @@ enum nltool {
       let commands: [Command: CommandHandler] = [
         .add_vlan: add_vlan,
         .del_vlan: del_vlan,
-        .add_group: add_group,
-        .del_group: del_group,
+        .add_fdb: add_fdb,
+        .del_fdb: del_fdb,
+        .add_mdb: add_mdb,
+        .del_mdb: del_mdb,
         .add_cbs: add_cbs,
         .del_cbs: del_cbs,
       ]

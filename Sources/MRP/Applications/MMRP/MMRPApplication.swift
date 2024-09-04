@@ -21,6 +21,11 @@ import Logging
 public let MMRPEtherType: UInt16 = 0x88F6
 
 protocol MMRPAwareBridge<P>: Bridge where P: Port {
+  // FDB
+  func register(macAddress: EUI48) async throws
+  func deregister(macAddress: EUI48) async throws
+
+  // MDB
   func register(groupAddress: EUI48, vlan: VLAN?, on ports: Set<P>) async throws
   func deregister(groupAddress: EUI48, vlan: VLAN?, from ports: Set<P>) async throws
 
@@ -175,12 +180,14 @@ extension MMRPApplication {
     switch attributeType {
     case .mac:
       let macAddress = (attributeValue as! MMRPMACValue).macAddress
-      guard _isMulticast(macAddress: macAddress) else { throw MRPError.invalidAttributeValue }
       _logger
         .info(
           "MMRP join indication from port \(port) address \(_macAddressToString(macAddress)) isNew \(isNew) source \(eventSource)"
         )
-      try await bridge.register(groupAddress: macAddress, vlan: nil, on: ports)
+      try await bridge.register(macAddress: macAddress)
+      if _isMulticast(macAddress: macAddress) {
+        try await bridge.register(groupAddress: macAddress, vlan: nil, on: ports)
+      }
     case .serviceRequirement:
       try await bridge.register(
         serviceRequirement: attributeValue as! MMRPServiceRequirementValue,
@@ -214,14 +221,16 @@ extension MMRPApplication {
     switch attributeType {
     case .mac:
       let macAddress = (attributeValue as! MMRPMACValue).macAddress
-      guard _isMulticast(macAddress: macAddress) else { throw MRPError.invalidAttributeValue }
       _logger
         .info(
           "MMRP leave indication from port \(port) address \(_macAddressToString(macAddress)) source \(eventSource)"
         )
-      try await bridge.deregister(groupAddress: macAddress, vlan: nil, from: ports)
+      if _isMulticast(macAddress: macAddress) {
+        try? await bridge.deregister(groupAddress: macAddress, vlan: nil, from: ports)
+      }
+      try? await bridge.deregister(macAddress: macAddress)
     case .serviceRequirement:
-      try await bridge.deregister(
+      try? await bridge.deregister(
         serviceRequirement: attributeValue as! MMRPServiceRequirementValue,
         from: ports
       )
