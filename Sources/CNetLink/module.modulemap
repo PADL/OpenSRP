@@ -1,3 +1,0 @@
-module CNetLink {
-  umbrella header "include/CNetLink.h"
-}

@@ -11,60 +11,36 @@ var PlatformCSettings: [CSetting] = []
 var PlatformLinkerSettings: [LinkerSetting] = []
 
 #if os(Linux)
-PlatformPackageDependencies = [.package(
-  url: "https://github.com/PADL/IORingSwift",
-  branch: "main"
-)]
-
-let LocalLibNL = false // use locally built libnl, for debugging
-
-if LocalLibNL {
-  PlatformCSettings = [.unsafeFlags(["-I", "/usr/local/include/libnl3"])]
-  PlatformLinkerSettings = [.unsafeFlags(["-L", "/usr/local/lib"])]
-} else {
-  PlatformCSettings = [.unsafeFlags(["-I", "/usr/include/libnl3"])]
-}
-
-PlatformLinkerSettings += [
-  .linkedLibrary("nl-3"),
-  .linkedLibrary("nl-route-3"),
-  .linkedLibrary("nl-nf-3"),
+PlatformPackageDependencies = [
+  .package(
+    url: "https://github.com/PADL/IORingSwift",
+    branch: "main"
+  ),
+  .package(
+    url: "https://github.com/PADL/NetLinkSwift",
+    branch: "main"
+  ),
 ]
 
 PlatformTargetDependencies = [
-  "NetLink",
+  .product(
+    name: "NetLink",
+    package: "NetLinkSwift"
+  ),
   .product(
     name: "IORing",
-    package: "IORingSwift",
-    condition: .when(platforms: [.linux])
+    package: "IORingSwift"
   ),
   .product(
     name: "IORingUtils",
-    package: "IORingSwift",
-    condition: .when(platforms: [.linux])
+    package: "IORingSwift"
   ),
 ]
 
 PlatformProducts = [
-  .library(
-    name: "NetLink",
-    targets: ["NetLink"]
-  ),
   .executable(
     name: "mrpd",
     targets: ["MRPDaemon"]
-  ),
-  .executable(
-    name: "nldump",
-    targets: ["nldump"]
-  ),
-  .executable(
-    name: "nlmonitor",
-    targets: ["nlmonitor"]
-  ),
-  .executable(
-    name: "nltool",
-    targets: ["nltool"]
   ),
   .executable(
     name: "portmon",
@@ -76,24 +52,6 @@ PlatformProducts = [
   ),
 ]
 PlatformTargets = [
-  .systemLibrary(
-    name: "CNetLink",
-    providers: [
-      .apt(["libnl-3-dev", "libnl-route-3-dev", "libnl-nf-3"]),
-    ]
-  ),
-  .target(
-    name: "NetLink",
-    dependencies: ["CNetLink",
-                   "Locking",
-                   .product(name: "CLinuxSockAddr", package: "SocketAddress"),
-                   .product(name: "SocketAddress", package: "SocketAddress"),
-                   .product(name: "SystemPackage", package: "swift-system"),
-                   .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
-                   "AsyncExtensions"],
-    cSettings: PlatformCSettings,
-    linkerSettings: PlatformLinkerSettings
-  ),
   .executableTarget(
     name: "MRPDaemon",
     dependencies: [
@@ -103,23 +61,8 @@ PlatformTargets = [
     ]
   ),
   .executableTarget(
-    name: "nldump",
-    dependencies: ["NetLink"],
-    path: "Examples/nldump"
-  ),
-  .executableTarget(
-    name: "nlmonitor",
-    dependencies: ["NetLink"],
-    path: "Examples/nlmonitor"
-  ),
-  .executableTarget(
-    name: "nltool",
-    dependencies: ["NetLink", .product(name: "IORingUtils", package: "IORingSwift")],
-    path: "Examples/nltool"
-  ),
-  .executableTarget(
     name: "portmon",
-    dependencies: ["MRP", "NetLink"],
+    dependencies: ["MRP"],
     path: "Examples/portmon"
   ),
   .executableTarget(
