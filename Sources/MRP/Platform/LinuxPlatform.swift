@@ -239,7 +239,7 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
 
   public typealias ID = Int
 
-  public static func == (_ lhs: LinuxPort, _ rhs: LinuxPort) -> Bool {
+  public static func == (lhs: LinuxPort, rhs: LinuxPort) -> Bool {
     lhs.id == rhs.id
   }
 
@@ -701,7 +701,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
 }
 
 fileprivate final class FilterRegistration: Equatable, Hashable, Sendable, CustomStringConvertible {
-  static func == (_ lhs: FilterRegistration, _ rhs: FilterRegistration) -> Bool {
+  static func == (lhs: FilterRegistration, rhs: FilterRegistration) -> Bool {
     _isEqualMacAddress(lhs._groupAddress, rhs._groupAddress) && lhs._etherType == rhs._etherType
   }
 

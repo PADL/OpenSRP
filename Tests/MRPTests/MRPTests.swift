@@ -25,7 +25,7 @@ import SystemPackage
 struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomStringConvertible {
   var id: Int
 
-  static func == (_ lhs: MockPort, _ rhs: MockPort) -> Bool {
+  static func == (lhs: MockPort, rhs: MockPort) -> Bool {
     lhs.id == rhs.id
   }
 
