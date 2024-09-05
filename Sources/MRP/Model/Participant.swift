@@ -471,10 +471,31 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
 
   private func _txEnqueue(_ event: EnqueuedEvent<A>) {
     _logger.trace("enqueing event \(event)")
+
     if let index = _enqueuedEvents.index(forKey: event.attributeType) {
-      if let eventIndex = _enqueuedEvents.values[index]
-        .firstIndex(where: { $0.canBeReplacedBy(event: event) })
-      {
+      let enqueuedValues = _enqueuedEvents.values[index]
+      let isAlreadyEncoded = enqueuedValues.contains {
+        // if the enqueued event already exists, then ignore it; if it already exists
+        // and an existing event exists that matches, except it has canOmitEncoding
+        // set to false and the new event has it set to true, then also ignore it.
+        if $0 == event { true }
+        else if !event.isLeaveAll,
+                !$0.isLeaveAll,
+                $0.unsafeAttributeEvent.attributeEvent == event.unsafeAttributeEvent.attributeEvent,
+                $0.unsafeAttributeEvent.attributeValue == event.unsafeAttributeEvent.attributeValue,
+                event.unsafeAttributeEvent.canOmitEncoding
+        {
+          true
+        } else {
+          false
+        }
+      }
+      guard !isAlreadyEncoded else {
+        return
+      }
+      // if canOmitEncoding is set to false, the event is always encode, but it
+      // may replace a previous event of any event type that had it set to true.
+      if let eventIndex = enqueuedValues.firstIndex(where: { $0.canBeReplacedBy(event: event) }) {
         _enqueuedEvents.values[index][eventIndex] = event
       } else {
         _enqueuedEvents.values[index].append(event)
@@ -482,8 +503,6 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     } else {
       _enqueuedEvents[event.attributeType] = [event]
     }
-    // make sure same attribute event doesn't ever get encoded twice
-    precondition(_enqueuedEvents[event.attributeType]?.filter { $0 == event }.count ?? 0 <= 1)
   }
 
   fileprivate func _txEnqueue(
