@@ -126,27 +126,35 @@ extension BaseApplication {
     return ret
   }
 
+  // applications that support MAP contexts other than the base context will have
+  // participants allocated for each context
+  private func _isParticipantValid(contextIdentifier: MAPContextIdentifier) -> Bool {
+    nonBaseContextsSupported || contextIdentifier == MAPBaseSpanningTreeContext
+  }
+
   public func didAdd(
     contextIdentifier: MAPContextIdentifier,
     with context: MAPContext<P>
   ) async throws {
-    guard nonBaseContextsSupported || contextIdentifier == MAPBaseSpanningTreeContext
-    else { return }
-    for port in context {
-      guard (try? findParticipant(for: contextIdentifier, port: port)) == nil
-      else {
-        throw MRPError.portAlreadyExists
+    if _isParticipantValid(contextIdentifier: contextIdentifier) {
+      for port in context {
+        guard (try? findParticipant(for: contextIdentifier, port: port)) == nil
+        else {
+          throw MRPError.portAlreadyExists
+        }
+        guard let controller else { throw MRPError.internalError }
+        let participant = await Participant<Self>(
+          controller: controller,
+          application: self,
+          port: port,
+          contextIdentifier: contextIdentifier
+        )
+        try add(participant: participant)
       }
-      guard let controller else { throw MRPError.internalError }
-      let participant = await Participant<Self>(
-        controller: controller,
-        application: self,
-        port: port,
-        contextIdentifier: contextIdentifier
-      )
-      try add(participant: participant)
     }
     // ensure participants are initialized before calling observer
+    // also call this regardless of the value of nonBaseContextsSupported, so that
+    // MVRP can be advised of VLAN changes on a port
     if let observer = self as? any BaseApplicationContextObserver<P> {
       try await observer.onContextAdded(contextIdentifier: contextIdentifier, with: context)
     }
@@ -156,15 +164,17 @@ extension BaseApplication {
     contextIdentifier: MAPContextIdentifier,
     with context: MAPContext<P>
   ) throws {
-    guard nonBaseContextsSupported || contextIdentifier == MAPBaseSpanningTreeContext
-    else { return }
-    for port in context {
-      let participant = try findParticipant(
-        for: contextIdentifier,
-        port: port
-      )
-      Task { try await participant.redeclare() }
+    if _isParticipantValid(contextIdentifier: contextIdentifier) {
+      for port in context {
+        let participant = try findParticipant(
+          for: contextIdentifier,
+          port: port
+        )
+        Task { try await participant.redeclare() }
+      }
     }
+    // also call this regardless of the value of nonBaseContextsSupported, so that
+    // MVRP can be advised of VLAN changes on a port
     if let observer = self as? any BaseApplicationContextObserver<P> {
       try observer.onContextUpdated(contextIdentifier: contextIdentifier, with: context)
     }
@@ -174,19 +184,21 @@ extension BaseApplication {
     contextIdentifier: MAPContextIdentifier,
     with context: MAPContext<P>
   ) throws {
-    guard nonBaseContextsSupported || contextIdentifier == MAPBaseSpanningTreeContext
-    else { return }
     // call observer _before_ removing participants so it can do any other cleanup
+    // also call this regardless of the value of nonBaseContextsSupported, so that
+    // MVRP can be advised of VLAN changes on a port
     if let observer = self as? any BaseApplicationContextObserver<P> {
       try observer.onContextRemoved(contextIdentifier: contextIdentifier, with: context)
     }
-    for port in context {
-      let participant = try findParticipant(
-        for: contextIdentifier,
-        port: port
-      )
-      Task { try await participant.flush() }
-      try remove(participant: participant)
+    if _isParticipantValid(contextIdentifier: contextIdentifier) {
+      for port in context {
+        let participant = try findParticipant(
+          for: contextIdentifier,
+          port: port
+        )
+        Task { try await participant.flush() }
+        try remove(participant: participant)
+      }
     }
   }
 

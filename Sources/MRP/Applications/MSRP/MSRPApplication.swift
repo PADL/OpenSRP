@@ -178,7 +178,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     contextIdentifier: MAPContextIdentifier,
     with context: MAPContext<P>
   ) async throws {
-    precondition(contextIdentifier == MAPBaseSpanningTreeContext)
+    guard contextIdentifier == MAPBaseSpanningTreeContext else { return }
 
     var srClassPriorityMap = [P.ID: SRClassPriorityMap]()
 
@@ -214,7 +214,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     contextIdentifier: MAPContextIdentifier,
     with context: MAPContext<P>
   ) throws {
-    precondition(contextIdentifier == MAPBaseSpanningTreeContext)
+    guard contextIdentifier == MAPBaseSpanningTreeContext else { return }
 
     if !_forceAvbCapable {
       _portStates.withCriticalRegion {
@@ -240,7 +240,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     contextIdentifier: MAPContextIdentifier,
     with context: MAPContext<P>
   ) throws {
-    precondition(contextIdentifier == MAPBaseSpanningTreeContext)
+    guard contextIdentifier == MAPBaseSpanningTreeContext else { return }
 
     _portStates.withCriticalRegion {
       for port in context {
