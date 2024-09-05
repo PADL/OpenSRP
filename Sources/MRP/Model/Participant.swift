@@ -490,6 +490,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
         }
       }
       guard !isAlreadyEncoded else {
+        _logger.trace("event \(event) was already encoded, skipping")
         return
       }
       // if canOmitEncoding is set to false, the event is always encode, but it
