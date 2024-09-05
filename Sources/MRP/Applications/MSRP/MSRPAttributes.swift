@@ -59,7 +59,7 @@ protocol MSRPStreamIDRepresentable: Sendable {
   var streamID: MSRPStreamID { get }
 }
 
-protocol MSRPTalkerValue: Value, MSRPStreamIDRepresentable {
+protocol MSRPTalkerValue: Value, MSRPStreamIDRepresentable, Equatable {
   var streamID: MSRPStreamID { get }
   var dataFrameParameters: MSRPDataFrameParameters { get }
   var tSpec: MSRPTSpec { get }
