@@ -84,6 +84,9 @@ private final class MRPDaemon: AsyncParsableCommand {
   @Flag(name: .long, help: "Enable MSRP")
   var enableMSRP: Bool = false
 
+  @Flag(name: .long, help: .hidden)
+  var enableSRP: Bool = false
+
   @Option(name: .long, help: "PTP management client domain socket path")
   var pmcUdsPath: String? = nil
 
@@ -103,6 +106,7 @@ private final class MRPDaemon: AsyncParsableCommand {
     case enableMMRP
     case enableMVRP
     case enableMSRP
+    case enableSRP
     case pmcUdsPath
   }
 
@@ -126,6 +130,11 @@ private final class MRPDaemon: AsyncParsableCommand {
       logger: logger,
       portExclusions: Set(excludeIface)
     )
+    if enableSRP {
+      enableMMRP = true
+      enableMVRP = true
+      enableMSRP = true
+    }
     if enableMMRP {
       _ = try await MMRPApplication(controller: controller)
     }
