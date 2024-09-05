@@ -826,16 +826,21 @@ extension LinuxBridge: MSRPAwareBridge {
     guard let _nlQDiscHandle else {
       throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
     }
-    try await port._rtnl.add(
-      handle: 0, // this allows the kernel to assign a handle
-      parent: UInt32(_nlQDiscHandle) << 16 | UInt32(1 + _mapSRClassIDToTC(srClass)),
-      offload: true,
-      hiCredit: Int32(hiCredit),
-      loCredit: Int32(loCredit),
-      idleSlope: Int32(idleSlope),
-      sendSlope: Int32(sendSlope),
-      socket: _nlLinkSocket
-    )
+    let parent = UInt32(_nlQDiscHandle) << 16 | UInt32(1 + _mapSRClassIDToTC(srClass))
+    if hiCredit == 0, loCredit == 0, idleSlope == 0 {
+      try await port._rtnl.remove(handle: 0, parent: parent, socket: _nlLinkSocket)
+    } else {
+      try await port._rtnl.add(
+        handle: 0, // this allows the kernel to assign a handle
+        parent: parent,
+        offload: true,
+        hiCredit: Int32(hiCredit),
+        loCredit: Int32(loCredit),
+        idleSlope: Int32(idleSlope),
+        sendSlope: Int32(sendSlope),
+        socket: _nlLinkSocket
+      )
+    }
   }
 
   func getSRClassPriorityMap(port: P) async throws -> SRClassPriorityMap? {
