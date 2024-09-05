@@ -392,10 +392,10 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     _ isIncluded: @Sendable (AttributeType, AttributeSubtype?, any Value)
       -> Bool
   ) async throws {
-    try await _deregisterAttributeValueState(eventSource: .application, isIncluded)
+    try await _leaveAll(eventSource: .application, isIncluded)
   }
 
-  private func _deregisterAttributeValueState(
+  private func _leaveAll(
     eventSource: ParticipantEventSource,
     _ isIncluded: @Sendable (AttributeType, AttributeSubtype?, any Value) -> Bool
   ) async throws {
@@ -538,6 +538,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       // a) The LeaveAll state machine associated with that instance of the
       // Applicant or Registrar state machine performs the sLA action
       // (10.7.6.6); or a MRPDU is received with a LeaveAll
+      _logger.debug("sending leave all events, source \(eventSource)")
       try await _apply(event: .rLA, eventSource: eventSource)
       try _txEnqueueLeaveAllEvents()
     }
@@ -577,7 +578,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     for vectorAttribute in message.attributeList {
       // 10.6 Protocol operation: process LeaveAll first,
       if vectorAttribute.leaveAllEvent == .LeaveAll {
-        try await _deregisterAttributeValueState(eventSource: eventSource) {
+        try await _leaveAll(eventSource: eventSource) {
           attributeType, _, _ in attributeType == message.attributeType
         }
       }
