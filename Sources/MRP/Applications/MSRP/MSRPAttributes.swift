@@ -84,7 +84,7 @@ struct MSRPTalkerAdvertiseValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equ
   let priorityAndRank: MSRPPriorityAndRank
   let accumulatedLatency: UInt32
 
-  static func == (lhs: Self, rhs: Self) -> Bool {
+  static func == (lhs: MSRPTalkerAdvertiseValue, rhs: MSRPTalkerAdvertiseValue) -> Bool {
     lhs.streamID == rhs.streamID && lhs.dataFrameParameters == rhs.dataFrameParameters && lhs
       .tSpec == rhs.tSpec && lhs.priorityAndRank == rhs.priorityAndRank
   }
@@ -142,7 +142,7 @@ struct MSRPTalkerFailedValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equata
   let systemID: UInt64
   let failureCode: TSNFailureCode
 
-  static func == (lhs: Self, rhs: Self) -> Bool {
+  static func == (lhs: MSRPTalkerFailedValue, rhs: MSRPTalkerFailedValue) -> Bool {
     lhs.streamID == rhs.streamID && lhs.dataFrameParameters == rhs.dataFrameParameters && lhs
       .tSpec == rhs.tSpec && lhs.priorityAndRank == rhs.priorityAndRank && lhs.systemID == rhs
       .systemID && lhs.failureCode == rhs.failureCode
