@@ -167,6 +167,7 @@ extension MVRPApplication {
         .info(
           "MVRP: join indication from port \(port) VID \(vlan.vid) isNew \(isNew) source \(eventSource)"
         )
+      // TODO: flush FDB entries following a topology change, if isNew is true
       try await bridge.register(vlan: vlan, on: ports)
     }
   }
