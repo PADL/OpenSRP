@@ -494,7 +494,9 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       }
       // if canOmitEncoding is set to false, the event is always encode, but it
       // may replace a previous event of any event type that had it set to true.
-      if let eventIndex = _enqueuedEvents.values[index].firstIndex(where: { $0.canBeReplacedBy(event: event) }) {
+      if let eventIndex = _enqueuedEvents.values[index]
+        .firstIndex(where: { $0.canBeReplacedBy(event: event) })
+      {
         _enqueuedEvents.values[index][eventIndex] = event
       } else {
         _enqueuedEvents.values[index].append(event)
