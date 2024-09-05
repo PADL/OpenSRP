@@ -829,6 +829,7 @@ extension LinuxBridge: MSRPAwareBridge {
     try await port._rtnl.add(
       handle: 0, // this allows the kernel to assign a handle
       parent: UInt32(_nlQDiscHandle) << 16 | UInt32(1 + _mapSRClassIDToTC(srClass)),
+      offload: true,
       hiCredit: Int32(hiCredit),
       loCredit: Int32(loCredit),
       idleSlope: Int32(idleSlope),
