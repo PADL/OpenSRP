@@ -185,7 +185,7 @@ public struct MSRPTSpec: SerDes, Equatable {
   }
 }
 
-public struct MSRPDataFrameParameters: Value, Equatable {
+public struct MSRPDataFrameParameters: Value, Equatable, CustomStringConvertible {
   let destinationAddress: EUI48
   let vlanIdentifier: VLAN
 
@@ -200,6 +200,10 @@ public struct MSRPDataFrameParameters: Value, Equatable {
   public static func == (lhs: MSRPDataFrameParameters, rhs: MSRPDataFrameParameters) -> Bool {
     _isEqualMacAddress(lhs.destinationAddress, rhs.destinationAddress) && lhs.vlanIdentifier == rhs
       .vlanIdentifier
+  }
+
+  public var description: String {
+    "MSRPDataFrameParameters(destinationAddress: \(_macAddressToString(destinationAddress)), vlanIdentifier: \(vlanIdentifier.vid))"
   }
 
   public func serialize(into serializationContext: inout SerializationContext) throws {
