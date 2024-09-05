@@ -271,7 +271,7 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
   }
 
   public var description: String {
-    "LinuxPort(name: \(name), id: \(id), isAvbCapable: \(isAvbCapable))"
+    name
   }
 
   public func hash(into hasher: inout Hasher) {
@@ -434,7 +434,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   }
 
   public nonisolated var description: String {
-    "LinuxBridge(name: \(_bridgeName))"
+    _bridgeName
   }
 
   private func _handleLinkNotification(_ linkMessage: RTNLLinkMessage) throws {
