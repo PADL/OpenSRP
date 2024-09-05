@@ -102,7 +102,37 @@ public enum MSRPDeclarationType: Sendable {
 }
 
 typealias MSRPPortLatency = Int
-public typealias MSRPStreamID = UInt64
+
+public struct MSRPStreamID: Sendable, ExpressibleByIntegerLiteral, CustomStringConvertible,
+  Value, Hashable
+{
+  public typealias IntegerLiteralType = UInt64
+
+  public let id: UInt64
+
+  public var index: UInt64 { id }
+
+  public init(integerLiteral id: UInt64) {
+    self.id = id
+  }
+
+  public var description: String {
+    // FIXME: requires Foundation
+    String(format: "0x%016x", id)
+  }
+
+  public func serialize(into serializationContext: inout SerializationContext) throws {
+    serializationContext.serialize(uint64: id)
+  }
+
+  public init(deserializationContext: inout DeserializationContext) throws {
+    id = try deserializationContext.deserialize()
+  }
+
+  public func makeValue(relativeTo index: UInt64) throws -> Self {
+    Self(integerLiteral: id + index)
+  }
+}
 
 enum MSRPProtocolVersion: ProtocolVersion {
   case v0 = 0

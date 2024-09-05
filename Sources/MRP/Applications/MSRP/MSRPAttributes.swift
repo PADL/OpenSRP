@@ -69,7 +69,7 @@ protocol MSRPTalkerValue: Value, MSRPStreamIDRepresentable {
 
 private extension MSRPTalkerValue {
   func _serialize(into serializationContext: inout SerializationContext) throws {
-    serializationContext.serialize(uint64: streamID)
+    try streamID.serialize(into: &serializationContext)
     try dataFrameParameters.serialize(into: &serializationContext)
     try tSpec.serialize(into: &serializationContext)
     try priorityAndRank.serialize(into: &serializationContext)
@@ -78,16 +78,16 @@ private extension MSRPTalkerValue {
 }
 
 struct MSRPTalkerAdvertiseValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equatable {
-  let streamID: UInt64
+  let streamID: MSRPStreamID
   let dataFrameParameters: MSRPDataFrameParameters
   let tSpec: MSRPTSpec
   let priorityAndRank: MSRPPriorityAndRank
   let accumulatedLatency: UInt32
 
-  var index: UInt64 { streamID }
+  var index: UInt64 { streamID.id }
 
   init(
-    streamID: UInt64,
+    streamID: MSRPStreamID,
     dataFrameParameters: MSRPDataFrameParameters = MSRPDataFrameParameters(),
     tSpec: MSRPTSpec = MSRPTSpec(),
     priorityAndRank: MSRPPriorityAndRank = MSRPPriorityAndRank(),
@@ -105,7 +105,7 @@ struct MSRPTalkerAdvertiseValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equ
   }
 
   public init(deserializationContext: inout DeserializationContext) throws {
-    streamID = try deserializationContext.deserialize()
+    streamID = try MSRPStreamID(deserializationContext: &deserializationContext)
     dataFrameParameters =
       try MSRPDataFrameParameters(deserializationContext: &deserializationContext)
     tSpec = try MSRPTSpec(deserializationContext: &deserializationContext)
@@ -119,7 +119,7 @@ struct MSRPTalkerAdvertiseValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equ
 
   public func makeValue(relativeTo index: UInt64) throws -> Self {
     try Self(
-      streamID: streamID + index,
+      streamID: streamID.makeValue(relativeTo: index),
       dataFrameParameters: dataFrameParameters.makeValue(relativeTo: index),
       tSpec: tSpec,
       priorityAndRank: priorityAndRank,
@@ -129,7 +129,7 @@ struct MSRPTalkerAdvertiseValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equ
 }
 
 struct MSRPTalkerFailedValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equatable {
-  let streamID: UInt64
+  let streamID: MSRPStreamID
   let dataFrameParameters: MSRPDataFrameParameters
   let tSpec: MSRPTSpec
   let priorityAndRank: MSRPPriorityAndRank
@@ -137,10 +137,10 @@ struct MSRPTalkerFailedValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equata
   let systemID: UInt64
   let failureCode: TSNFailureCode
 
-  var index: UInt64 { streamID }
+  var index: UInt64 { streamID.id }
 
   init(
-    streamID: UInt64,
+    streamID: MSRPStreamID,
     dataFrameParameters: MSRPDataFrameParameters = MSRPDataFrameParameters(),
     tSpec: MSRPTSpec = MSRPTSpec(),
     priorityAndRank: MSRPPriorityAndRank = MSRPPriorityAndRank(),
@@ -164,7 +164,7 @@ struct MSRPTalkerFailedValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equata
   }
 
   public init(deserializationContext: inout DeserializationContext) throws {
-    streamID = try deserializationContext.deserialize()
+    streamID = try MSRPStreamID(deserializationContext: &deserializationContext)
     dataFrameParameters =
       try MSRPDataFrameParameters(deserializationContext: &deserializationContext)
     tSpec = try MSRPTSpec(deserializationContext: &deserializationContext)
@@ -180,7 +180,7 @@ struct MSRPTalkerFailedValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equata
 
   public func makeValue(relativeTo index: UInt64) throws -> Self {
     try Self(
-      streamID: streamID + UInt64(index),
+      streamID: streamID.makeValue(relativeTo: index),
       dataFrameParameters: dataFrameParameters.makeValue(relativeTo: index),
       tSpec: tSpec,
       priorityAndRank: priorityAndRank,
@@ -192,22 +192,22 @@ struct MSRPTalkerFailedValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equata
 }
 
 struct MSRPListenerValue: Value, Equatable {
-  let streamID: UInt64
+  let streamID: MSRPStreamID
 
-  var index: UInt64 { streamID }
+  var index: UInt64 { streamID.id }
 
   init(
-    streamID: UInt64
+    streamID: MSRPStreamID
   ) {
     self.streamID = streamID
   }
 
   public func serialize(into serializationContext: inout SerializationContext) throws {
-    serializationContext.serialize(uint64: streamID)
+    try streamID.serialize(into: &serializationContext)
   }
 
   public init(deserializationContext: inout DeserializationContext) throws {
-    streamID = try deserializationContext.deserialize()
+    streamID = try MSRPStreamID(deserializationContext: &deserializationContext)
   }
 
   public init() {
@@ -215,7 +215,7 @@ struct MSRPListenerValue: Value, Equatable {
   }
 
   public func makeValue(relativeTo index: UInt64) throws -> Self {
-    Self(streamID: streamID + index)
+    try Self(streamID: streamID.makeValue(relativeTo: index))
   }
 }
 

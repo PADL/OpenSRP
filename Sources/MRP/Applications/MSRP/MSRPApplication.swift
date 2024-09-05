@@ -541,7 +541,7 @@ extension MSRPApplication {
       let rhsStreamAge = portState.getStreamAge(for: rhs.streamID)
 
       if lhsStreamAge == rhsStreamAge {
-        return lhs.streamID < rhs.streamID
+        return lhs.streamID.id < rhs.streamID.id
       } else {
         return lhsStreamAge > rhsStreamAge
       }
@@ -896,7 +896,7 @@ extension MSRPApplication {
       guard participant.port != port else { return }
       for listenerAttribute in await participant.findAttributes(
         attributeType: MSRPAttributeType.listener.rawValue,
-        matching: .matchAnyIndex(streamID)
+        matching: .matchAnyIndex(streamID.id)
       ) {
         guard let declarationType = try? MSRPDeclarationType(attributeSubtype: listenerAttribute.0)
         else { continue }
