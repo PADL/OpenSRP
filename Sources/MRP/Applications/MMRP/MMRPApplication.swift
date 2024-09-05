@@ -182,7 +182,7 @@ extension MMRPApplication {
       let macAddress = (attributeValue as! MMRPMACValue).macAddress
       _logger
         .info(
-          "MMRP join indication from port \(port) address \(_macAddressToString(macAddress)) isNew \(isNew) source \(eventSource)"
+          "MMRP: join indication from port \(port) address \(_macAddressToString(macAddress)) isNew \(isNew) source \(eventSource)"
         )
       try await bridge.register(macAddress: macAddress)
       if _isMulticast(macAddress: macAddress) {
@@ -223,7 +223,7 @@ extension MMRPApplication {
       let macAddress = (attributeValue as! MMRPMACValue).macAddress
       _logger
         .info(
-          "MMRP leave indication from port \(port) address \(_macAddressToString(macAddress)) source \(eventSource)"
+          "MMRP: leave indication from port \(port) address \(_macAddressToString(macAddress)) source \(eventSource)"
         )
       if _isMulticast(macAddress: macAddress) {
         try? await bridge.deregister(groupAddress: macAddress, vlan: nil, from: ports)

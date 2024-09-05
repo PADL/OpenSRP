@@ -701,6 +701,11 @@ extension MSRPApplication {
     isNew: Bool,
     eventSource: ParticipantEventSource
   ) async throws {
+    _logger
+      .info(
+        "MSRP: register stream indication from port \(port) streamID \(streamID) declarationType \(declarationType) dataFrameParameters \(dataFrameParameters) isNew \(isNew) source \(eventSource)"
+      )
+
     // TL;DR: propagate Talker declarations to other ports
     try await apply(for: contextIdentifier) { participant in
       guard participant.port != port else { return } // don't propagate to source port
@@ -1054,8 +1059,8 @@ extension MSRPApplication {
     )
 
     _logger
-      .trace(
-        "MSRP: propagating merged listener declaration \(declarationType) for stream \(streamID) to participant \(talkerRegistration)"
+      .info(
+        "MSRP: register attach indication frmo port \(port) streamID \(streamID) declarationType \(declarationType) to participant \(talkerRegistration)"
       )
 
     try await talkerRegistration.0.join(
@@ -1094,11 +1099,6 @@ extension MSRPApplication {
       // don't recursively invoke MAP
       throw MRPError.doNotPropagateAttribute
     }
-
-    _logger
-      .debug(
-        "MSRP: join for attribute \(attributeType) subtype \(String(describing: attributeSubtype)) value \(attributeValue) source \(eventSource) port \(port)"
-      )
 
     switch attributeType {
     case .talkerAdvertise:
@@ -1171,6 +1171,11 @@ extension MSRPApplication {
     streamID: MSRPStreamID,
     eventSource: ParticipantEventSource
   ) async throws {
+    _logger
+      .info(
+        "MSRP: deregister stream indication from port \(port) streamID \(streamID) source \(eventSource)"
+      )
+
     // In the case where there is a Talker attribute and Listener attribute(s)
     // registered within a Bridge for a StreamID and a MAD_Leave.request is
     // received for the Talker attribute, the Bridge shall act as a proxy for the
@@ -1204,6 +1209,11 @@ extension MSRPApplication {
     declarationType: MSRPDeclarationType,
     eventSource: ParticipantEventSource
   ) async throws {
+    _logger
+      .info(
+        "MSRP: deregister attach indication from port \(port) streamID \(streamID) source \(eventSource)"
+      )
+
     // On receipt of a MAD_Leave.indication for a Listener Declaration, if the
     // StreamID of the Declaration matches a Stream that the Talker is
     // transmitting, then the Talker shall stop the transmission for this
@@ -1266,11 +1276,6 @@ extension MSRPApplication {
       // don't recursively invoke MAP
       throw MRPError.doNotPropagateAttribute
     }
-
-    _logger
-      .debug(
-        "MSRP: leave for attribute \(attributeType) subtype \(String(describing: attributeSubtype)) value \(attributeValue) source \(eventSource) port \(port)"
-      )
 
     switch attributeType {
     case .talkerAdvertise:

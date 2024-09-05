@@ -165,7 +165,7 @@ extension MVRPApplication {
       }
       _logger
         .info(
-          "MVRP join indication from port \(port) VID \(vlan) isNew \(isNew) source \(eventSource)"
+          "MVRP: join indication from port \(port) VID \(vlan) isNew \(isNew) source \(eventSource)"
         )
       try await bridge.register(vlan: vlan, on: ports)
     }
@@ -200,7 +200,7 @@ extension MVRPApplication {
           port.vlans.contains(vlan)
         }
       }
-      _logger.info("MVRP leave indication from port \(port) VID \(vlan) source \(eventSource)")
+      _logger.info("MVRP: leave indication from port \(port) VID \(vlan) source \(eventSource)")
       try await bridge.deregister(vlan: vlan, from: ports)
     }
   }
