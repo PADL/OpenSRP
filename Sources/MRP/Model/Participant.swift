@@ -880,8 +880,7 @@ Sendable, Hashable, Equatable, CustomStringConvertible {
       await context.participant._txEnqueue(
         attributeEvent: attributeEvent,
         attributeValue: self,
-        canOmitEncoding: action == .sJ_ || action == .sL_ || action == .s_ || registrar?
-          .state == .MT
+        canOmitEncoding: action == .sJ_ || action == .sL_ || action == .s_
       )
     }
   }
