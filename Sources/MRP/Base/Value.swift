@@ -28,23 +28,21 @@ public protocol Value: SerDes, Equatable {
 
 struct AnyValue: Value, Equatable, CustomStringConvertible {
   static func == (lhs: AnyValue, rhs: AnyValue) -> Bool {
-    guard let lhs = try? lhs.serialized(), let rhs = try? rhs.serialized() else {
-      return false
-    }
-    return lhs == rhs
+    lhs._isEqual(rhs)
   }
 
   private let _value: any Value
-  private let _isEqual: @Sendable (_: any Value, _: AnyValue)
-    -> Bool
+  private let _isEqual: @Sendable (_: AnyValue) -> Bool
   private let _makeValue: @Sendable (_: UInt64) throws -> any Value
 
   init<V: Value>(_ value: V) {
     _value = value
 
-    _isEqual = { lhs, rhs in
-      guard let lhs = lhs as? V, let rhs = rhs as? V else { return false }
-      return lhs == rhs
+    _isEqual = { otherValue in
+      guard let otherValue = otherValue._value as? V else {
+        return false
+      }
+      return value == otherValue
     }
 
     _makeValue = { index in
