@@ -473,8 +473,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     _logger.trace("enqueing event \(event)")
 
     if let index = _enqueuedEvents.index(forKey: event.attributeType) {
-      let enqueuedValues = _enqueuedEvents.values[index]
-      let isAlreadyEncoded = enqueuedValues.contains {
+      let isAlreadyEncoded = _enqueuedEvents.values[index].contains {
         // if the enqueued event already exists, then ignore it; if it already exists
         // and an existing event exists that matches, except it has canOmitEncoding
         // set to false and the new event has it set to true, then also ignore it.
@@ -495,7 +494,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       }
       // if canOmitEncoding is set to false, the event is always encode, but it
       // may replace a previous event of any event type that had it set to true.
-      if let eventIndex = enqueuedValues.firstIndex(where: { $0.canBeReplacedBy(event: event) }) {
+      if let eventIndex = _enqueuedEvents.values[index].firstIndex(where: { $0.canBeReplacedBy(event: event) }) {
         _enqueuedEvents.values[index][eventIndex] = event
       } else {
         _enqueuedEvents.values[index].append(event)
