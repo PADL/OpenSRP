@@ -381,13 +381,6 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     return attributeValues
   }
 
-  fileprivate func _purgeAttributeValueState(_ attributeValueState: _AttributeValueState<A>) {
-    guard let index = _attributes.index(forKey: attributeValueState.attributeType) else {
-      return
-    }
-    _attributes.values[index].remove(attributeValueState)
-  }
-
   public func leaveNow(
     _ isIncluded: @Sendable (AttributeType, AttributeSubtype?, any Value)
       -> Bool
