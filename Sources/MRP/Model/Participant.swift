@@ -901,10 +901,6 @@ Sendable, Hashable, Equatable, CustomStringConvertible {
         registrarAction: registrarAction,
         context: context
       )
-
-      if context.registrar?.state == .MT {
-        await context.participant._purgeAttributeValueState(self)
-      }
     }
   }
 
