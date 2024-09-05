@@ -32,7 +32,8 @@ struct AnyValue: Value, Equatable, CustomStringConvertible {
   }
 
   private let _value: any Value
-  private let _isEqual: @Sendable (_: AnyValue) -> Bool
+  private let _isEqual: @Sendable (_: AnyValue)
+    -> Bool
   private let _makeValue: @Sendable (_: UInt64) throws -> any Value
 
   init<V: Value>(_ value: V) {

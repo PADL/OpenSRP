@@ -38,5 +38,6 @@ enum MRPError: Error {
   case portLatencyIsNegative
   case portNotFound
   case unknownApplication
+  case unknownAttributeEvent
   case unknownAttributeType
 }

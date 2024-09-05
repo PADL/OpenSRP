@@ -150,7 +150,7 @@ struct VectorAttribute<V: Value>: Sendable, Equatable {
         return [tuple.0, tuple.1, tuple.2]
       }.map {
         guard let attributeEvent = AttributeEvent(rawValue: $0) else {
-          throw MRPError.invalidAttributeValue
+          throw MRPError.unknownAttributeEvent
         }
         return attributeEvent
       }
@@ -412,10 +412,19 @@ struct MRPDU {
       if mark == EndMark {
         break
       }
-      try messages.append(Message(
-        deserializationContext: &deserializationContext,
-        application: application
-      ))
+      do {
+        try messages.append(Message(
+          deserializationContext: &deserializationContext,
+          application: application
+        ))
+      } catch let error as MRPError {
+        // clause 10.8.3.5: skip unknown attributes if PDU has a higher protocol version
+        guard protocolVersion > application.protocolVersion,
+              error == .unknownAttributeType || error == .unknownAttributeEvent
+        else {
+          throw error
+        }
+      }
     } while deserializationContext.position < deserializationContext.count
     self.messages = messages
   }

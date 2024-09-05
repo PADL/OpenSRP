@@ -198,7 +198,6 @@ extension Application {
     from port: P,
     sourceMacAddress: EUI48
   ) async throws {
-    guard pdu.protocolVersion <= protocolVersion else { throw MRPError.badProtocolVersion }
     let participant = try findParticipant(for: contextIdentifier, port: port)
     for message in pdu.messages {
       try await participant.rx(message: message, sourceMacAddress: sourceMacAddress)
