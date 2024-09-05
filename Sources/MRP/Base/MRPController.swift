@@ -160,32 +160,26 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
     let removedContextIdentifiers: Set<MAPContextIdentifier>
     let updatedContextIdentifiers: Set<MAPContextIdentifier>
 
-    if _nonBaseContextsSupported {
-      if let existingPort = ports.first(where: { $0.id == port.id }) {
-        addedContextIdentifiers = port.contextIdentifiers
-          .subtracting(existingPort.contextIdentifiers)
-        removedContextIdentifiers = existingPort.contextIdentifiers
-          .subtracting(port.contextIdentifiers)
-        updatedContextIdentifiers = existingPort.contextIdentifiers
-          .intersection(port.contextIdentifiers)
-      } else {
-        addedContextIdentifiers = port.contextIdentifiers
-        removedContextIdentifiers = []
-        updatedContextIdentifiers = []
-      }
-
-      precondition(!addedContextIdentifiers.contains(MAPBaseSpanningTreeContext))
-      precondition(!removedContextIdentifiers.contains(MAPBaseSpanningTreeContext))
-
-      logger
-        .trace(
-          "applying context identifier changes prior to \(isNewPort ? "adding" : "updating") port \(port): removed \(removedContextIdentifiers) updated \(updatedContextIdentifiers) added \(addedContextIdentifiers)"
-        )
+    if let existingPort = ports.first(where: { $0.id == port.id }) {
+      addedContextIdentifiers = port.contextIdentifiers
+        .subtracting(existingPort.contextIdentifiers)
+      removedContextIdentifiers = existingPort.contextIdentifiers
+        .subtracting(port.contextIdentifiers)
+      updatedContextIdentifiers = existingPort.contextIdentifiers
+        .intersection(port.contextIdentifiers)
     } else {
-      addedContextIdentifiers = []
+      addedContextIdentifiers = port.contextIdentifiers
       removedContextIdentifiers = []
       updatedContextIdentifiers = []
     }
+
+    precondition(!addedContextIdentifiers.contains(MAPBaseSpanningTreeContext))
+    precondition(!removedContextIdentifiers.contains(MAPBaseSpanningTreeContext))
+
+    logger
+      .trace(
+        "applying context identifier changes prior to \(isNewPort ? "adding" : "updating") port \(port): removed \(removedContextIdentifiers) updated \(updatedContextIdentifiers) added \(addedContextIdentifiers)"
+      )
 
     for contextIdentifier in removedContextIdentifiers {
       try _didRemove(contextIdentifier: contextIdentifier, with: [port])
@@ -362,10 +356,6 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
     with context: MAPContext<P>
   ) async throws {
     for application in _applications.values {
-      logger
-        .trace(
-          "added MAP context \(contextIdentifier):\(context) for application \(application.name)"
-        )
       try await application.didAdd(contextIdentifier: contextIdentifier, with: context)
     }
   }
@@ -375,10 +365,6 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
     with context: MAPContext<P>
   ) throws {
     for application in _applications.values {
-      logger
-        .trace(
-          "updated MAP context \(contextIdentifier):\(context) for application \(application.name)"
-        )
       try application.didUpdate(contextIdentifier: contextIdentifier, with: context)
     }
   }
@@ -388,10 +374,6 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
     with context: MAPContext<P>
   ) throws {
     for application in _applications.values {
-      logger
-        .trace(
-          "removed MAP context \(contextIdentifier):\(context) for application \(application.name)"
-        )
       try application.didRemove(contextIdentifier: contextIdentifier, with: context)
     }
   }
