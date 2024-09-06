@@ -1051,7 +1051,10 @@ extension MSRPApplication {
         )
       }
     } catch {
-      _logger.error("MSRP: failed to update port parameters for stream \(streamID): \(error)")
+      _logger
+        .error(
+          "MSRP: failed to update port parameters for stream \(streamID): \(error)\(_forceAvbCapable ? ", ignoring" : "")"
+        )
       guard _forceAvbCapable else { throw error }
     }
   }
@@ -1070,7 +1073,10 @@ extension MSRPApplication {
     eventSource: ParticipantEventSource
   ) async throws {
     guard let talkerRegistration = try? await _findTalkerRegistration(for: streamID) else {
-      _logger.error("MSRP: could not find talker registration for listener stream \(streamID) on port \(port)")
+      _logger
+        .error(
+          "MSRP: could not find talker registration for listener stream \(streamID) on port \(port)"
+        )
       return
     }
 
