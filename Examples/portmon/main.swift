@@ -83,7 +83,7 @@ actor PortMonitor {
         do {
           for try await (index, packet) in bridge.rxPackets {
             await print(
-              "\(self.findPort(index)!): received packet \(packet)\n\(packet.payload.hexEncodedString())"
+              "\(self.findPort(index)!): received packet \(packet)\n\(_bytesToHex(packet.payload))"
             )
           }
         } catch {
@@ -91,27 +91,6 @@ actor PortMonitor {
         }
       }
       for try await _ in group {}
-    }
-  }
-}
-
-extension [UInt8] {
-  struct HexEncodingOptions: OptionSet {
-    let rawValue: Int
-    static let upperCase = HexEncodingOptions(rawValue: 1 << 0)
-  }
-
-  func hexEncodedString(options: HexEncodingOptions = []) -> String {
-    let hexDigits = options.contains(.upperCase) ? "0123456789ABCDEF" : "0123456789abcdef"
-    let utf8Digits = Array(hexDigits.utf8)
-    return String(unsafeUninitializedCapacity: 2 * self.count) { ptr -> Int in
-      var p = ptr.baseAddress!
-      for byte in self {
-        p[0] = utf8Digits[Int(byte / 16)]
-        p[1] = utf8Digits[Int(byte % 16)]
-        p += 2
-      }
-      return 2 * self.count
     }
   }
 }
