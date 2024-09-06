@@ -124,7 +124,7 @@ public enum ParticipantEventSource: Sendable {
   case application
 }
 
-private enum EnqueuedEvent<A: Application>: Equatable {
+private enum EnqueuedEvent<A: Application>: Equatable, CustomStringConvertible {
   struct AttributeEvent: Equatable, CustomStringConvertible {
     let attributeEvent: MRP.AttributeEvent
     let attributeValue: _AttributeValueState<A>
@@ -176,6 +176,14 @@ private enum EnqueuedEvent<A: Application>: Equatable {
     } else {
       // this is a new event
       false
+    }
+  }
+
+  var description: String {
+    if isLeaveAll {
+      "EnqueuedEvent(LA, attributeType: \(attributeType))"
+    } else {
+      "EnqueuedEvent(\(unsafeAttributeEvent))"
     }
   }
 }
