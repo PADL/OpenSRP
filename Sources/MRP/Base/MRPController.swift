@@ -402,4 +402,8 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
     }
     return application
   }
+
+  public var isEndStation: Bool {
+    _ports.count < 2
+  }
 }

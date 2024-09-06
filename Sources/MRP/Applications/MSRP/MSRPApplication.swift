@@ -50,6 +50,7 @@ struct MSRPPortState<P: AVBPort>: Sendable {
   var msrpPortEnabledStatus: Bool
   var streamEpochs = [MSRPStreamID: UInt32]()
   var srpDomainBoundaryPort: [SRclassID: Bool]
+  var srpClassVID: [SRclassID: VLAN]
   // Table 6-5—Default SRP domain boundary port priority regeneration override values
   var neighborProtocolVersion: MSRPProtocolVersion { .v0 }
   // TODO: make these configurable
@@ -85,6 +86,10 @@ struct MSRPPortState<P: AVBPort>: Sendable {
     srpDomainBoundaryPort = .init(uniqueKeysWithValues: msrp._allSRClassIDs.map { (
       $0,
       !isAvbCapable
+    ) })
+    srpClassVID = .init(uniqueKeysWithValues: msrp._allSRClassIDs.map { (
+      $0,
+      msrp._srPVid
     ) })
   }
 }
@@ -1148,6 +1153,7 @@ extension MSRPApplication {
       )
     case .domain:
       let domain = (attributeValue as! MSRPDomainValue)
+      let isEndStation = await controller?.isEndStation ?? false
       withPortState(port: port) { portState in
         let srClassPriority = portState.srClassPriorityMap[domain.srClassID]
         let isSrpDomainBoundaryPort = srClassPriority != domain.srClassPriority
@@ -1156,6 +1162,9 @@ extension MSRPApplication {
             "MSRP: port \(port) srClassID \(domain.srClassID) local srClassPriority \(String(describing: srClassPriority)) peer srClassPriority \(domain.srClassPriority): \(isSrpDomainBoundaryPort ? "is" : "not") a domain boundary port"
           )
         portState.srpDomainBoundaryPort[domain.srClassID] = isSrpDomainBoundaryPort
+        if !isSrpDomainBoundaryPort, isEndStation {
+          portState.srpClassVID[domain.srClassID] = VLAN(vid: domain.srClassVID)
+        }
       }
     }
     throw MRPError.doNotPropagateAttribute
@@ -1322,7 +1331,7 @@ extension MSRPApplication {
         domain = MSRPDomainValue(
           srClassID: srClassID,
           srClassPriority: srClassPriority,
-          srClassVID: _srPVid.vid
+          srClassVID: (portState.srpClassVID[srClassID] ?? _srPVid).vid
         )
       }
     }
