@@ -655,9 +655,16 @@ extension MSRPApplication {
         throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
       }
 
-      if let existingTalkerRegistration = await _findTalkerRegistration(for: streamID, participant: participant)?.1,
-        existingTalkerRegistration.dataFrameParameters != dataFrameParameters {
-        _logger.error("MSRP: stream \(streamID) is already registered on port \(port) with \(dataFrameParameters)")
+      if let existingTalkerRegistration = await _findTalkerRegistration(
+        for: streamID,
+        participant: participant
+      )?.1,
+        existingTalkerRegistration.dataFrameParameters != dataFrameParameters
+      {
+        _logger
+          .error(
+            "MSRP: stream \(streamID) is already registered on port \(port) with \(dataFrameParameters)"
+          )
         throw MSRPFailure(systemID: port.systemID, failureCode: .streamIDAlreadyInUse)
       }
 
@@ -866,14 +873,14 @@ extension MSRPApplication {
       attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
       matching: .matchIndex(MSRPTalkerAdvertiseValue(streamID: streamID))
     ) {
-      return (participant, value.1 as! (any MSRPTalkerValue))
+      (participant, value.1 as! (any MSRPTalkerValue))
     } else if let value = await participant.findAttribute(
       attributeType: MSRPAttributeType.talkerFailed.rawValue,
       matching: .matchIndex(MSRPTalkerFailedValue(streamID: streamID))
     ) {
-      return (participant, value.1 as! (any MSRPTalkerValue))
+      (participant, value.1 as! (any MSRPTalkerValue))
     } else {
-      return nil
+      nil
     }
   }
 
@@ -1064,7 +1071,8 @@ extension MSRPApplication {
     isNew: Bool,
     eventSource: ParticipantEventSource
   ) async throws {
-    guard let talkerRegistration = try? await _findTalkerRegistration(for: streamID, port: port) else {
+    guard let talkerRegistration = try? await _findTalkerRegistration(for: streamID, port: port)
+    else {
       _logger.error("MSRP: could not find talker registration for listener stream \(streamID)")
       return
     }
@@ -1243,7 +1251,8 @@ extension MSRPApplication {
     // StreamID of the Declaration matches a Stream that the Talker is
     // transmitting, then the Talker shall stop the transmission for this
     // Stream, if it is transmitting.
-    guard let talkerRegistration = try? await _findTalkerRegistration(for: streamID, port: port) else {
+    guard let talkerRegistration = try? await _findTalkerRegistration(for: streamID, port: port)
+    else {
       return
     }
 
