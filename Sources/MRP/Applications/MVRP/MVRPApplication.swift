@@ -199,7 +199,7 @@ extension MVRPApplication {
       guard !_vlanExclusions.contains(vlan) else { throw MRPError.doNotPropagateAttribute }
       let ports = await controller.context(for: contextIdentifier).filter {
         if eventSource == .local, $0 == port {
-          true // FIXME: is this logic correct?
+          false
         } else {
           port.vlans.contains(vlan)
         }
