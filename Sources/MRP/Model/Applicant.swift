@@ -67,6 +67,10 @@ struct Applicant: Sendable, CustomStringConvertible {
     case s_ // send an In or an Empty message, if required for optimization of the encoding
     case sL_ // send a Lv message, if required for optimization of the encoding (10.7.6.4)
     case sJ_ // send a Join message, if required for optimization of the encoding (10.7.6.3)
+
+    var canOmitEncoding: Bool {
+      self == .sJ_ || self == .sL_ || self == .s_
+    }
   }
 
   // TODO: update counters
