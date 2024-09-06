@@ -801,18 +801,12 @@ extension LinuxBridge: MMRPAwareBridge {
 extension LinuxBridge: MVRPAwareBridge {
   nonisolated var hasLocalMVRPApplicant: Bool { true }
 
-  func register(vlan: VLAN, on ports: Set<P>) async throws {
-    try await _add(vlan: vlan)
-    for port in ports {
-      try await port._add(vlan: vlan)
-    }
+  func register(vlan: VLAN, on port: P) async throws {
+    try await port._add(vlan: vlan)
   }
 
-  func deregister(vlan: VLAN, from ports: Set<P>) async throws {
-    for port in ports {
-      try await port._remove(vlan: vlan)
-    }
-    try await _remove(vlan: vlan)
+  func deregister(vlan: VLAN, from port: P) async throws {
+    try await port._remove(vlan: vlan)
   }
 }
 

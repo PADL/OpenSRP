@@ -24,8 +24,8 @@ protocol MVRPAwareBridge<P>: Bridge where P: Port {
   // allow use of platform MVRP applicant (e.g. in-kernel Linux MVRP implementation)
   var hasLocalMVRPApplicant: Bool { get }
 
-  func register(vlan: VLAN, on ports: Set<P>) async throws
-  func deregister(vlan: VLAN, from ports: Set<P>) async throws
+  func register(vlan: VLAN, on port: P) async throws
+  func deregister(vlan: VLAN, from port: P) async throws
 }
 
 public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationEventObserver,
@@ -159,19 +159,14 @@ extension MVRPApplication {
     case .vid:
       let vlan = (attributeValue as! VLAN)
       guard !_vlanExclusions.contains(vlan) else { throw MRPError.doNotPropagateAttribute }
-      let ports = await controller.context(for: contextIdentifier).filter {
-        if eventSource == .local, $0 == port {
-          false
-        } else {
-          !port.vlans.contains(vlan)
-        }
-      }
+      guard !bridge.hasLocalMVRPApplicant || eventSource != .local
+      else { throw MRPError.doNotPropagateAttribute }
       _logger
         .info(
           "MVRP: join indication from port \(port) VID \(vlan.vid) isNew \(isNew) source \(eventSource)"
         )
       // TODO: flush FDB entries following a topology change, if isNew is true
-      try await bridge.register(vlan: vlan, on: ports)
+      try await bridge.register(vlan: vlan, on: port)
     }
   }
 
@@ -197,15 +192,10 @@ extension MVRPApplication {
     case .vid:
       let vlan = (attributeValue as! VLAN)
       guard !_vlanExclusions.contains(vlan) else { throw MRPError.doNotPropagateAttribute }
-      let ports = await controller.context(for: contextIdentifier).filter {
-        if eventSource == .local, $0 == port {
-          false
-        } else {
-          port.vlans.contains(vlan)
-        }
-      }
+      guard !bridge.hasLocalMVRPApplicant || eventSource != .local
+      else { throw MRPError.doNotPropagateAttribute }
       _logger.info("MVRP: leave indication from port \(port) VID \(vlan.vid) source \(eventSource)")
-      try await bridge.deregister(vlan: vlan, from: ports)
+      try await bridge.deregister(vlan: vlan, from: port)
     }
   }
 }
