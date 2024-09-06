@@ -243,7 +243,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   }
 
   public nonisolated var description: String {
-    "Participant(application: \(application!.name), _type: \(_type), port: \(port))"
+    "\(application!.name)@\(port.name)"
   }
 
   private func _initTimers() async {
@@ -466,14 +466,14 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     }
 
     if !messages.isEmpty {
-      _logger.trace("packed events \(events) into \(messages)")
+      _logger.trace("\(self): packed events \(events) into \(messages)")
     }
 
     return messages
   }
 
   private func _txEnqueue(_ event: EnqueuedEvent<A>) {
-    _logger.trace("enqueing event \(event)")
+    _logger.trace("\(self): enqueing event \(event)")
 
     if let index = _enqueuedEvents.index(forKey: event.attributeType) {
       let isAlreadyEncoded = _enqueuedEvents.values[index].contains {
@@ -493,7 +493,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
         }
       }
       guard !isAlreadyEncoded else {
-        _logger.trace("event \(event) was already encoded, skipping")
+        _logger.trace("\(self): event \(event) was already encoded, skipping")
         return
       }
       // if canOmitEncoding is set to false, the event is always encode, but it
@@ -543,7 +543,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       // a) The LeaveAll state machine associated with that instance of the
       // Applicant or Registrar state machine performs the sLA action
       // (10.7.6.6); or a MRPDU is received with a LeaveAll
-      _logger.debug("sending leave all events, source \(eventSource)")
+      _logger.debug("\(self): sending leave all events, source \(eventSource)")
       try await _apply(event: .rLA, eventSource: eventSource)
       try _txEnqueueLeaveAllEvents()
     }
@@ -633,7 +633,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   func tx() async throws {
     guard let application, let controller else { throw MRPError.internalError }
     guard let pdu = try await _txDequeue() else { return }
-    _logger.debug("sending PDU \(pdu) port \(port.name) application \(type(of: application))")
+    _logger.debug("\(self): sending PDU \(pdu)")
     try await controller.bridge.tx(
       pdu: pdu,
       for: application,
@@ -836,7 +836,7 @@ Sendable, Hashable, Equatable, CustomStringConvertible {
     )
 
     precondition(!(unwrappedValue is AnyValue))
-    participant._logger.trace("handling \(context)")
+    participant._logger.trace("\(participant): handling \(context)")
     try await _handleApplicant(context: context) // attribute subtype can be adjusted by hook
     try await _handleRegistrar(context: context)
   }
@@ -846,7 +846,7 @@ Sendable, Hashable, Equatable, CustomStringConvertible {
 
     if let applicantAction {
       context.participant._logger
-        .trace("applicant action for event \(context.event): \(applicantAction)")
+        .trace("\(context.participant): applicant action for event \(context.event): \(applicantAction)")
       let applicationEventHandler = context.participant
         .application as? any ApplicationEventHandler<A>
       try await applicationEventHandler?.preApplicantEventHandler(context: context)
@@ -899,7 +899,7 @@ Sendable, Hashable, Equatable, CustomStringConvertible {
   private func _handleRegistrar(context: EventContext<A>) async throws {
     if let registrarAction = context.registrar?.action(for: context.event, flags: context.smFlags) {
       context.participant._logger
-        .trace("registrar action for event \(context.event): \(registrarAction)")
+        .trace("\(context.participant): registrar action for event \(context.event): \(registrarAction)")
       try await _handle(
         registrarAction: registrarAction,
         context: context
