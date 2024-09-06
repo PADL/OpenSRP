@@ -96,14 +96,14 @@ The current test environment consists of an x86\_64 server with two Intel i210 N
 
 Endpoints we are testing include:
 
-* MOTU Ultralite AVB (in progress)
-* macOS AVB stack (in progress)
+* MOTU Ultralite AVB (tested)
+* macOS AVB stack (tested)
 * XMOS lib\_tsn (TBA)
 * JOYNED MILAN stack (TBA)
 
 Bridges we are testing transitively:
 
-* Luminex Gigacore 10i (in progress)
+* Luminex Gigacore 10i (tested)
 * Extreme x460-48p (TBA)
 
 Please reach out to myself (lukeh `at` lukktone `dot` com) for further information.
