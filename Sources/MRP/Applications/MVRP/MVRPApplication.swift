@@ -21,12 +21,15 @@ import Logging
 public let MVRPEtherType: UInt16 = 0x88F5
 
 protocol MVRPAwareBridge<P>: Bridge where P: Port {
+  // allow use of platform MVRP applicant (e.g. in-kernel Linux MVRP implementation)
+  var hasLocalMVRPApplicant: Bool { get }
+
   func register(vlan: VLAN, on ports: Set<P>) async throws
   func deregister(vlan: VLAN, from ports: Set<P>) async throws
 }
 
 public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationEventObserver,
-  CustomStringConvertible,
+  BaseApplicationContextObserver, CustomStringConvertible,
   Sendable where P == P
 {
   // for now, we only operate in the Base Spanning Tree Context
@@ -203,6 +206,42 @@ extension MVRPApplication {
       }
       _logger.info("MVRP: leave indication from port \(port) VID \(vlan.vid) source \(eventSource)")
       try await bridge.deregister(vlan: vlan, from: ports)
+    }
+  }
+}
+
+extension MVRPApplication {
+  func onContextAdded(
+    contextIdentifier: MAPContextIdentifier,
+    with context: MAPContext<P>
+  ) async throws {
+    guard let bridge = controller?.bridge as? any MVRPAwareBridge<P>,
+          !bridge.hasLocalMVRPApplicant else { return }
+    try await join(
+      attributeType: MVRPAttributeType.vid.rawValue,
+      attributeValue: VLAN(contextIdentifier: contextIdentifier),
+      isNew: true,
+      for: MAPBaseSpanningTreeContext
+    )
+  }
+
+  func onContextUpdated(
+    contextIdentifier: MAPContextIdentifier,
+    with context: MAPContext<P>
+  ) throws {}
+
+  func onContextRemoved(
+    contextIdentifier: MAPContextIdentifier,
+    with context: MAPContext<P>
+  ) throws {
+    guard let bridge = controller?.bridge as? any MVRPAwareBridge<P>,
+          !bridge.hasLocalMVRPApplicant else { return }
+    Task {
+      try await leave(
+        attributeType: MVRPAttributeType.vid.rawValue,
+        attributeValue: VLAN(contextIdentifier: contextIdentifier),
+        for: MAPBaseSpanningTreeContext
+      )
     }
   }
 }

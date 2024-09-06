@@ -799,6 +799,8 @@ extension LinuxBridge: MMRPAwareBridge {
 }
 
 extension LinuxBridge: MVRPAwareBridge {
+  var hasLocalMVRPApplicant: Bool { true }
+
   func register(vlan: VLAN, on ports: Set<P>) async throws {
     try await _add(vlan: vlan)
     for port in ports {
