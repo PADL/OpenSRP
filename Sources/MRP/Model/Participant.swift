@@ -125,10 +125,14 @@ public enum ParticipantEventSource: Sendable {
 }
 
 private enum EnqueuedEvent<A: Application>: Equatable {
-  struct AttributeEvent: Equatable {
+  struct AttributeEvent: Equatable, CustomStringConvertible {
     let attributeEvent: MRP.AttributeEvent
     let attributeValue: _AttributeValueState<A>
     let canOmitEncoding: Bool
+
+    var description: String {
+      "attributeEvent: \(attributeEvent), attributeValue: \(attributeValue), canOmitEncoding: \(canOmitEncoding)"
+    }
   }
 
   case attributeEvent(AttributeEvent)
