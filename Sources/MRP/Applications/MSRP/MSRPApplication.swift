@@ -885,13 +885,11 @@ extension MSRPApplication {
   }
 
   private func _findTalkerRegistration(
-    for streamID: MSRPStreamID,
-    port: P? = nil
+    for streamID: MSRPStreamID
   ) async throws -> (Participant<MSRPApplication>, any MSRPTalkerValue)? {
     var talkerRegistration: (Participant<MSRPApplication>, any MSRPTalkerValue)?
 
     await apply { participant in
-      if let port, port != participant.port { return }
       talkerRegistration = await _findTalkerRegistration(for: streamID, participant: participant)
     }
 
@@ -1071,9 +1069,8 @@ extension MSRPApplication {
     isNew: Bool,
     eventSource: ParticipantEventSource
   ) async throws {
-    guard let talkerRegistration = try? await _findTalkerRegistration(for: streamID, port: port)
-    else {
-      _logger.error("MSRP: could not find talker registration for listener stream \(streamID)")
+    guard let talkerRegistration = try? await _findTalkerRegistration(for: streamID) else {
+      _logger.error("MSRP: could not find talker registration for listener stream \(streamID) on port \(port)")
       return
     }
 
@@ -1251,8 +1248,7 @@ extension MSRPApplication {
     // StreamID of the Declaration matches a Stream that the Talker is
     // transmitting, then the Talker shall stop the transmission for this
     // Stream, if it is transmitting.
-    guard let talkerRegistration = try? await _findTalkerRegistration(for: streamID, port: port)
-    else {
+    guard let talkerRegistration = try? await _findTalkerRegistration(for: streamID) else {
       return
     }
 
