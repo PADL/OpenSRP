@@ -493,9 +493,7 @@ extension MSRPApplication {
     eventSource: ParticipantEventSource
   ) async -> Bool {
     if _talkerPruning || portState.talkerPruning {
-      // FIXME: we need to examine unicast addresses too
-      if _isMulticast(macAddress: dataFrameParameters.destinationAddress),
-         let mmrpParticipant = try? _mmrp?.findParticipant(port: port),
+      if let mmrpParticipant = try? _mmrp?.findParticipant(port: port),
          await mmrpParticipant.findAttribute(
            attributeType: MMRPAttributeType.mac.rawValue,
            matching: .matchEqual(MMRPMACValue(macAddress: dataFrameParameters.destinationAddress))
