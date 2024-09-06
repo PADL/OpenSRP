@@ -158,7 +158,7 @@ struct PTPManagementTLV: SerDes, Sendable {
   }
 
   var size: Int {
-    2 + 2 + dataField.count
+    2 + 2 + 2 + dataField.count
   }
 
   var data: PTPManagementRepresentable {
@@ -222,7 +222,7 @@ struct PTPManagementErrorStatusTLV: SerDes, Sendable {
   }
 
   var size: Int {
-    2 + 8 + displayData.count
+    2 + 2 + 8 + displayData.count
   }
 }
 
