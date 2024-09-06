@@ -1123,7 +1123,7 @@ extension MSRPApplication {
     else { throw MRPError.unknownAttributeType }
 
     // 35.2.4 (d) A MAD_Join.indication adds a new attribute to MAD (with isNew TRUE)
-    guard eventSource == .timer || eventSource == .local || eventSource == .peer else {
+    guard shouldPropagate(eventSource: eventSource) else {
       _logger
         .trace(
           "MSRP: ignoring join indication for attribute \(attributeType) isNew \(isNew) subtype \(String(describing: attributeSubtype)) value \(attributeValue) source \(eventSource) port \(port)"
@@ -1303,8 +1303,7 @@ extension MSRPApplication {
     guard let attributeType = MSRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }
 
-    guard eventSource == .timer || eventSource == .local || eventSource == .peer
-    else {
+    guard shouldPropagate(eventSource: eventSource) else {
       _logger
         .trace(
           "MSRP: ignoring leave indication for attribute \(attributeType) subtype \(String(describing: attributeSubtype)) value \(attributeValue) source \(eventSource) port \(port)"

@@ -110,8 +110,12 @@ public enum AttributeValueFilter: Sendable {
 }
 
 public enum ParticipantEventSource: Sendable {
-  // event source was an internal timer
-  case timer
+  // event source was join timer
+  case joinTimer
+  // event source was leave timer
+  case leaveTimer
+  // event source was leave all timer
+  case leaveAllTimer
   // event source was the local port (e.g. kernel MVRP)
   case local
   // event source was a remote peer
@@ -281,12 +285,12 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   @Sendable
   private func _onJoinTimerExpired() async throws {
     precondition(_type != .pointToPoint)
-    try await _txOpportunity(eventSource: .timer)
+    try await _txOpportunity(eventSource: .joinTimer)
   }
 
   @Sendable
   private func _onLeaveAllTimerExpired() async throws {
-    try await _handleLeaveAll(event: .leavealltimer, eventSource: .timer)
+    try await _handleLeaveAll(event: .leavealltimer, eventSource: .leaveAllTimer)
   }
 
   private func _apply(
@@ -771,7 +775,7 @@ Sendable, Hashable, Equatable, CustomStringConvertible {
   private func onLeaveTimerExpired() async throws {
     try await handle(
       event: .leavetimer,
-      eventSource: .timer
+      eventSource: .leaveTimer
     )
   }
 
@@ -846,7 +850,9 @@ Sendable, Hashable, Equatable, CustomStringConvertible {
 
     if let applicantAction {
       context.participant._logger
-        .trace("\(context.participant): applicant action for event \(context.event): \(applicantAction)")
+        .trace(
+          "\(context.participant): applicant action for event \(context.event): \(applicantAction)"
+        )
       let applicationEventHandler = context.participant
         .application as? any ApplicationEventHandler<A>
       try await applicationEventHandler?.preApplicantEventHandler(context: context)
@@ -899,7 +905,9 @@ Sendable, Hashable, Equatable, CustomStringConvertible {
   private func _handleRegistrar(context: EventContext<A>) async throws {
     if let registrarAction = context.registrar?.action(for: context.event, flags: context.smFlags) {
       context.participant._logger
-        .trace("\(context.participant): registrar action for event \(context.event): \(registrarAction)")
+        .trace(
+          "\(context.participant): registrar action for event \(context.event): \(registrarAction)"
+        )
       try await _handle(
         registrarAction: registrarAction,
         context: context

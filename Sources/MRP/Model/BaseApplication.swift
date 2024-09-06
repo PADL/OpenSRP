@@ -202,20 +202,24 @@ extension BaseApplication {
     }
   }
 
-  func shouldPropagate(eventSource: ParticipantEventSource) -> Bool {
+  public func shouldPropagate(eventSource: ParticipantEventSource) -> Bool {
     switch eventSource {
-    case .timer:
+    case .joinTimer:
       fallthrough
     case .local:
       fallthrough
     case .peer:
-      return true
+      fallthrough
+    case .application:
+      return true // FIXME: check whether we should propagate application withdrawals?
     case .internal:
       fallthrough // don't need to propagate this because application calls all participants
     case .map:
-      return false // don't recursively call ourselves
-    case .application:
-      return true // FIXME: check whether we should propagate application withdrawals?
+      fallthrough
+    case .leaveTimer:
+      fallthrough
+    case .leaveAllTimer:
+      return false // don't recursively call ourselves, and let each participant handle leave timers
     }
   }
 
