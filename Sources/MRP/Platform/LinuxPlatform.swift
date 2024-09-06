@@ -719,7 +719,7 @@ fileprivate final class FilterRegistration: Equatable, Hashable, Sendable, Custo
   }
 
   var description: String {
-    "FilterRegistration(_groupAddress: \(_macAddressToString(_groupAddress)), _etherType: \(String(format: "0x%04x", _etherType)))"
+    "FilterRegistration(_groupAddress: \(_macAddressToString(_groupAddress)), _etherType: \(_formatHex(_etherType, padToWidth: 4)))"
   }
 
   func _rxPackets(port: LinuxPort) async throws -> AnyAsyncSequence<IEEE802Packet> {

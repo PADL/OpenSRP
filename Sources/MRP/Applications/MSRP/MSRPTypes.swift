@@ -117,8 +117,7 @@ public struct MSRPStreamID: Sendable, ExpressibleByIntegerLiteral, CustomStringC
   }
 
   public var description: String {
-    // FIXME: requires Foundation
-    String(format: "0x%016x", id)
+    _formatHex(id, padToWidth: 16)
   }
 
   public func serialize(into serializationContext: inout SerializationContext) throws {

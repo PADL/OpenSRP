@@ -92,14 +92,16 @@ public struct SerializationContext {
   public var position: Int { bytes.count }
 }
 
+// https://forums.swift.org/t/string-format-behaves-differently-on-windows/65197/6
+package func _formatHex(_ value: some BinaryInteger, padToWidth: Int = 16, uppercase: Bool = false) -> String {
+  let base = String(value, radix: 16, uppercase: uppercase)
+  let pad = String(repeating: "0", count: max(0, padToWidth - base.count))
+  return "\(pad)\(base)"
+}
+
 // don't want to use Foundation, hence no String(format:)
 package func _byteToHex(_ byte: UInt8, uppercase: Bool = false) -> String {
-  let s = String(byte, radix: 16, uppercase: uppercase)
-  if byte & 0xF0 == 0 {
-    return "0" + s
-  } else {
-    return s
-  }
+  _formatHex(byte, padToWidth: 2, uppercase: uppercase)
 }
 
 package func _bytesToHex(_ bytes: [UInt8], uppercase: Bool = false) -> String {
