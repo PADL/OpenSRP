@@ -281,7 +281,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   @Sendable
   private func _onJoinTimerExpired() async throws {
     precondition(_type != .pointToPoint)
-    try await _txOpportunity()
+    try await _txOpportunity(eventSource: .timer)
   }
 
   @Sendable
@@ -315,19 +315,17 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     }
   }
 
-  private func _txOpportunity() async throws {
+  private func _txOpportunity(eventSource: ParticipantEventSource) async throws {
     // this will send a .tx/.txLA event to all attributes which will then make
     // the appropriate state transitions, potentially triggering the encoding
     // of a vector
     switch _leaveAll.state {
     case .Active:
-      try await _handleLeaveAll(
-        event: .tx,
-        eventSource: .timer
-      ) // sets LeaveAll to passive and emits sLA action
-      try await _apply(event: .txLA, eventSource: .timer)
+      // sets LeaveAll to passive and emits sLA action
+      try await _handleLeaveAll(event: .tx, eventSource: eventSource)
+      try await _apply(event: .txLA, eventSource: eventSource)
     case .Passive:
-      try await _apply(event: .tx, eventSource: .timer)
+      try await _apply(event: .tx, eventSource: eventSource)
     }
   }
 
@@ -611,7 +609,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
         )
       }
     }
-    if _type == .pointToPoint { try await _txOpportunity() }
+    if _type == .pointToPoint { try await _txOpportunity(eventSource: eventSource) }
   }
 
   fileprivate func _getSmFlags(for attributeType: AttributeType) throws
@@ -657,7 +655,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   func flush() async throws {
     try await _apply(event: .Flush, eventSource: .internal)
     try await _handleLeaveAll(event: .Flush, eventSource: .internal)
-    if _type == .pointToPoint { try await _txOpportunity() }
+    if _type == .pointToPoint { try await _txOpportunity(eventSource: .internal) }
   }
 
   // A Re-declare! event signals to the Applicant and Registrar state machines
@@ -671,6 +669,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   // Designated Port to either Root Port or Alternate Port.
   func redeclare() async throws {
     try await _apply(event: .ReDeclare, eventSource: .internal)
+    if _type == .pointToPoint { try await _txOpportunity(eventSource: .internal) }
   }
 
   func join(
@@ -686,7 +685,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       createIfMissing: true
     )
     try await attribute.handle(event: isNew ? .New : .Join, eventSource: eventSource)
-    if _type == .pointToPoint { try await _txOpportunity() }
+    if _type == .pointToPoint { try await _txOpportunity(eventSource: eventSource) }
   }
 
   func leave(
@@ -701,7 +700,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       createIfMissing: false
     )
     try await attribute.handle(event: .Lv, eventSource: eventSource)
-    if _type == .pointToPoint { try await _txOpportunity() }
+    if _type == .pointToPoint { try await _txOpportunity(eventSource: eventSource) }
   }
 }
 
