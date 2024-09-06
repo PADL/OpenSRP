@@ -580,7 +580,7 @@ extension MSRPApplication {
   }
 
   private func _checkAvailableBandwidth(
-    port: P,
+    participant: Participant<MSRPApplication>,
     portState: MSRPPortState<P>,
     dataFrameParameters: MSRPDataFrameParameters,
     tSpec: MSRPTSpec,
@@ -588,6 +588,7 @@ extension MSRPApplication {
   ) async throws -> Bool {
     var bandwidthUsed = [SRclassID: Int]()
 
+    let port = participant.port
     let provisionalTalker = MSRPTalkerAdvertiseValue(
       streamID: 0, // don't care about this
       dataFrameParameters: dataFrameParameters,
@@ -596,7 +597,6 @@ extension MSRPApplication {
       accumulatedLatency: 0 // or this
     )
 
-    let participant = try findParticipant(port: port)
     let talkers = await participant.findAttributes(
       attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
       matching: .matchAny
@@ -638,7 +638,7 @@ extension MSRPApplication {
   }
 
   private func _canBridgeTalker(
-    port: P,
+    participant: Participant<MSRPApplication>,
     portState: MSRPPortState<P>,
     streamID: MSRPStreamID,
     declarationType: MSRPDeclarationType,
@@ -649,10 +649,18 @@ extension MSRPApplication {
     isNew: Bool,
     eventSource: ParticipantEventSource
   ) async throws {
+    let port = participant.port
+
     do {
       guard portState.msrpPortEnabledStatus else {
         _logger.error("MSRP: port \(port) is not enabled")
         throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
+      }
+
+      if let existingTalkerRegistration = await _findTalkerRegistration(for: streamID, participant: participant)?.1,
+        existingTalkerRegistration.dataFrameParameters != dataFrameParameters {
+        _logger.error("MSRP: stream \(streamID) is already registered on port \(port) with \(dataFrameParameters)")
+        throw MSRPFailure(systemID: port.systemID, failureCode: .streamIDAlreadyInUse)
       }
 
       // TODO: should we check explicitly for false
@@ -670,7 +678,7 @@ extension MSRPApplication {
       }
 
       guard try await _checkAvailableBandwidth(
-        port: port,
+        participant: participant,
         portState: portState,
         dataFrameParameters: dataFrameParameters,
         tSpec: tSpec,
@@ -756,7 +764,7 @@ extension MSRPApplication {
       if declarationType == .talkerAdvertise {
         do {
           try await _canBridgeTalker(
-            port: port,
+            participant: participant,
             portState: portState,
             streamID: streamID,
             declarationType: declarationType,
@@ -853,23 +861,33 @@ extension MSRPApplication {
   }
 
   private func _findTalkerRegistration(
-    for streamID: MSRPStreamID
+    for streamID: MSRPStreamID,
+    participant: Participant<MSRPApplication>
+  ) async -> (Participant<MSRPApplication>, any MSRPTalkerValue)? {
+    if let value = await participant.findAttribute(
+      attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
+      matching: .matchIndex(MSRPTalkerAdvertiseValue(streamID: streamID))
+    ) {
+      return (participant, value.1 as! (any MSRPTalkerValue))
+    } else if let value = await participant.findAttribute(
+      attributeType: MSRPAttributeType.talkerFailed.rawValue,
+      matching: .matchIndex(MSRPTalkerFailedValue(streamID: streamID))
+    ) {
+      return (participant, value.1 as! (any MSRPTalkerValue))
+    } else {
+      return nil
+    }
+  }
+
+  private func _findTalkerRegistration(
+    for streamID: MSRPStreamID,
+    port: P? = nil
   ) async throws -> (Participant<MSRPApplication>, any MSRPTalkerValue)? {
     var talkerRegistration: (Participant<MSRPApplication>, any MSRPTalkerValue)?
 
     await apply { participant in
-      guard talkerRegistration == nil else { return }
-      if let value = await participant.findAttribute(
-        attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
-        matching: .matchIndex(MSRPTalkerAdvertiseValue(streamID: streamID))
-      ) {
-        talkerRegistration = (participant, value.1 as! (any MSRPTalkerValue))
-      } else if let value = await participant.findAttribute(
-        attributeType: MSRPAttributeType.talkerFailed.rawValue,
-        matching: .matchIndex(MSRPTalkerFailedValue(streamID: streamID))
-      ) {
-        talkerRegistration = (participant, value.1 as! (any MSRPTalkerValue))
-      }
+      if let port, port != participant.port { return }
+      talkerRegistration = await _findTalkerRegistration(for: streamID, participant: participant)
     }
 
     return talkerRegistration
@@ -1048,7 +1066,7 @@ extension MSRPApplication {
     isNew: Bool,
     eventSource: ParticipantEventSource
   ) async throws {
-    guard let talkerRegistration = try? await _findTalkerRegistration(for: streamID) else {
+    guard let talkerRegistration = try? await _findTalkerRegistration(for: streamID, port: port) else {
       _logger.error("MSRP: could not find talker registration for listener stream \(streamID)")
       return
     }
@@ -1227,7 +1245,7 @@ extension MSRPApplication {
     // StreamID of the Declaration matches a Stream that the Talker is
     // transmitting, then the Talker shall stop the transmission for this
     // Stream, if it is transmitting.
-    guard let talkerRegistration = try? await _findTalkerRegistration(for: streamID) else {
+    guard let talkerRegistration = try? await _findTalkerRegistration(for: streamID, port: port) else {
       return
     }
 
