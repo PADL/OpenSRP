@@ -93,7 +93,11 @@ public struct SerializationContext {
 }
 
 // https://forums.swift.org/t/string-format-behaves-differently-on-windows/65197/6
-package func _formatHex(_ value: some BinaryInteger, padToWidth: Int = 16, uppercase: Bool = false) -> String {
+package func _formatHex(
+  _ value: some BinaryInteger,
+  padToWidth: Int = 16,
+  uppercase: Bool = false
+) -> String {
   let base = String(value, radix: 16, uppercase: uppercase)
   let pad = String(repeating: "0", count: max(0, padToWidth - base.count))
   return "\(pad)\(base)"
