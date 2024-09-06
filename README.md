@@ -19,6 +19,8 @@ MMRP, MVRP, and MSRP are "applications" of the generalized MRP protocol and stat
 
 Note that whilst SwiftMRP does have a platform abstraction layer, the initial platform is Linux, and we would prefer to push switch-specific functionality into the kernel rather than separate platform backends.
 
+Because Linux has an in-kernel MVRP applicant, `mrpd` does not automatically advertise statically configured VLANs. If you wish to do so, you should create a VLAN interface and set the `mvrp` flag to `on` using `ip link set dev`.
+
 ## Configuring
 
 Static configuration is left to the administrator as there is no point re-implementing standard tools such as `bridge` and `tc`. The `config-vlan.sh` script in the top-level directory is a good starting point, but essentially the assumptions are as follows:
