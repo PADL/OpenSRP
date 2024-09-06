@@ -117,7 +117,7 @@ public struct MSRPStreamID: Sendable, ExpressibleByIntegerLiteral, CustomStringC
   }
 
   public var description: String {
-    _formatHex(id, padToWidth: 16)
+    "0x" + _formatHex(id, padToWidth: 16)
   }
 
   public func serialize(into serializationContext: inout SerializationContext) throws {
