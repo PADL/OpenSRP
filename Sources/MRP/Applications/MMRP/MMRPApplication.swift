@@ -170,7 +170,7 @@ extension MMRPApplication {
     attributeSubtype: AttributeSubtype?,
     attributeValue: some Value,
     isNew: Bool,
-    eventSource: ParticipantEventSource
+    eventSource: EventSource
   ) async throws {
     guard let controller else { throw MRPError.internalError }
     guard let bridge = controller.bridge as? any MMRPAwareBridge<P> else { return }
@@ -211,7 +211,7 @@ extension MMRPApplication {
     attributeType: AttributeType,
     attributeSubtype: AttributeSubtype?,
     attributeValue: some Value,
-    eventSource: ParticipantEventSource
+    eventSource: EventSource
   ) async throws {
     guard let controller else { throw MRPError.internalError }
     guard let bridge = controller.bridge as? any MMRPAwareBridge<P> else { return }

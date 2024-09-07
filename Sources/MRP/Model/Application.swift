@@ -78,7 +78,7 @@ public protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
     attributeSubtype: AttributeSubtype?,
     attributeValue: V,
     isNew: Bool,
-    eventSource: ParticipantEventSource
+    eventSource: EventSource
   ) async throws
 
   func leaveIndicated<V: Value>(
@@ -87,7 +87,7 @@ public protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
     attributeType: AttributeType,
     attributeSubtype: AttributeSubtype?,
     attributeValue: V,
-    eventSource: ParticipantEventSource
+    eventSource: EventSource
   ) async throws
 }
 

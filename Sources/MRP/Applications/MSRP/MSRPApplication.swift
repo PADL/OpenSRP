@@ -490,7 +490,7 @@ extension MSRPApplication {
     priorityAndRank: MSRPPriorityAndRank,
     accumulatedLatency: UInt32,
     isNew: Bool,
-    eventSource: ParticipantEventSource
+    eventSource: EventSource
   ) async -> Bool {
     if _talkerPruning || portState.talkerPruning {
       if let mmrpParticipant = try? _mmrp?.findParticipant(port: port),
@@ -645,7 +645,7 @@ extension MSRPApplication {
     priorityAndRank: MSRPPriorityAndRank,
     accumulatedLatency: UInt32,
     isNew: Bool,
-    eventSource: ParticipantEventSource
+    eventSource: EventSource
   ) async throws {
     let port = participant.port
 
@@ -717,7 +717,7 @@ extension MSRPApplication {
     accumulatedLatency: UInt32,
     failureInformation: MSRPFailure?,
     isNew: Bool,
-    eventSource: ParticipantEventSource
+    eventSource: EventSource
   ) async throws {
     _logger
       .info(
@@ -1070,7 +1070,7 @@ extension MSRPApplication {
     streamID: MSRPStreamID,
     declarationType: MSRPDeclarationType,
     isNew: Bool,
-    eventSource: ParticipantEventSource
+    eventSource: EventSource
   ) async throws {
     guard let talkerRegistration = try? await _findTalkerRegistration(for: streamID) else {
       _logger
@@ -1117,7 +1117,7 @@ extension MSRPApplication {
     attributeSubtype: AttributeSubtype?,
     attributeValue: some Value,
     isNew: Bool,
-    eventSource: ParticipantEventSource
+    eventSource: EventSource
   ) async throws {
     guard let attributeType = MSRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }
@@ -1205,7 +1205,7 @@ extension MSRPApplication {
     contextIdentifier: MAPContextIdentifier,
     port: P,
     streamID: MSRPStreamID,
-    eventSource: ParticipantEventSource
+    eventSource: EventSource
   ) async throws {
     _logger
       .info(
@@ -1243,7 +1243,7 @@ extension MSRPApplication {
     port: P,
     streamID: MSRPStreamID,
     declarationType: MSRPDeclarationType,
-    eventSource: ParticipantEventSource
+    eventSource: EventSource
   ) async throws {
     _logger
       .info(
@@ -1298,7 +1298,7 @@ extension MSRPApplication {
     attributeType: AttributeType,
     attributeSubtype: AttributeSubtype?,
     attributeValue: some Value,
-    eventSource: ParticipantEventSource
+    eventSource: EventSource
   ) async throws {
     guard let attributeType = MSRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }

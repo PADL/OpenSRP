@@ -41,7 +41,7 @@ protocol BaseApplicationEventObserver<P>: BaseApplication {
     attributeSubtype: AttributeSubtype?,
     attributeValue: some Value,
     isNew: Bool,
-    eventSource: ParticipantEventSource
+    eventSource: EventSource
   ) async throws
   func onLeaveIndication(
     contextIdentifier: MAPContextIdentifier,
@@ -49,7 +49,7 @@ protocol BaseApplicationEventObserver<P>: BaseApplication {
     attributeType: AttributeType,
     attributeSubtype: AttributeSubtype?,
     attributeValue: some Value,
-    eventSource: ParticipantEventSource
+    eventSource: EventSource
   ) async throws
 }
 
@@ -202,7 +202,7 @@ extension BaseApplication {
     }
   }
 
-  public func shouldPropagate(eventSource: ParticipantEventSource) -> Bool {
+  public func shouldPropagate(eventSource: EventSource) -> Bool {
     switch eventSource {
     case .joinTimer:
       fallthrough
@@ -230,7 +230,7 @@ extension BaseApplication {
     attributeSubtype: AttributeSubtype?,
     attributeValue: some Value,
     isNew: Bool,
-    eventSource: ParticipantEventSource
+    eventSource: EventSource
   ) async throws {
     guard shouldPropagate(eventSource: eventSource) else { return }
     try await apply(for: contextIdentifier) { participant in
@@ -252,7 +252,7 @@ extension BaseApplication {
     attributeSubtype: AttributeSubtype?,
     attributeValue: some Value,
     isNew: Bool,
-    eventSource: ParticipantEventSource
+    eventSource: EventSource
   ) async throws {
     precondition(!(attributeValue is AnyValue))
     do {
@@ -287,7 +287,7 @@ extension BaseApplication {
     attributeType: AttributeType,
     attributeSubtype: AttributeSubtype?,
     attributeValue: some Value,
-    eventSource: ParticipantEventSource
+    eventSource: EventSource
   ) async throws {
     guard shouldPropagate(eventSource: eventSource) else { return }
     try await apply(for: contextIdentifier) { participant in
@@ -307,7 +307,7 @@ extension BaseApplication {
     attributeType: AttributeType,
     attributeSubtype: AttributeSubtype?,
     attributeValue: some Value,
-    eventSource: ParticipantEventSource
+    eventSource: EventSource
   ) async throws {
     precondition(!(attributeValue is AnyValue))
     do {

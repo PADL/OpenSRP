@@ -22,7 +22,7 @@
 // XXX! state machine event
 // !XXX “Not XXX”; i.e., logical NOT applied to the condition XXX
 
-enum ProtocolEvent: Sendable {
+public enum ProtocolEvent: Sendable {
   case Begin // Initialize state machine (10.7.5.1)
   case New // A new declaration (10.7.5.4)
   case Join // Declaration without signaling new registration (10.7.5.5)
@@ -43,4 +43,56 @@ enum ProtocolEvent: Sendable {
   case leavetimer // leavetimer has expired (10.7.5.21)
   case leavealltimer // leavealltimer has expired (10.7.5.22)
   case periodictimer // periodictimer has expired (10.7.5.23)
+}
+
+public struct EventContext<A: Application>: Sendable, CustomStringConvertible {
+  public let participant: Participant<A>
+  public let event: ProtocolEvent
+  public let eventSource: EventSource
+  public let attributeType: AttributeType
+  public let attributeSubtype: AttributeSubtype?
+  public let attributeValue: any Value
+
+  let smFlags: StateMachineHandlerFlags
+  let applicant: Applicant
+  let registrar: Registrar?
+
+  public var description: String {
+    "EventContext(event: \(event), eventSource: \(eventSource), attributeType: \(attributeType), attributeSubtype: \(attributeSubtype ?? 0), attributeValue: \(attributeValue), smFlags: \(smFlags), state A \(applicant) R \(registrar?.description ?? "-"))"
+  }
+}
+
+public enum EventSource: Sendable {
+  // event source was join timer
+  case joinTimer
+  // event source was leave timer
+  case leaveTimer
+  // event source was leave all timer
+  case leaveAllTimer
+  // event source was the local port (e.g. kernel MVRP)
+  case local
+  // event source was a remote peer
+  case peer
+  // event source was explicit administrative control (e.g. TSN endpoint)
+  case `internal`
+  // event source was transitive via MAP function
+  case map
+  // event source was a preApplicantEventHandler/postApplicantEventHandler hook
+  case application
+}
+
+struct StateMachineHandlerFlags: OptionSet {
+  typealias RawValue = UInt32
+
+  var rawValue: RawValue
+
+  init(rawValue: RawValue) {
+    self.rawValue = rawValue
+  }
+
+  static let operPointToPointMAC = StateMachineHandlerFlags(rawValue: 1 << 0)
+  static let registrationFixedNewIgnored = StateMachineHandlerFlags(rawValue: 1 << 1)
+  static let registrationFixedNewPropagated = StateMachineHandlerFlags(rawValue: 1 << 2)
+  static let registrationForbidden = StateMachineHandlerFlags(rawValue: 1 << 3)
+  static let applicantOnlyParticipant = StateMachineHandlerFlags(rawValue: 1 << 4)
 }

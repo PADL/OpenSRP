@@ -45,89 +45,6 @@ enum ParticipantType {
   case applicantOnly
 }
 
-public struct EventContext<A: Application>: Sendable, CustomStringConvertible {
-  let participant: Participant<A>
-  let event: ProtocolEvent
-  let eventSource: ParticipantEventSource
-  let attributeType: AttributeType
-  let attributeSubtype: AttributeSubtype?
-  let attributeValue: any Value
-
-  fileprivate let smFlags: StateMachineHandlerFlags
-  fileprivate let applicant: Applicant
-  fileprivate let registrar: Registrar?
-
-  public var description: String {
-    "EventContext(event: \(event), eventSource: \(eventSource), attributeType: \(attributeType), attributeSubtype: \(attributeSubtype ?? 0), attributeValue: \(attributeValue), smFlags: \(smFlags), state A \(applicant) R \(registrar?.description ?? "-"))"
-  }
-}
-
-public enum AttributeValueFilter: Sendable {
-  // match any value for this attribute type
-  case matchAny
-  // match any value whose index matches the provided index
-  case matchAnyIndex(UInt64)
-  // match any value whose index matches the provided value
-  case matchIndex(any Value)
-  // match value which matches exactly
-  case matchEqual(any Value)
-  case matchEqualWithSubtype((AttributeSubtype?, any Value))
-  // match value which matches exactly, relative to provided index
-  case matchRelative((any Value, UInt64))
-  case matchRelativeWithSubtype((AttributeSubtype?, any Value, UInt64))
-
-  fileprivate var _value: (any Value)? {
-    get throws {
-      switch self {
-      case .matchAny:
-        fallthrough
-      case .matchAnyIndex:
-        return nil
-      case let .matchIndex(value):
-        fallthrough
-      case let .matchEqual(value):
-        fallthrough
-      case .matchEqualWithSubtype(let (_, value)):
-        return value
-      case .matchRelative(let (value, index)):
-        fallthrough
-      case .matchRelativeWithSubtype(let (_, value, index)):
-        return try value.makeValue(relativeTo: index)
-      }
-    }
-  }
-
-  fileprivate var _subtype: AttributeSubtype? {
-    switch self {
-    case let .matchEqualWithSubtype((subtype, _)):
-      fallthrough
-    case let .matchRelativeWithSubtype((subtype, _, _)):
-      return subtype
-    default:
-      return nil
-    }
-  }
-}
-
-public enum ParticipantEventSource: Sendable {
-  // event source was join timer
-  case joinTimer
-  // event source was leave timer
-  case leaveTimer
-  // event source was leave all timer
-  case leaveAllTimer
-  // event source was the local port (e.g. kernel MVRP)
-  case local
-  // event source was a remote peer
-  case peer
-  // event source was explicit administrative control (e.g. TSN endpoint)
-  case `internal`
-  // event source was transitive via MAP function
-  case map
-  // event source was a preApplicantEventHandler/postApplicantEventHandler hook
-  case application
-}
-
 private enum EnqueuedEvent<A: Application>: Equatable, CustomStringConvertible {
   struct AttributeEvent: Equatable, CustomStringConvertible {
     let attributeEvent: MRP.AttributeEvent
@@ -309,7 +226,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
 
   private func _apply(
     event: ProtocolEvent,
-    eventSource: ParticipantEventSource
+    eventSource: EventSource
   ) async throws {
     try await _apply { attributeValue in
       try await attributeValue.handle(
@@ -319,7 +236,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     }
   }
 
-  private func _txOpportunity(eventSource: ParticipantEventSource) async throws {
+  private func _txOpportunity(eventSource: EventSource) async throws {
     // this will send a .tx/.txLA event to all attributes which will then make
     // the appropriate state transitions, potentially triggering the encoding
     // of a vector
@@ -403,7 +320,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   }
 
   private func _leaveAll(
-    eventSource: ParticipantEventSource,
+    eventSource: EventSource,
     _ isIncluded: @Sendable (AttributeType, AttributeSubtype?, any Value) -> Bool
   ) async throws {
     try await _apply { attributeValueState in
@@ -537,7 +454,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   // handle an event in the LeaveAll state machine (10.5)
   private func _handleLeaveAll(
     event: ProtocolEvent,
-    eventSource: ParticipantEventSource
+    eventSource: EventSource
   ) async throws {
     let action = _leaveAll.action(for: event)
 
@@ -571,7 +488,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   private func _handle(
     attributeEvent: AttributeEvent,
     with attributeValue: _AttributeValueState<A>,
-    eventSource: ParticipantEventSource
+    eventSource: EventSource
   ) async throws {
     try await attributeValue.handle(
       event: attributeEvent.protocolEvent,
@@ -580,7 +497,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   }
 
   func rx(message: Message, sourceMacAddress: EUI48) async throws {
-    let eventSource: ParticipantEventSource = _isEqualMacAddress(
+    let eventSource: EventSource = _isEqualMacAddress(
       sourceMacAddress,
       port.macAddress
     ) ? .local : .peer
@@ -681,7 +598,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     attributeSubtype: AttributeSubtype? = nil,
     attributeValue: some Value,
     isNew: Bool,
-    eventSource: ParticipantEventSource = .internal
+    eventSource: EventSource = .internal
   ) async throws {
     let attribute = try _findAttributeValueState(
       attributeType: attributeType,
@@ -696,7 +613,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     attributeType: AttributeType,
     attributeSubtype: AttributeSubtype? = nil,
     attributeValue: some Value,
-    eventSource: ParticipantEventSource = .internal
+    eventSource: EventSource = .internal
   ) async throws {
     let attribute = try _findAttributeValueState(
       attributeType: attributeType,
@@ -823,7 +740,7 @@ Sendable, Hashable, Equatable, CustomStringConvertible {
 
   func handle(
     event: ProtocolEvent,
-    eventSource: ParticipantEventSource
+    eventSource: EventSource
   ) async throws {
     guard let participant else { throw MRPError.internalError }
 
