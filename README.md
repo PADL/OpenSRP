@@ -1,32 +1,31 @@
 # SwiftMRP
 
-SwiftMRP is a Swift implementation of MMRP, MVRP and MSRP from 802.1Q (commonly referred to by the aggregate term SRP). It is a work in progress (pre-alpha) so, caveat emptor.
+SwiftMRP is an implementation of the 802.1Q SRP suite of protocols: MMRP, MVRP and MSRP. They are used in AVB/TSN networks to coordinate stream reservations amongst Ethernet bridges.
 
-Its distinguishing features have less to do with being written in Swift (although that did facilitate its rapid development), but rather in being designed to support bridging, and doing so with the standard Linux kernel interfaces. In my research, the other open source SRP implementations support end stations only, or they use proprietary kernel interfaces (necessary before Linux provided standardized interfaces over NetLink).
+SwiftMRP's distinguishing features have less to do with being written in Swift (although that did facilitate its rapid development), but rather in being designed to support bridging, and doing so with the standard Linux kernel interfaces. The other open source SRP implementations (that the author has been able to find) typically support end-stations only, or use proprietary kernel interfaces.
 
 The eventual goal it so support switch chips running in DSA mode.
 
 ## Architecture
 
-* NetLink: Swift structured concurrency wrapper around `libnl-3` (this has now been factored out into a [separate package](https://github.com/PADL/NetLinkSwift))
+* NetLink: Swift structured concurrency wrapper around `libnl-3` (this has now been split into a [separate package](https://github.com/PADL/NetLinkSwift))
 * IEEE802: shared types and serialization APIs
-* MarvellRMU: future framework for integrating with Marvell switches using RMU (TBC)
 * MRP: abstract state machine, platform abstraction layer
 * MRPDaemon: MRP daemon
 * PMC: PTP management client library
 
-MMRP, MVRP, and MSRP are "applications" of the generalized MRP protocol and state machine. The applications are responsible for responding to the MRP registrations (e.g. by adding a FDB entry) and also propagating the declarations to other ports.
+MMRP, MVRP, and MSRP are "applications" of the generalized MRP protocol and state machine. Aplications are responsible for responding to MRP registrations (e.g. by adding a FDB entry) and also propagating MRP declarations to other bridge ports.
 
 Note that whilst SwiftMRP does have a platform abstraction layer, the initial platform is Linux, and we would prefer to push switch-specific functionality into the kernel rather than separate platform backends.
 
-Because Linux has an in-kernel MVRP applicant, `mrpd` does not automatically advertise statically configured VLANs. If you wish to do so, you should create a VLAN interface and set the `mvrp` flag to `on` using `ip link set dev` . (If you wish to send AVTP packets you should also read [this](https://tsn.readthedocs.io/vlan.html) document on configuring `egress-qos-map`. But bear in mind that SwiftMRP end-station support is incomplete at the time of writing.)
+Note: as Linux has an in-kernel MVRP applicant, `mrpd` does not automatically advertise statically configured VLANs. If you wish to do so, you should create a VLAN interface and set the `mvrp` flag to `on` using `ip link set dev` . (If you wish to send AVTP packets you should also read [this](https://tsn.readthedocs.io/vlan.html) document on configuring `egress-qos-map`. But bear in mind that SwiftMRP end-station support is incomplete at the time of writing.)
 
 ## Configuring
 
-Static configuration is left to the administrator as there is no point re-implementing standard tools such as `bridge` and `tc`. The `config-vlan.sh` script in the top-level directory is a good starting point, but essentially the assumptions are as follows:
+Configuration prior to running the `mrpd` daemon is left to the administrator, and can be performed with standard Linux tools such as `bridge` and `tc`. The `config-srp.sh` script in the top-level directory is a good starting point, but essentially the assumptions are as follows:
 
-* A bridge is configured with at least one network interface (two or more to do anything useful as end-station support is not yet implemented)
-* A pre-routing nftables hook is required to allow `mrpd` to intercept MMRP/MVRP packets before they are bridged (see note below)
+* A Linux bridge is configured with at least two network interfaces
+* A pre-routing nftables hook is configured, to allow `mrpd` to intercept MMRP/MVRP packets before they are bridged (see note below)
 * The `mqprio` qdisc is configured for class A and B streams according to the documentation [here](https://tsn.readthedocs.io/qdiscs.html).
 
 Note that `mrpd` will adjust the Credit Based Shaper (CBS) parameters dynamically depending on stream reservations (if there are no reservations, the `cbs` qdisc will be replaced with the default `pfifo_fast` one).
@@ -47,7 +46,7 @@ There are various parameters to `mrpd` which can be listed with the `--help` opt
 
 ## Running
 
-Usage of the `mrpd` daemon is as follows:
+Command-line usage of the `mrpd` daemon is as follows:
 
 ```bash
 USAGE: mrpd [<options>] --bridge-interface <bridge-interface>
