@@ -49,10 +49,10 @@ private enum EnqueuedEvent<A: Application>: Equatable, CustomStringConvertible {
   struct AttributeEvent: Equatable, CustomStringConvertible {
     let attributeEvent: MRP.AttributeEvent
     let attributeValue: _AttributeValueState<A>
-    let canOmitEncoding: Bool
+    let encodingOptional: Bool
 
     var description: String {
-      "attributeEvent: \(attributeEvent), attributeValue: \(attributeValue), canOmitEncoding: \(canOmitEncoding)"
+      "attributeEvent: \(attributeEvent), attributeValue: \(attributeValue), encodingOptional: \(encodingOptional)"
     }
   }
 
@@ -91,9 +91,9 @@ private enum EnqueuedEvent<A: Application>: Equatable, CustomStringConvertible {
       // we were replaced with an identical event within the current jointimer window
       true
     } else if case let .attributeEvent(self) = self, case let .attributeEvent(event) = event {
-      // another event with the same attribute type and value had canOmitEncoding set,
+      // another event with the same attribute type and value had encodingOptional set,
       // which allows it to be elided from the transmitted packet
-      self.canOmitEncoding && self.attributeValue == event.attributeValue
+      self.encodingOptional && self.attributeValue == event.attributeValue
     } else {
       // this is a new event
       false
@@ -399,14 +399,14 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     if let index = _enqueuedEvents.index(forKey: event.attributeType) {
       let isAlreadyEncoded = _enqueuedEvents.values[index].contains {
         // if the enqueued event already exists, then ignore it; if it already exists
-        // and an existing event exists that matches, except it has canOmitEncoding
+        // and an existing event exists that matches, except it has encodingOptional
         // set to false and the new event has it set to true, then also ignore it.
         if $0 == event { true }
         else if !event.isLeaveAll,
                 !$0.isLeaveAll,
                 $0.unsafeAttributeEvent.attributeEvent == event.unsafeAttributeEvent.attributeEvent,
                 $0.unsafeAttributeEvent.attributeValue == event.unsafeAttributeEvent.attributeValue,
-                event.unsafeAttributeEvent.canOmitEncoding
+                event.unsafeAttributeEvent.encodingOptional
         {
           true
         } else {
@@ -417,7 +417,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
         _logger.trace("\(self): event \(event) was already encoded, skipping")
         return
       }
-      // if canOmitEncoding is set to false, the event is always encode, but it
+      // if encodingOptional is set to false, the event is always encode, but it
       // may replace a previous event of any event type that had it set to true.
       if let eventIndex = _enqueuedEvents.values[index]
         .firstIndex(where: { $0.canBeReplacedBy(event: event) })
@@ -434,12 +434,12 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   fileprivate func _txEnqueue(
     attributeEvent: AttributeEvent,
     attributeValue: _AttributeValueState<A>,
-    canOmitEncoding: Bool
+    encodingOptional: Bool
   ) {
     let event = EnqueuedEvent<A>.AttributeEvent(
       attributeEvent: attributeEvent,
       attributeValue: attributeValue,
-      canOmitEncoding: canOmitEncoding
+      encodingOptional: encodingOptional
     )
     _txEnqueue(.attributeEvent(event))
   }
@@ -797,6 +797,7 @@ Sendable, Hashable, Equatable, CustomStringConvertible {
       // starting a new one, makes for more optimal encoding; i.e.,
       // transmitting the value is not necessary for correct protocol
       // operation.
+      // TODO: the text is difficult to parse, are we implementing correctly?
       guard let registrar else { break }
       attributeEvent = (registrar.state == .IN) ? .JoinIn : .JoinMt
     case .sL:
@@ -814,7 +815,7 @@ Sendable, Hashable, Equatable, CustomStringConvertible {
       await context.participant._txEnqueue(
         attributeEvent: attributeEvent,
         attributeValue: self,
-        canOmitEncoding: action.canOmitEncoding
+        encodingOptional: action.encodingOptional
       )
     }
   }
