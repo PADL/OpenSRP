@@ -82,18 +82,18 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
         for try await _ in group {}
       }
     } catch {
-      logger.error("MRP event loop terminated: \(error)")
+      logger.info("MRP event loop terminated: \(error)")
     }
   }
 
   private func _shutdown() async {
     logger.info("stopping MRP for bridge \(bridge)")
+    // FIXME: there appears to be a crash here
+    _taskGroup?.cancelAll()
     try? await bridge.shutdown(controller: self)
     for port in ports {
       try? _didRemove(port: port)
     }
-    // FIXME: there appears to be a crash here
-    _taskGroup?.cancelAll()
   }
 
   public func run() async throws {
