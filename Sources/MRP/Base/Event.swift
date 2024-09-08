@@ -122,13 +122,16 @@ public struct EventCounters<A: Application>: Sendable {
   var newMessagesSent = 0
   var joinInMessagesSent = 0
   var joinEmptyMessagesSent = 0
+  var joinInMessagesReceived = 0
   var didReceiveLeaveAllMessage = false
   var didReceiveLeaveMessage = false
 
+  // clause 10.6: count messages received and sent
   mutating func count(context: EventContext<A>, attributeEvent: AttributeEvent?) {
     if context.event._r {
       didReceiveLeaveMessage = context.event == .rLv
       didReceiveLeaveAllMessage = context.event == .rLA
+      if context.event == .rJoinIn { joinInMessagesReceived += 1 }
     }
 
     if let attributeEvent {
