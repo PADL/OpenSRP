@@ -43,6 +43,27 @@ public enum ProtocolEvent: Sendable {
   case leavetimer // leavetimer has expired (10.7.5.21)
   case leavealltimer // leavealltimer has expired (10.7.5.22)
   case periodictimer // periodictimer has expired (10.7.5.23)
+
+  fileprivate var _r: Bool {
+    switch self {
+    case .rNew:
+      fallthrough
+    case .rJoinIn:
+      fallthrough
+    case .rIn:
+      fallthrough
+    case .rJoinMt:
+      fallthrough
+    case .rMt:
+      fallthrough
+    case .rLv:
+      fallthrough
+    case .rLA:
+      return true
+    default:
+      return false
+    }
+  }
 }
 
 public struct EventContext<A: Application>: Sendable, CustomStringConvertible {
@@ -95,4 +116,32 @@ struct StateMachineHandlerFlags: OptionSet {
   static let registrationFixedNewPropagated = StateMachineHandlerFlags(rawValue: 1 << 2)
   static let registrationForbidden = StateMachineHandlerFlags(rawValue: 1 << 3)
   static let applicantOnlyParticipant = StateMachineHandlerFlags(rawValue: 1 << 4)
+}
+
+public struct EventCounters<A: Application>: Sendable {
+  var newMessagesSent = 0
+  var joinInMessagesSent = 0
+  var joinEmptyMessagesSent = 0
+  var didReceiveLeaveAllMessage = false
+  var didReceiveLeaveMessage = false
+
+  mutating func count(context: EventContext<A>, attributeEvent: AttributeEvent?) {
+    if context.event._r {
+      didReceiveLeaveMessage = context.event == .rLv
+      didReceiveLeaveAllMessage = context.event == .rLA
+    }
+
+    if let attributeEvent {
+      switch attributeEvent {
+      case .New:
+        newMessagesSent += 1
+      case .JoinIn:
+        joinInMessagesSent += 1
+      case .JoinMt:
+        joinEmptyMessagesSent += 1
+      default:
+        break
+      }
+    }
+  }
 }

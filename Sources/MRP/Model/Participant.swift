@@ -36,6 +36,7 @@
 // (8.4).
 
 import IEEE802
+import Locking
 import Logging
 
 enum ParticipantType {
@@ -631,8 +632,9 @@ private typealias AsyncParticipantApplyFunction<A: Application> =
 private typealias ParticipantApplyFunction<A: Application> =
   @Sendable (_AttributeValueState<A>) throws -> ()
 
-private final class _AttributeValueState<A: Application>: @unchecked
-Sendable, Hashable, Equatable, CustomStringConvertible {
+private final class _AttributeValueState<A: Application>: @unchecked Sendable, Hashable, Equatable,
+  CustomStringConvertible
+{
   typealias P = Participant<A>
   static func == (lhs: _AttributeValueState<A>, rhs: _AttributeValueState<A>) -> Bool {
     lhs.attributeType == rhs.attributeType &&
@@ -646,8 +648,10 @@ Sendable, Hashable, Equatable, CustomStringConvertible {
   let attributeType: AttributeType
   let attributeSubtype: AttributeSubtype?
   let value: AnyValue
-  var index: UInt64 { value.index }
 
+  let counters = ManagedCriticalState(EventCounters<A>())
+
+  var index: UInt64 { value.index }
   var participant: P? { _participant.object }
   var unwrappedValue: any Value { value.value }
 
@@ -773,15 +777,16 @@ Sendable, Hashable, Equatable, CustomStringConvertible {
       let applicationEventHandler = context.participant
         .application as? any ApplicationEventHandler<A>
       try await applicationEventHandler?.preApplicantEventHandler(context: context)
-      try await _handle(applicantAction: applicantAction, context: context)
+      let attributeEvent = try await _handle(applicantAction: applicantAction, context: context)
       applicationEventHandler?.postApplicantEventHandler(context: context)
+      counters.withCriticalRegion { $0.count(context: context, attributeEvent: attributeEvent) }
     }
   }
 
   private func _handle(
     applicantAction action: Applicant.Action,
     context: EventContext<A>
-  ) async throws {
+  ) async throws -> AttributeEvent? {
     var attributeEvent: AttributeEvent?
 
     switch action {
@@ -818,6 +823,8 @@ Sendable, Hashable, Equatable, CustomStringConvertible {
         encodingOptional: action.encodingOptional
       )
     }
+
+    return attributeEvent
   }
 
   private func _handleRegistrar(context: EventContext<A>) async throws {

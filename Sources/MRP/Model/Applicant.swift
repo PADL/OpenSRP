@@ -73,17 +73,7 @@ struct Applicant: Sendable, CustomStringConvertible {
     }
   }
 
-  // TODO: update counters
-  struct Counters {
-    var newMessagesSent = 0
-    var joinInMessagesSent = 0
-    var joinEmptyMessagesSent = 0
-    var didReceivedLeaveAllMessage = false
-    var didReceiveLeaveMessage = false
-  }
-
   private let _state = ManagedCriticalState(State.VO)
-  private(set) var counters = Counters()
 
   func action(for event: ProtocolEvent, flags: StateMachineHandlerFlags) -> Action? {
     _state.withCriticalRegion { $0.action(for: event, flags: flags) }
