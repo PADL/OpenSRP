@@ -323,10 +323,6 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
     }
   }
 
-  deinit {
-    _taskGroup?.cancelAll()
-  }
-
   func register(application: some Application<P>) async throws {
     guard _applications[application.etherType] == nil
     else { throw MRPError.applicationAlreadyRegistered }

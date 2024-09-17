@@ -14,6 +14,7 @@
 // limitations under the License.
 //
 
+import Glibc
 import PMC
 import SystemPackage
 
