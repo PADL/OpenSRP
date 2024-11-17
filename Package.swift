@@ -8,9 +8,17 @@ let PlatformTargetDependencies: [Target.Dependency]
 let PlatformProducts: [Product]
 let PlatformTargets: [Target]
 var PlatformCSettings: [CSetting] = []
+var PlatformSwiftSettings: [SwiftSetting] = []
 var PlatformLinkerSettings: [LinkerSetting] = []
 
+PlatformSwiftSettings += [
+  .swiftLanguageMode(.v5),
+  .enableExperimentalFeature("StrictConcurrency"),
+]
+
 #if os(Linux)
+PlatformCSettings += [.unsafeFlags(["-I", "/usr/include/libnl3"])]
+
 PlatformPackageDependencies = [
   .package(
     url: "https://github.com/PADL/IORingSwift",
@@ -58,17 +66,23 @@ PlatformTargets = [
       "MRP",
       .product(name: "ArgumentParser", package: "swift-argument-parser"),
       .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
-    ]
+    ],
+    cSettings: PlatformCSettings,
+    swiftSettings: PlatformSwiftSettings
   ),
   .executableTarget(
     name: "portmon",
     dependencies: ["MRP"],
-    path: "Examples/portmon"
+    path: "Examples/portmon",
+    cSettings: PlatformCSettings,
+    swiftSettings: PlatformSwiftSettings
   ),
   .executableTarget(
     name: "pmctool",
     dependencies: ["PMC"],
-    path: "Examples/pmctool"
+    path: "Examples/pmctool",
+    cSettings: PlatformCSettings,
+    swiftSettings: PlatformSwiftSettings
   ),
 ]
 
@@ -131,10 +145,7 @@ let CommonTargets: [Target] = [
       .product(name: "SystemPackage", package: "swift-system"),
     ] + PlatformTargetDependencies,
     cSettings: PlatformCSettings,
-    swiftSettings: [
-      .swiftLanguageMode(.v5),
-      .enableExperimentalFeature("StrictConcurrency"),
-    ],
+    swiftSettings: PlatformSwiftSettings,
     linkerSettings: PlatformLinkerSettings
   ),
   .target(
@@ -152,10 +163,7 @@ let CommonTargets: [Target] = [
       .product(name: "SystemPackage", package: "swift-system"),
     ] + PlatformTargetDependencies,
     cSettings: PlatformCSettings,
-    swiftSettings: [
-      .swiftLanguageMode(.v5),
-      .enableExperimentalFeature("StrictConcurrency"),
-    ],
+    swiftSettings: PlatformSwiftSettings,
     linkerSettings: PlatformLinkerSettings
   ),
   .testTarget(
