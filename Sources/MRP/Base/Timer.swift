@@ -15,7 +15,7 @@
 //
 
 import AsyncAlgorithms
-import Locking
+import Synchronization
 
 // Timers are used in the state machine descriptions in order to cause actions
 // to be taken after defined time periods have elapsed. The following
@@ -42,7 +42,7 @@ final class Timer: CustomStringConvertible, Sendable {
 
   private let _label: String
   private let _onExpiry: Action
-  private let _task: ManagedCriticalState<Task<(), Error>?>
+  private let _task: Mutex<Task<(), Error>?>
 
   var description: String {
     "Timer(\(_label))"
@@ -51,11 +51,11 @@ final class Timer: CustomStringConvertible, Sendable {
   init(label: String, onExpiry: @escaping Action) {
     _label = label
     _onExpiry = onExpiry
-    _task = ManagedCriticalState<Task<(), Error>?>(nil)
+    _task = Mutex<Task<(), Error>?>(nil)
   }
 
   func start(interval: Duration) {
-    _task.withCriticalRegion { task in
+    _task.withLock { task in
       task?.cancel() // in case stop() was not called
       task = Task<(), Error> { try await _loop(interval: interval) }
     }
@@ -71,7 +71,7 @@ final class Timer: CustomStringConvertible, Sendable {
   }
 
   func stop() {
-    _task.withCriticalRegion { task in
+    _task.withLock { task in
       task?.cancel()
       task = nil
     }

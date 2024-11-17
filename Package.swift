@@ -1,4 +1,4 @@
-// swift-tools-version: 5.10
+// swift-tools-version: 6.0
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
 import PackageDescription
@@ -103,9 +103,6 @@ let CommonProducts: [Product] = [
 
 let CommonTargets: [Target] = [
   .target(
-    name: "Locking"
-  ),
-  .target(
     name: "IEEE802",
     dependencies: [
       .product(name: "SystemPackage", package: "swift-system"),
@@ -114,7 +111,6 @@ let CommonTargets: [Target] = [
   .target(
     name: "MarvellRMU",
     dependencies: [
-      "Locking",
       "IEEE802",
       "AsyncExtensions",
       "SocketAddress",
@@ -136,6 +132,7 @@ let CommonTargets: [Target] = [
     ] + PlatformTargetDependencies,
     cSettings: PlatformCSettings,
     swiftSettings: [
+      .swiftLanguageMode(.v5),
       .enableExperimentalFeature("StrictConcurrency"),
     ],
     linkerSettings: PlatformLinkerSettings
@@ -144,7 +141,6 @@ let CommonTargets: [Target] = [
     name: "MRP",
     dependencies: [
       "IEEE802",
-      "Locking",
       "AsyncExtensions",
       "SocketAddress",
       "MarvellRMU",
@@ -157,6 +153,7 @@ let CommonTargets: [Target] = [
     ] + PlatformTargetDependencies,
     cSettings: PlatformCSettings,
     swiftSettings: [
+      .swiftLanguageMode(.v5),
       .enableExperimentalFeature("StrictConcurrency"),
     ],
     linkerSettings: PlatformLinkerSettings
@@ -170,10 +167,9 @@ let CommonTargets: [Target] = [
 let package = Package(
   name: "SwiftMRP",
   platforms: [
-    .macOS(.v14),
+    .macOS(.v15),
   ],
   products: CommonProducts + PlatformProducts,
   dependencies: CommonPackageDependencies + PlatformPackageDependencies,
-  targets: CommonTargets + PlatformTargets,
-  swiftLanguageVersions: [.v5]
+  targets: CommonTargets + PlatformTargets
 )

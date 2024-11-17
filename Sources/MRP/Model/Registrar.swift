@@ -14,13 +14,13 @@
 // limitations under the License.
 //
 
-import Locking
+import Synchronization
 
 // The job of the Registrar is to record declarations of the attribute made by
 // other Participants on the LAN. It does not send any protocol messages, as
 // the Applicant looks after the interests of all would-be Participants.
 
-struct Registrar: Sendable, CustomStringConvertible {
+final class Registrar: Sendable, CustomStringConvertible {
   enum State: Sendable {
     case IN // Registered
     case LV // Previously registered, but now being timed out
@@ -33,8 +33,8 @@ struct Registrar: Sendable, CustomStringConvertible {
     case Lv // send a Lv indication to MAP and the MRP application (10.7.6.14)
   }
 
-  private let _state = ManagedCriticalState(State.MT)
-  private var _leavetimer: Timer!
+  private let _state = Mutex(State.MT)
+  private let _leavetimer: Timer
 
   init(onLeaveTimerExpired: @escaping Timer.Action) {
     _leavetimer = Timer(label: "leavetimer", onExpiry: onLeaveTimerExpired)
@@ -42,7 +42,7 @@ struct Registrar: Sendable, CustomStringConvertible {
 
   // note: this function has side effects, it will start/stop leavetimer
   func action(for event: ProtocolEvent, flags: StateMachineHandlerFlags) -> Action? {
-    _state.withCriticalRegion { state in
+    _state.withLock { state in
       if state == .LV, event == .rNew || event == .rJoinIn || event == .rJoinMt {
         stopLeaveTimer()
       } else if state == .IN,
@@ -54,7 +54,7 @@ struct Registrar: Sendable, CustomStringConvertible {
     }
   }
 
-  var state: State { _state.criticalState }
+  var state: State { _state.withLock { $0 } }
 
   func startLeaveTimer() {
     _leavetimer.start(interval: LeaveTime)
@@ -65,7 +65,7 @@ struct Registrar: Sendable, CustomStringConvertible {
   }
 
   var description: String {
-    String(describing: _state.criticalState)
+    String(describing: state)
   }
 }
 

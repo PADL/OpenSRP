@@ -36,8 +36,8 @@
 // (8.4).
 
 import IEEE802
-import Locking
 import Logging
+import Synchronization
 
 enum ParticipantType {
   case full
@@ -649,7 +649,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
   let attributeSubtype: AttributeSubtype?
   let value: AnyValue
 
-  let counters = ManagedCriticalState(EventCounters<A>())
+  let counters = Mutex(EventCounters<A>())
 
   var index: UInt64 { value.index }
   var participant: P? { _participant.object }
@@ -779,7 +779,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
       try await applicationEventHandler?.preApplicantEventHandler(context: context)
       let attributeEvent = try await _handle(applicantAction: applicantAction, context: context)
       applicationEventHandler?.postApplicantEventHandler(context: context)
-      counters.withCriticalRegion { $0.count(context: context, attributeEvent: attributeEvent) }
+      counters.withLock { $0.count(context: context, attributeEvent: attributeEvent) }
     }
   }
 

@@ -14,14 +14,14 @@
 // limitations under the License.
 //
 
-import Locking
 import Logging
+import Synchronization
 
 protocol BaseApplication: Application where P == P {
   typealias MAPParticipantDictionary = [MAPContextIdentifier: Set<Participant<Self>>]
 
   var _controller: Weak<MRPController<P>> { get }
-  var _participants: ManagedCriticalState<MAPParticipantDictionary> { get }
+  var _participants: Mutex<MAPParticipantDictionary> { get }
 }
 
 protocol BaseApplicationContextObserver<P>: BaseApplication {
@@ -61,7 +61,7 @@ extension BaseApplication {
       nonBaseContextsSupported || participant
         .contextIdentifier == MAPBaseSpanningTreeContext
     )
-    _participants.withCriticalRegion {
+    _participants.withLock {
       if let index = $0.index(forKey: participant.contextIdentifier) {
         $0.values[index].insert(participant)
       } else {
@@ -77,7 +77,7 @@ extension BaseApplication {
       nonBaseContextsSupported || participant
         .contextIdentifier == MAPBaseSpanningTreeContext
     )
-    _participants.withCriticalRegion {
+    _ = _participants.withLock {
       $0[participant.contextIdentifier]?.remove(participant)
     }
   }
@@ -88,7 +88,7 @@ extension BaseApplication {
     _ block: AsyncApplyFunction<T>
   ) async rethrows -> [T] {
     var participants: Set<Participant<Self>>?
-    _participants.withCriticalRegion {
+    _participants.withLock {
       if let contextIdentifier {
         participants = $0[contextIdentifier]
       } else {
@@ -110,7 +110,7 @@ extension BaseApplication {
     _ block: ApplyFunction<T>
   ) rethrows -> [T] {
     var participants: Set<Participant<Self>>?
-    _participants.withCriticalRegion {
+    _participants.withLock {
       if let contextIdentifier {
         participants = $0[contextIdentifier]
       } else {

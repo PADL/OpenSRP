@@ -14,7 +14,7 @@
 // limitations under the License.
 //
 
-import Locking
+import Synchronization
 
 // A Full Participant implements the complete Applicant state machine (Table 10-3)
 //
@@ -43,7 +43,7 @@ import Locking
 // packet loss) two Join or New messages or have reported the Attribute as
 // registered
 
-struct Applicant: Sendable, CustomStringConvertible {
+final class Applicant: Sendable, CustomStringConvertible {
   enum State: Sendable {
     case VO // Very anxious Observer
     case VP // Very anxious Passive
@@ -73,14 +73,18 @@ struct Applicant: Sendable, CustomStringConvertible {
     }
   }
 
-  private let _state = ManagedCriticalState(State.VO)
+  private let _state = Mutex(State.VO)
 
   func action(for event: ProtocolEvent, flags: StateMachineHandlerFlags) -> Action? {
-    _state.withCriticalRegion { $0.action(for: event, flags: flags) }
+    _state.withLock { $0.action(for: event, flags: flags) }
+  }
+
+  private var state: State {
+    _state.withLock { $0 }
   }
 
   var description: String {
-    String(describing: _state.criticalState)
+    String(describing: state)
   }
 }
 

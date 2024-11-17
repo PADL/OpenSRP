@@ -14,9 +14,9 @@
 // limitations under the License.
 //
 
-import Locking
+import Synchronization
 
-struct LeaveAll: Sendable, CustomStringConvertible {
+final class LeaveAll: Sendable, CustomStringConvertible {
   enum State {
     case Active
     case Passive
@@ -27,9 +27,9 @@ struct LeaveAll: Sendable, CustomStringConvertible {
     case sLA
   }
 
-  private let _state = ManagedCriticalState(State.Passive)
+  private let _state = Mutex(State.Passive)
   private let _leaveAllTime: Duration
-  private var _leaveAllTimer: Timer!
+  private let _leaveAllTimer: Timer
 
   init(interval leaveAllTime: Duration, onLeaveAllTimerExpired: @escaping Timer.Action) {
     _leaveAllTime = leaveAllTime
@@ -40,12 +40,12 @@ struct LeaveAll: Sendable, CustomStringConvertible {
   }
 
   func action(for event: ProtocolEvent) -> Action? {
-    _state.withCriticalRegion { state in
+    _state.withLock { state in
       state.action(for: event)
     }
   }
 
-  var state: State { _state.criticalState }
+  var state: State { _state.withLock { $0 } }
 
   func startLeaveAllTimer() {
     _leaveAllTimer.start(interval: _leaveAllTime)
@@ -56,7 +56,7 @@ struct LeaveAll: Sendable, CustomStringConvertible {
   }
 
   var description: String {
-    String(describing: _state.criticalState)
+    String(describing: state)
   }
 }
 

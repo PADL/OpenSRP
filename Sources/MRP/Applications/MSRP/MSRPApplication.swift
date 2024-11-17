@@ -16,8 +16,8 @@
 
 import AsyncExtensions
 import IEEE802
-import Locking
 import Logging
+import Synchronization
 
 public let MSRPEtherType: UInt16 = 0x22EA
 
@@ -118,7 +118,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
   public var controller: MRPController<P>? { _controller.object }
 
   let _participants =
-    ManagedCriticalState<[MAPContextIdentifier: Set<Participant<MSRPApplication<P>>>]>([:])
+    Mutex<[MAPContextIdentifier: Set<Participant<MSRPApplication<P>>>]>([:])
   let _logger: Logger
   let _latencyMaxFrameSize: UInt16
 
@@ -126,7 +126,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
   fileprivate let _maxFanInPorts: Int
   fileprivate let _srPVid: VLAN
   fileprivate let _maxSRClass: SRclassID
-  fileprivate let _portStates = ManagedCriticalState<[P.ID: MSRPPortState<P>]>([:])
+  fileprivate let _portStates = Mutex<[P.ID: MSRPPortState<P>]>([:])
   fileprivate let _mmrp: MMRPApplication<P>?
   fileprivate var _priorityMapNotificationTask: Task<(), Error>?
   fileprivate let _deltaBandwidths: [SRclassID: Int]
@@ -170,7 +170,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     port: P,
     body: (_: inout MSRPPortState<P>) throws -> T
   ) rethrows -> T {
-    try _portStates.withCriticalRegion {
+    try _portStates.withLock {
       if let index = $0.index(forKey: port.id) {
         return try body(&$0.values[index])
       } else {
@@ -199,7 +199,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
       }
     }
 
-    try _portStates.withCriticalRegion {
+    try _portStates.withLock {
       for port in context {
         var portState = try MSRPPortState(msrp: self, port: port)
         if let srClassPriorityMap = srClassPriorityMap[port.id] {
@@ -222,7 +222,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     guard contextIdentifier == MAPBaseSpanningTreeContext else { return }
 
     if !_forceAvbCapable {
-      _portStates.withCriticalRegion {
+      _portStates.withLock {
         for port in context {
           guard let index = $0.index(forKey: port.id) else { continue }
           if $0.values[index].msrpPortEnabledStatus != port.isAvbCapable {
@@ -247,7 +247,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
   ) throws {
     guard contextIdentifier == MAPBaseSpanningTreeContext else { return }
 
-    _portStates.withCriticalRegion {
+    _portStates.withLock {
       for port in context {
         _logger.debug("MSRP: port \(port) disappeared, removing")
         $0.removeValue(forKey: port.id)
@@ -256,7 +256,9 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
   }
 
   public var description: String {
-    "MSRPApplication(controller: \(controller!), participants: \(_participants.criticalState), portStates: \(_portStates.criticalState)"
+    let participants: String = _participants.withLock { String(describing: $0) }
+    let portStates: String = _portStates.withLock { String(describing: $0) }
+    return "MSRPApplication(controller: \(controller!), participants: \(participants), portStates: \(portStates)"
   }
 
   public var name: String { "MSRP" }

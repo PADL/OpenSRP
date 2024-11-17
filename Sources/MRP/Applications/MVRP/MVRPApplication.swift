@@ -15,8 +15,8 @@
 //
 
 import IEEE802
-import Locking
 import Logging
+import Synchronization
 
 public let MVRPEtherType: UInt16 = 0x88F5
 
@@ -55,7 +55,7 @@ public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationEve
   public var controller: MRPController<P>? { _controller.object }
 
   let _participants =
-    ManagedCriticalState<[MAPContextIdentifier: Set<Participant<MVRPApplication<P>>>]>([:])
+    Mutex<[MAPContextIdentifier: Set<Participant<MVRPApplication<P>>>]>([:])
   let _logger: Logger
   let _vlanExclusions: Set<VLAN>
 
@@ -67,7 +67,8 @@ public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationEve
   }
 
   public var description: String {
-    "MVRPApplication(controller: \(controller!), vlanExclusions: \(_vlanExclusions), participants: \(_participants.criticalState))"
+    let participants: String = _participants.withLock { String(describing: $0) }
+    return "MVRPApplication(controller: \(controller!), vlanExclusions: \(_vlanExclusions), participants: \(participants))"
   }
 
   public var name: String { "MVRP" }
