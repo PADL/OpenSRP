@@ -22,7 +22,7 @@ PlatformCSettings += [.unsafeFlags(["-I", "/usr/include/libnl3"])]
 PlatformPackageDependencies = [
   .package(
     url: "https://github.com/PADL/IORingSwift",
-    branch: "main"
+    from: "0.1.2"
   ),
   .package(
     url: "https://github.com/PADL/NetLinkSwift",
