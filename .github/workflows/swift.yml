@@ -1,0 +1,24 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    container: swift:6.0
+    steps:
+      - name: Packages
+        run: |
+          apt-get update
+          apt-get install -y liburing-dev libnl-3-dev libnl-route-3-dev libnl-nf-3-dev
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Version
+        run: swift --version
+      - name: Build
+        run: swift build --build-tests
+      - name: Test
+        run: swift test --skip-build
