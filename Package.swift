@@ -168,7 +168,10 @@ let CommonTargets: [Target] = [
   ),
   .testTarget(
     name: "MRPTests",
-    dependencies: ["MRP"]
+    dependencies: ["MRP"],
+    cSettings: PlatformCSettings,
+    swiftSettings: PlatformSwiftSettings,
+    linkerSettings: PlatformLinkerSettings
   ),
 ]
 
