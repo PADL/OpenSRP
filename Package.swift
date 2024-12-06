@@ -106,10 +106,6 @@ let CommonPackageDependencies: [Package.Dependency] = [
 
 let CommonProducts: [Product] = [
   .library(
-    name: "MarvellRMU",
-    targets: ["MarvellRMU"]
-  ),
-  .library(
     name: "MRP",
     targets: ["MRP"]
   ),
@@ -119,19 +115,6 @@ let CommonTargets: [Target] = [
   .target(
     name: "IEEE802",
     dependencies: [
-      .product(name: "SystemPackage", package: "swift-system"),
-    ]
-  ),
-  .target(
-    name: "MarvellRMU",
-    dependencies: [
-      "IEEE802",
-      "AsyncExtensions",
-      "SocketAddress",
-      .product(name: "Algorithms", package: "swift-algorithms"),
-      .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
-      .product(name: "Logging", package: "swift-log"),
-      .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
       .product(name: "SystemPackage", package: "swift-system"),
     ]
   ),
@@ -154,7 +137,6 @@ let CommonTargets: [Target] = [
       "IEEE802",
       "AsyncExtensions",
       "SocketAddress",
-      "MarvellRMU",
       "PMC",
       .product(name: "Algorithms", package: "swift-algorithms"),
       .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
