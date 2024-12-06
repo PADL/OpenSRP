@@ -456,7 +456,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
         portNotification = .removed(port)
       }
     } else {
-      debugPrint("LinuxBridge: ignoring port \(port), not a member or us")
+      debugPrint("LinuxBridge: ignoring port \(port) at index \(port._rtnl.index), not a member or self")
     }
     if let portNotification {
       Task { await _portNotificationChannel.send(portNotification) }
@@ -545,6 +545,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
 
   private func _addLinkLocalRxTask(port: P) throws {
     precondition(!port._isBridgeSelf)
+    try? _cancelLinkLocalRxTask(port: port)
     for filterRegistration in _linkLocalRegistrations {
       let key = LinkLocalRXTaskKey(portID: port.id, filterRegistration: filterRegistration)
       _linkLocalRxTasks[key] = _allocateLinkLocalRxTask(
