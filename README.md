@@ -4,8 +4,6 @@ SwiftMRP is an implementation of the 802.1Q SRP suite of protocols: MMRP, MVRP a
 
 SwiftMRP's distinguishing features have less to do with being written in Swift (although that did facilitate its rapid development), but rather in being designed to support bridging, and doing so with the standard Linux kernel interfaces. The other open source SRP implementations (that the author has been able to find) typically support end-stations only, or use proprietary kernel interfaces.
 
-The eventual goal it so support switch chips running in DSA mode.
-
 ## Architecture
 
 * NetLink: Swift structured concurrency wrapper around `libnl-3` (this has now been split into a [separate package](https://github.com/PADL/NetLinkSwift))
@@ -91,14 +89,17 @@ Note that the `trace` log level will log a _lot_ of messages. `--enable-srp` is 
 
 ## Testing
 
-The current test environment consists of an x86\_64 server with two Intel i210 NICs with their SDP pins tied, using `ts2phc` and `ptp4l` in 802.1AS mode.
+The current test environments consist of:
+
+* An x86\_64 server with two Intel i210 NICs with their SDP pins tied, using `ts2phc` and `ptp4l` in 802.1AS mode (no longer being tested)
+* A Global Scale Technologies [MochaBIN](https://globalscaletechnologies.com/product/mochabin-copy/) with its stock 88E6141 switch chip replaced with a 88E6341, also using `ptp4l`
 
 Endpoints we are testing include:
 
-* MOTU Ultralite AVB (tested)
-* macOS AVB stack (tested)
+* MOTU Ultralite AVB (tested with i210)
+* macOS AVB stack (tested with i210)
 * XMOS lib\_tsn (TBA)
-* JOYNED MILAN stack (TBA)
+* JOYNED lib\_joyned (TBA)
 
 Bridges we are testing transitively:
 

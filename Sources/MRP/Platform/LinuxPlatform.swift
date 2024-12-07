@@ -42,15 +42,42 @@ private func _mapSRClassPriorityToUP(_ srClassPriority: SRclassPriority) -> UInt
 }
 
 private func _mapTCToSRClassID(_ tc: UInt8) -> SRclassID? {
-  guard tc <= SRclassID.A.rawValue else {
+  switch tc {
+  case 2:
+    return .A // TC2
+  case 1:
+    return .B // TC1
+  default:
     return nil
   }
-
-  return SRclassID(rawValue: SRclassID.A.rawValue - tc)
 }
 
-private func _mapSRClassIDToTC(_ srClassID: SRclassID) -> UInt8 {
-  SRclassID.A.rawValue - srClassID.rawValue
+// current Linux platform adapter only supports class A/B which are mapped to
+// queues 4/3 respectively
+
+// FIXME: we need to special case this i210s because the queues are the wrong
+// way around
+
+private func _mapQueueToSRClassID(_ queue: UInt8) -> SRclassID? {
+  switch queue {
+  case 4:
+    return .A // assumes TC2 placed in queue 4
+  case 3:
+    return .B // assumes TC1 placed in queue 3
+  default:
+    return nil // assume all other queues not used for AVB
+  }
+}
+
+private func _mapSRClassIDToQueue(_ srClassID: SRclassID) -> UInt8 {
+  switch srClassID {
+  case .A:
+    return 4
+  case .B:
+    return 3
+  default:
+    return 1
+  }
 }
 
 private func _makeLinkLayerAddress(
@@ -823,7 +850,7 @@ extension LinuxBridge: MSRPAwareBridge {
     guard let _nlQDiscHandle else {
       throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
     }
-    let parent = UInt32(_nlQDiscHandle) << 16 | UInt32(1 + _mapSRClassIDToTC(srClass))
+    let parent = UInt32(_nlQDiscHandle) << 16 | UInt32(_mapSRClassIDToQueue(srClass))
     if hiCredit == 0, loCredit == 0, idleSlope == 0 {
       try await port._rtnl.remove(handle: 0, parent: parent, socket: _nlLinkSocket)
     } else {
