@@ -483,7 +483,9 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
         portNotification = .removed(port)
       }
     } else {
-      debugPrint("LinuxBridge: ignoring port \(port) at index \(port._rtnl.index), not a member or self")
+      debugPrint(
+        "LinuxBridge: ignoring port \(port) at index \(port._rtnl.index), not a member or self"
+      )
     }
     if let portNotification {
       Task { await _portNotificationChannel.send(portNotification) }
