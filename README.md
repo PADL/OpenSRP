@@ -60,6 +60,10 @@ OPTIONS:
   --enable-talker-pruning Enable MSRP talker pruning
   --max-fan-in-ports <max-fan-in-ports>
                           Maximum number of MSRP fan-in ports (default: 0)
+  --class-a-qdisc-handle <class-a-qdisc-handle>
+                          MSRP SR class A Qdisc handle (queue) (default: 4)
+  --class-b-qdisc-handle <class-b-qdisc-handle>
+                          MSRP SR class B Qdsisc handle (queue) (default: 3)
   --class-a-delta-bandwidth <class-a-delta-bandwidth>
                           MSRP SR class A delta bandwidth percentage
   --class-b-delta-bandwidth <class-b-delta-bandwidth>
@@ -86,6 +90,8 @@ mrpd -b br0 --enable-mmrp --enable-mvrp --enable-msrp -l debug
 ```
 
 Note that the `trace` log level will log a _lot_ of messages. `--enable-srp` is a (hidden) synonym which will enable MMRP, MVRP and MSRP.
+
+Higher queue numbers have higher scheduling priority, however this is broken with the Intel i210 driver. With the recommended configuration, you will need to pass `--class-a-qdisc-handle 1 --class-b-qdisc-handle 2` when using this NIC.
 
 ## Testing
 
