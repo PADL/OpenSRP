@@ -45,7 +45,7 @@ private final class MRPDaemon: AsyncParsableCommand {
   @Option(name: .shortAndLong, help: "NetFilter group")
   var nfGroup: Int = 10
 
-  @Option(name: .shortAndLong, help: "QDisc handle")
+  @Option(name: .shortAndLong, help: "Qdisc handle")
   var qDiscHandle: UInt16 = 0x9000
 
   @Flag(name: .long, help: "Force ports to advertise as AVB capable")
@@ -56,6 +56,12 @@ private final class MRPDaemon: AsyncParsableCommand {
 
   @Option(name: .long, help: "Maximum number of MSRP fan-in ports")
   var maxFanInPorts: Int = 0
+
+  @Option(name: .long, help: "MSRP SR class A Qdisc handle (queue)")
+  var classAQdiscHandle: UInt = 4
+
+  @Option(name: .long, help: "MSRP SR class B Qdsisc handle (queue)")
+  var classBQdiscHandle: UInt = 3
 
   @Option(name: .long, help: "MSRP SR class A delta bandwidth percentage")
   var classADeltaBandwidth: Int? = nil
@@ -100,6 +106,8 @@ private final class MRPDaemon: AsyncParsableCommand {
     case srPVid
     case classADeltaBandwidth
     case classBDeltaBandwidth
+    case classAQdiscHandle
+    case classBQdiscHandle
     case excludeIface
     case excludeVlan
     case logLevel
@@ -152,11 +160,13 @@ private final class MRPDaemon: AsyncParsableCommand {
       if let classBDeltaBandwidth {
         deltaBandwidths[.B] = classBDeltaBandwidth
       }
+      let queues: [SRclassID: UInt] = [.A: classAQdiscHandle, .B: classBQdiscHandle]
       _ = try await MSRPApplication(
         controller: controller,
         talkerPruning: enableTalkerPruning,
         maxFanInPorts: maxFanInPorts,
         srPVid: VLAN(id: srPVid),
+        queues: queues,
         deltaBandwidths: deltaBandwidths.isEmpty ? nil : deltaBandwidths,
         forceAvbCapable: forceAvbCapable
       )

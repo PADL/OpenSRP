@@ -119,19 +119,21 @@ extension MSRPAwareBridge {
       maxFrameSizeA: maxFrameSizeA
     )
 
-    application._logger
-      .trace(
-        "MSRP: adjusting CBS for class A: idleSlope: \(idleslopeA) sendSlope: \(sendslopeA) hiCredit: \(hicreditA) loCredit: \(locreditA)"
-      )
+    if let queueA = application._queues[.A] {
+      application._logger
+        .trace(
+          "MSRP: adjusting CBS for class A: idleSlope: \(idleslopeA) sendSlope: \(sendslopeA) hiCredit: \(hicreditA) loCredit: \(locreditA)"
+        )
 
-    try await adjustCreditBasedShaper(
-      port: port,
-      srClass: .A,
-      idleSlope: idleslopeA,
-      sendSlope: sendslopeA,
-      hiCredit: hicreditA,
-      loCredit: locreditA
-    )
+      try await adjustCreditBasedShaper(
+        port: port,
+        queue: queueA,
+        idleSlope: idleslopeA,
+        sendSlope: sendslopeA,
+        hiCredit: hicreditA,
+        loCredit: locreditA
+      )
+    }
 
     let (maxFrameSizeB, idleslopeB) = try! calcSrClassParams(
       application: application,
@@ -150,18 +152,20 @@ extension MSRPAwareBridge {
       maxFrameSizeB: maxFrameSizeB
     )
 
-    application._logger
-      .trace(
-        "MSRP: adjusting CBS for class B: idleSlope: \(idleslopeB) sendSlope: \(sendslopeB) hiCredit: \(hicreditB) loCredit: \(locreditB)"
-      )
+    if let queueB = application._queues[.B] {
+      application._logger
+        .trace(
+          "MSRP: adjusting CBS for class B: idleSlope: \(idleslopeB) sendSlope: \(sendslopeB) hiCredit: \(hicreditB) loCredit: \(locreditB)"
+        )
 
-    try await adjustCreditBasedShaper(
-      port: port,
-      srClass: .B,
-      idleSlope: idleslopeB,
-      sendSlope: sendslopeB,
-      hiCredit: hicreditB,
-      loCredit: locreditB
-    )
+      try await adjustCreditBasedShaper(
+        port: port,
+        queue: queueB,
+        idleSlope: idleslopeB,
+        sendSlope: sendslopeB,
+        hiCredit: hicreditB,
+        loCredit: locreditB
+      )
+    }
   }
 }

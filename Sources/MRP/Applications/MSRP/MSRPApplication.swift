@@ -24,7 +24,7 @@ public let MSRPEtherType: UInt16 = 0x22EA
 protocol MSRPAwareBridge<P>: Bridge where P: AVBPort {
   func adjustCreditBasedShaper(
     port: P,
-    srClass: SRclassID,
+    queue: UInt,
     idleSlope: Int,
     sendSlope: Int,
     hiCredit: Int,
@@ -121,6 +121,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     Mutex<[MAPContextIdentifier: Set<Participant<MSRPApplication<P>>>]>([:])
   let _logger: Logger
   let _latencyMaxFrameSize: UInt16
+  let _queues: [SRclassID: UInt]
 
   fileprivate let _talkerPruning: Bool
   fileprivate let _maxFanInPorts: Int
@@ -139,6 +140,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     latencyMaxFrameSize: UInt16 = 2000,
     srPVid: VLAN = SR_PVID,
     maxSRClass: SRclassID = .B,
+    queues: [SRclassID: UInt] = [.A: 4, .B: 3],
     deltaBandwidths: [SRclassID: Int]? = nil,
     forceAvbCapable: Bool = false
   ) async throws {
@@ -149,6 +151,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     _latencyMaxFrameSize = latencyMaxFrameSize
     _srPVid = srPVid
     _maxSRClass = maxSRClass
+    _queues = queues
     _deltaBandwidths = deltaBandwidths ?? DefaultDeltaBandwidths
     _forceAvbCapable = forceAvbCapable
     _mmrp = try? await controller.application(for: MMRPEtherType)

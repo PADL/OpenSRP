@@ -41,42 +41,16 @@ private func _mapSRClassPriorityToUP(_ srClassPriority: SRclassPriority) -> UInt
   srClassPriority.rawValue
 }
 
-private func _mapTCToSRClassID(_ tc: UInt8) -> SRclassID? {
-  switch tc {
-  case 2:
-    return .A // TC2
-  case 1:
-    return .B // TC1
-  default:
-    return nil
-  }
-}
-
-// current Linux platform adapter only supports class A/B which are mapped to
-// queues 4/3 respectively
-
-// FIXME: we need to special case this i210s because the queues are the wrong
-// way around
-
-private func _mapQueueToSRClassID(_ queue: UInt8) -> SRclassID? {
-  switch queue {
-  case 4:
-    return .A // assumes TC2 placed in queue 4
-  case 3:
-    return .B // assumes TC1 placed in queue 3
-  default:
-    return nil // assume all other queues not used for AVB
-  }
-}
-
-private func _mapSRClassIDToQueue(_ srClassID: SRclassID) -> UInt8 {
-  switch srClassID {
-  case .A:
-    return 4
-  case .B:
-    return 3
-  default:
-    return 1
+private extension UInt8 {
+  var srClassID: SRclassID? {
+    switch self {
+    case 2:
+      .A // TC2
+    case 1:
+      .B // TC1
+    default:
+      nil
+    }
   }
 }
 
@@ -843,7 +817,7 @@ extension LinuxBridge: MVRPAwareBridge {
 extension LinuxBridge: MSRPAwareBridge {
   func adjustCreditBasedShaper(
     port: P,
-    srClass: SRclassID,
+    queue: UInt,
     idleSlope: Int,
     sendSlope: Int,
     hiCredit: Int,
@@ -852,7 +826,7 @@ extension LinuxBridge: MSRPAwareBridge {
     guard let _nlQDiscHandle else {
       throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
     }
-    let parent = UInt32(_nlQDiscHandle) << 16 | UInt32(_mapSRClassIDToQueue(srClass))
+    let parent = UInt32(_nlQDiscHandle) << 16 | UInt32(queue)
     if hiCredit == 0, loCredit == 0, idleSlope == 0 {
       try await port._rtnl.remove(handle: 0, parent: parent, socket: _nlLinkSocket)
     } else {
@@ -913,7 +887,7 @@ fileprivate extension RTNLMQPrioQDisc {
     var srClassPriorityMap = SRClassPriorityMap()
 
     for (up, tc) in priorityMap {
-      guard let srClassID = _mapTCToSRClassID(tc) else { continue }
+      guard let srClassID = tc.srClassID else { continue }
       let srClassPriority = _mapUPToSRClassPriority(up)
       srClassPriorityMap[srClassID] = srClassPriority
     }
