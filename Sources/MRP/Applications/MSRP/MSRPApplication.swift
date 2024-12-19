@@ -761,7 +761,7 @@ extension MSRPApplication {
       do {
         let portTcMaxLatency = try await port
           .getPortTcMaxLatency(for: priorityAndRank.dataFramePriority)
-        guard portTcMaxLatency >= 0 else { throw MRPError.portLatencyIsNegative }
+        guard portTcMaxLatency >= 0 else { throw MRPError.portLatencyIsNegative(portTcMaxLatency) }
         accumulatedLatency += UInt32(portTcMaxLatency)
       } catch {
         _logger

@@ -14,7 +14,7 @@
 // limitations under the License.
 //
 
-enum MRPError: Error {
+enum MRPError: Error, Equatable {
   case applicationAlreadyRegistered
   case attributeAlreadyRegistered
   case badVectorAttribute
@@ -35,7 +35,7 @@ enum MRPError: Error {
   case internalError
   case participantNotFound
   case portAlreadyExists
-  case portLatencyIsNegative
+  case portLatencyIsNegative(Int)
   case portNotFound
   case unknownApplication
   case unknownAttributeEvent
