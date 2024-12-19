@@ -3,6 +3,15 @@
 BR=br0
 HANDLE=9000
 
+for INDEX in 4 8s0
+do
+	ETH="ens${INDEX}"
+	echo "Unconfiguring ${ETH} Qdisc..."
+
+	tc qdisc del dev ${ETH} parent root handle ${HANDLE} mqprio
+	echo "${ETH} unconfigured\n"
+done
+
 set -e
 
 echo "Configuring customer bridge MRP group address forwarding"
@@ -24,10 +33,10 @@ echo ""
 
 # https://tsn.readthedocs.io/qdiscs.html
 
-for INDEX in 0 1 2 3
+for INDEX in 4 8s0
 do
-	ETH="lan${INDEX}"
-	echo "Configuring ${ETH} qdisc..."
+	ETH="ens${INDEX}"
+	echo "Configuring ${ETH} Qdisc..."
 
 	tc qdisc del dev ${ETH} parent root handle ${HANDLE} || : >/dev/null 2>&1
 	tc qdisc add dev ${ETH} parent root handle ${HANDLE} mqprio \
@@ -36,17 +45,5 @@ do
 		queues 2@2 1@1 1@0 \
 		hw 1
 
-	# Class A
-#	tc qdisc replace dev ${ETH} parent ${HANDLE}:1 cbs \
-#		idleslope 98688 sendslope -901312 hicredit 153 locredit -1389 \
-#		offload 1
-
-	# Class B
-#	tc qdisc replace dev ${ETH} parent ${HANDLE}:2 cbs \
-#		idleslope 3648 sendslope -996352 hicredit 12 locredit -113 \
-#		offload 1
-
 	echo "${ETH} configured!\n"
 done
-
-tc qdisc
