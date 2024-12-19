@@ -39,9 +39,9 @@ import Glibc
 // clause 35.2.2.8.3: An IEEE 802.3 port on a Bridge would also add 42 octets
 // of media-specific framing overhead
 
-private let VLAN_OVERHEAD = 4 // VLAN tag
-private let L2_OVERHEAD = 18 // Ethernet header + CRC
-private let L1_OVERHEAD = 20 // Preamble + frame delimiter + interpacket gap
+private let VLAN_OVERHEAD: UInt16 = 4 // VLAN tag
+private let L2_OVERHEAD: UInt16 = 18 // Ethernet header + CRC
+private let L1_OVERHEAD: UInt16 = 20 // Preamble + frame delimiter + interpacket gap
 
 extension MSRPAwareBridge {
   private func calcClassACredits(
@@ -79,6 +79,10 @@ extension MSRPAwareBridge {
     return (hicredit, locredit)
   }
 
+  private func calcFrameSize(_ stream: MSRPTSpec) -> UInt16 {
+    stream.maxFrameSize + VLAN_OVERHEAD + L2_OVERHEAD + L1_OVERHEAD + 1
+  }
+
   private func calcSrClassParams(
     application: MSRPApplication<P>,
     portState: MSRPPortState<P>,
@@ -89,15 +93,13 @@ extension MSRPAwareBridge {
     var maxFrameSize = 0
 
     for stream in streams[srClassID] ?? [] {
-      let frameSize = min(stream.maxFrameSize, application._latencyMaxFrameSize)
+      let frameSize = min(calcFrameSize(stream), application._latencyMaxFrameSize)
       let classMeasurementInterval = try srClassID.classMeasurementInterval
 
       let maxFrameRate = Int(stream.maxIntervalFrames) * (1_000_000 / classMeasurementInterval)
       idleslope += maxFrameRate * Int(frameSize) * 8 / 1000
       maxFrameSize = max(maxFrameSize, Int(frameSize))
     }
-
-    maxFrameSize += VLAN_OVERHEAD + L2_OVERHEAD + L1_OVERHEAD + 1
 
     return (maxFrameSize, Int(ceil(Double(idleslope))))
   }
