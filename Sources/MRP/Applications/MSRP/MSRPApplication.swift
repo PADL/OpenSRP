@@ -946,7 +946,7 @@ extension MSRPApplication {
   }
 
   private func _updateDynamicReservationEntries(
-    participant: Participant<MSRPApplication>,
+    port: P,
     portState: MSRPPortState<P>,
     streamID: MSRPStreamID,
     declarationType: MSRPDeclarationType?,
@@ -962,25 +962,30 @@ extension MSRPApplication {
       try await bridge.register(
         macAddress: talkerRegistration.dataFrameParameters.destinationAddress,
         vlan: talkerRegistration.dataFrameParameters.vlanIdentifier,
-        on: [participant.port]
+        on: [port]
       )
     } else {
       _logger.debug("MSRP: deregistering FDB entries for \(talkerRegistration.dataFrameParameters)")
       try? await bridge.deregister(
         macAddress: talkerRegistration.dataFrameParameters.destinationAddress,
         vlan: talkerRegistration.dataFrameParameters.vlanIdentifier,
-        from: [participant.port]
+        from: [port]
       )
     }
   }
 
   private func _updateOperIdleSlope(
-    participant: Participant<MSRPApplication>,
+    port: P,
     portState: MSRPPortState<P>,
     streamID: MSRPStreamID,
     talkerRegistration: any MSRPTalkerValue
   ) async throws {
     guard let controller, let bridge = controller.bridge as? any MSRPAwareBridge<P> else {
+      return
+    }
+
+    guard let participant = try? findParticipant(port: port) else {
+      _logger.info("MSRP: failed to find participant for port \(port)")
       return
     }
 
@@ -1002,11 +1007,11 @@ extension MSRPApplication {
       }
     }
 
-    _logger.debug("MSRP: adjusting idle slope, port \(participant.port), streams \(streams)")
+    _logger.debug("MSRP: adjusting idle slope, port \(port), streams \(streams)")
 
     try await bridge.adjustCreditBasedShaper(
       application: self,
-      port: participant.port,
+      port: port,
       portState: portState,
       streams: streams
     )
@@ -1038,14 +1043,14 @@ extension MSRPApplication {
       if mergedDeclarationType == .listenerReady || mergedDeclarationType == .listenerReadyFailed {
         // increase (if necessary) bandwidth first before updating dynamic reservation entries
         try await _updateOperIdleSlope(
-          participant: talkerRegistration.0,
+          port: port,
           portState: portState,
           streamID: streamID,
           talkerRegistration: talkerRegistration.1
         )
       }
       try await _updateDynamicReservationEntries(
-        participant: talkerRegistration.0,
+        port: port,
         portState: portState,
         streamID: streamID,
         declarationType: mergedDeclarationType,
@@ -1053,7 +1058,7 @@ extension MSRPApplication {
       )
       if mergedDeclarationType == nil || mergedDeclarationType == .listenerAskingFailed {
         try await _updateOperIdleSlope(
-          participant: talkerRegistration.0,
+          port: port,
           portState: portState,
           streamID: streamID,
           talkerRegistration: talkerRegistration.1
