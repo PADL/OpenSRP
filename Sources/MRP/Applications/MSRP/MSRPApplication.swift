@@ -998,6 +998,9 @@ extension MSRPApplication {
       matching: .matchAny
     )
 
+    // assert that talker has already been added to participant
+    precondition(talkers.contains(where: { ($0.1 as! MSRPTalkerAdvertiseValue).streamID == talkerRegistration.streamID } ))
+
     var streams = [SRclassID: [MSRPTSpec]]()
 
     for talker in talkers.map({ $0.1 as! MSRPTalkerAdvertiseValue }) {
