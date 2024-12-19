@@ -36,8 +36,9 @@ import Darwin
 import Glibc
 #endif
 
-private let AAF_OVERHEAD = 24 // AVTP stream header
-private let CVF_H264_OVERHEAD = 30 // AVTP stream header + H264 ts field + FU-A headers
+// clause 35.2.2.8.3: An IEEE 802.3 port on a Bridge would also add 42 octets
+// of media-specific framing overhead
+
 private let VLAN_OVERHEAD = 4 // VLAN tag
 private let L2_OVERHEAD = 18 // Ethernet header + CRC
 private let L1_OVERHEAD = 20 // Preamble + frame delimiter + interpacket gap
@@ -95,6 +96,9 @@ extension MSRPAwareBridge {
       idleslope += maxFrameRate * Int(frameSize) * 8 / 1000
       maxFrameSize = max(maxFrameSize, Int(frameSize))
     }
+
+    maxFrameSize += VLAN_OVERHEAD + L2_OVERHEAD + L1_OVERHEAD + 1
+
     return (maxFrameSize, Int(ceil(Double(idleslope))))
   }
 
