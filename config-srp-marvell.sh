@@ -37,14 +37,14 @@ do
 		hw 1
 
 	# Class A
-	tc qdisc replace dev ${ETH} parent ${HANDLE}:4 cbs \
-		idleslope 98688 sendslope -901312 hicredit 153 locredit -1389 \
-		offload 1
+#	tc qdisc replace dev ${ETH} parent ${HANDLE}:4 cbs \
+#		idleslope 98688 sendslope -901312 hicredit 153 locredit -1389 \
+#		offload 1
 
 	# Class B
-	tc qdisc replace dev ${ETH} parent ${HANDLE}:3 cbs \
-		idleslope 3648 sendslope -996352 hicredit 12 locredit -113 \
-		offload 1
+#	tc qdisc replace dev ${ETH} parent ${HANDLE}:3 cbs \
+#		idleslope 3648 sendslope -996352 hicredit 12 locredit -113 \
+#		offload 1
 
 	echo "${ETH} configured!\n"
 done
