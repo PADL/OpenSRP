@@ -36,7 +36,7 @@ do
 	tc qdisc add dev ${ETH} parent root handle ${HANDLE} mqprio \
 		num_tc 3 \
 		map 0 0 1 2 0 0 0 0 0 0 0 0 0 0 0 0 \
-		queues 1@0 1@2 1@3 \
+		queues 2@0 1@2 1@3 \
 		hw 1
 
 	echo "${ETH} configured!\n"
