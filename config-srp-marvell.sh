@@ -16,6 +16,9 @@ set -e
 
 echo "Configuring customer bridge MRP group address forwarding"
 
+ip link set ${BR} up
+ip link set ${BR} type bridge vlan_filtering 1
+
 nft delete table bridge nat || : >/dev/null 2>&1
 
 nft add table bridge nat
