@@ -18,6 +18,10 @@ import ArgumentParser
 import Logging
 import MRP
 import ServiceLifecycle
+#if os(Linux)
+import Systemd
+import SystemdLifecycle
+#endif
 
 extension Logger.Level: ExpressibleByArgument {
   public var defaultValueDescription: String {
@@ -172,8 +176,16 @@ private final class MRPDaemon: AsyncParsableCommand {
       )
     }
 
+    var services: [Service] = [controller]
+
+    #if os(Linux)
+    if SystemdHelpers.isSystemdService {
+      services.append(SystemdService())
+    }
+    #endif
+
     let serviceGroup = ServiceGroup(
-      services: [controller],
+      services: services,
       gracefulShutdownSignals: [.sigterm, .sigint],
       logger: logger
     )

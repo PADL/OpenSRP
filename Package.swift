@@ -28,6 +28,7 @@ PlatformPackageDependencies = [
     url: "https://github.com/PADL/NetLinkSwift",
     branch: "main"
   ),
+  .package(url: "https://github.com/xtremekforever/swift-systemd", from: "0.0.1"),
 ]
 
 PlatformTargetDependencies = [
@@ -66,6 +67,12 @@ PlatformTargets = [
       "MRP",
       .product(name: "ArgumentParser", package: "swift-argument-parser"),
       .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
+      .product(name: "Systemd", package: "swift-systemd", condition: .when(platforms: [.linux])),
+      .product(
+        name: "SystemdLifecycle",
+        package: "swift-systemd",
+        condition: .when(platforms: [.linux])
+      ),
     ],
     cSettings: PlatformCSettings,
     swiftSettings: PlatformSwiftSettings

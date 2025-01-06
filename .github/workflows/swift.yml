@@ -13,7 +13,7 @@ jobs:
       - name: Packages
         run: |
           apt-get update
-          apt-get install -y liburing-dev libnl-3-dev libnl-route-3-dev libnl-nf-3-dev
+          apt-get install -y liburing-dev libnl-3-dev libnl-route-3-dev libnl-nf-3-dev libsystemd-dev
       - name: Checkout
         uses: actions/checkout@v4
       - name: Version
