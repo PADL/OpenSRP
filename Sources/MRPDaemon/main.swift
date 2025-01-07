@@ -18,10 +18,9 @@ import ArgumentParser
 import Logging
 import MRP
 import ServiceLifecycle
-#if os(Linux)
 import Systemd
+import SystemdJournal
 import SystemdLifecycle
-#endif
 
 extension Logger.Level: ExpressibleByArgument {
   public var defaultValueDescription: String {
@@ -125,8 +124,12 @@ private final class MRPDaemon: AsyncParsableCommand {
   var logger: Logger!
 
   func run() async throws {
-    LoggingSystem.bootstrap { @Sendable in
-      StreamLogHandler.standardError(label: $0)
+    if SystemdHelpers.isSystemdService {
+      LoggingSystem.bootstrap(SystemdJournalLogHandler.init)
+    } else {
+      LoggingSystem.bootstrap { @Sendable in
+        StreamLogHandler.standardError(label: $0)
+      }
     }
     logger = Logger(label: "com.padl.mrpd")
     logger.logLevel = logLevel
