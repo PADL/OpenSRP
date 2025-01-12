@@ -28,7 +28,7 @@ PlatformPackageDependencies = [
     url: "https://github.com/PADL/NetLinkSwift",
     branch: "main"
   ),
-  .package(url: "https://github.com/xtremekforever/swift-systemd", branch: "main"),
+  .package(url: "https://github.com/xtremekforever/swift-systemd", from: "0.2.1"),
 ]
 
 PlatformTargetDependencies = [
