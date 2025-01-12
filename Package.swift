@@ -28,8 +28,7 @@ PlatformPackageDependencies = [
     url: "https://github.com/PADL/NetLinkSwift",
     branch: "main"
   ),
-  .package(url: "https://github.com/xtremekforever/swift-systemd", from: "0.0.1"),
-  .package(url: "https://github.com/PADL/swift-log-systemd", from: "0.0.1"),
+  .package(url: "https://github.com/xtremekforever/swift-systemd", branch: "main"),
 ]
 
 PlatformTargetDependencies = [
@@ -69,7 +68,6 @@ PlatformTargets = [
       .product(name: "ArgumentParser", package: "swift-argument-parser"),
       .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
       .product(name: "Systemd", package: "swift-systemd", condition: .when(platforms: [.linux])),
-      .product(name: "SystemdJournal", package: "swift-log-systemd", condition: .when(platforms: [.linux])),
       .product(
         name: "SystemdLifecycle",
         package: "swift-systemd",

@@ -19,7 +19,6 @@ import Logging
 import MRP
 import ServiceLifecycle
 import Systemd
-import SystemdJournal
 import SystemdLifecycle
 
 extension Logger.Level: ExpressibleByArgument {
