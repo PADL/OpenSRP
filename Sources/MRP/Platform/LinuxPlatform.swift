@@ -837,10 +837,11 @@ extension LinuxBridge: MSRPAwareBridge {
       throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
     }
 
-    var numTXQueues = UInt(port._rtnl.numTXQueues)
-    if numTXQueues == 0 {
-      numTXQueues = 4 // FIXME: we need to get this information more accurately
+    let numTXQueues = UInt(port._rtnl.numTXQueues)
+    guard numTXQueues >= srClassPriorityMap.count else {
+      throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
     }
+
     let legacyQueueCount = UInt16(numTXQueues) - UInt16(srClassPriorityMap.count)
     let legacyQueueOffset: UInt16 = if queues[.A] == numTXQueues {
       // normal situation gives higher number queues to higher numbered traffic
