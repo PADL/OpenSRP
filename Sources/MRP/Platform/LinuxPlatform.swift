@@ -54,6 +54,19 @@ private extension UInt8 {
   }
 }
 
+private extension SRclassID {
+  var tc: UInt8 {
+    switch self {
+    case .A:
+      2
+    case .B:
+      1
+    default:
+      0
+    }
+  }
+}
+
 private func _makeLinkLayerAddress(
   family: sa_family_t = sa_family_t(AF_PACKET),
   macAddress: EUI48? = nil,
@@ -757,7 +770,12 @@ extension LinuxBridge: MMRPAwareBridge {
     guard let rtnl = bridgePort._rtnl as? RTNLLinkBridge else { throw Errno.noSuchAddressOrDevice }
     for port in ports {
       if _isMulticast(macAddress: macAddress) {
-        try await rtnl.add(link: port._rtnl, groupAddresses: [macAddress], vlanID: vlan?.vid, socket: _nlLinkSocket)
+        try await rtnl.add(
+          link: port._rtnl,
+          groupAddresses: [macAddress],
+          vlanID: vlan?.vid,
+          socket: _nlLinkSocket
+        )
       } else {
         try await rtnl.add(link: port._rtnl, fdbEntry: macAddress, socket: _nlLinkSocket)
       }
@@ -768,7 +786,12 @@ extension LinuxBridge: MMRPAwareBridge {
     guard let rtnl = bridgePort._rtnl as? RTNLLinkBridge else { throw Errno.noSuchAddressOrDevice }
     for port in ports {
       if _isMulticast(macAddress: macAddress) {
-        try await rtnl.remove(link: port._rtnl, groupAddresses: [macAddress], vlanID: vlan?.vid, socket: _nlLinkSocket)
+        try await rtnl.remove(
+          link: port._rtnl,
+          groupAddresses: [macAddress],
+          vlanID: vlan?.vid,
+          socket: _nlLinkSocket
+        )
       } else {
         try await rtnl.remove(link: port._rtnl, fdbEntry: macAddress, socket: _nlLinkSocket)
       }
@@ -798,7 +821,74 @@ extension LinuxBridge: MVRPAwareBridge {
   }
 }
 
+private extension SRClassPriorityMap {
+  var lowestClassID: SRclassID {
+    SRclassID(rawValue: keys.map(\.rawValue).sorted().first!)!
+  }
+}
+
 extension LinuxBridge: MSRPAwareBridge {
+  private func _getMQPrio(
+    port: P,
+    srClassPriorityMap: SRClassPriorityMap,
+    queues: [SRclassID: UInt]
+  ) throws -> RTNLMQPrioQDisc {
+    let numTXQueues = UInt(port._rtnl.numTXQueues)
+    let legacyQueueCount = UInt16(numTXQueues) - UInt16(srClassPriorityMap.count)
+    let legacyQueueOffset: UInt16 = if queues[.A] == numTXQueues {
+      // normal situation gives higher number queues to higher numbered traffic
+      // classes, and we assume class A gets the highest. queues start at 1.
+      0
+    } else if let queueForLowestClass = queues[srClassPriorityMap.lowestClassID] {
+      // otherwise, most likely, trying to work around for i210 weirness where
+      // queue numbers are inverted
+      UInt16(numTXQueues) - UInt16(queueForLowestClass)
+    } else {
+      throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
+    }
+
+    return try RTNLMQPrioQDisc(
+      srClassPriorityMap: srClassPriorityMap,
+      queues: queues,
+      legacyQueueCount: legacyQueueCount,
+      legacyQueueOffset: legacyQueueOffset
+    )
+  }
+
+  func configureQueues(
+    port: P,
+    srClassPriorityMap: SRClassPriorityMap,
+    queues: [SRclassID: UInt]
+  ) async throws {
+    guard let _nlQDiscHandle else {
+      throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
+    }
+
+    try await port._rtnl.add(
+      handle: UInt32(_nlQDiscHandle) << 16,
+      parent: UInt32.max,
+      mqprio: _getMQPrio(port: port, srClassPriorityMap: srClassPriorityMap, queues: queues),
+      socket: _nlLinkSocket
+    )
+  }
+
+  func unconfigureQueues(
+    port: P,
+    srClassPriorityMap: SRClassPriorityMap,
+    queues: [SRclassID: UInt]
+  ) async throws {
+    guard let _nlQDiscHandle else {
+      throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
+    }
+
+    try await port._rtnl.remove(
+      handle: UInt32(_nlQDiscHandle) << 16,
+      parent: UInt32.max,
+      mqprio: _getMQPrio(port: port, srClassPriorityMap: srClassPriorityMap, queues: queues),
+      socket: _nlLinkSocket
+    )
+  }
+
   func adjustCreditBasedShaper(
     port: P,
     queue: UInt,
@@ -877,6 +967,50 @@ fileprivate extension RTNLMQPrioQDisc {
     }
 
     return (index, srClassPriorityMap)
+  }
+
+  convenience init(
+    srClassPriorityMap: SRClassPriorityMap,
+    queues: [SRclassID: UInt], // classID to Qdisc handle map
+    legacyQueueCount: UInt16 = 2,
+    legacyQueueOffset: UInt16 = 0
+  ) throws {
+    let priorityMap: [UInt8: UInt8] = Dictionary(
+      uniqueKeysWithValues: srClassPriorityMap
+        .map { srClass, srClassPriority in
+          (srClass.tc, _mapSRClassPriorityToUP(srClassPriority))
+        }
+    )
+
+    let count: [UInt16] = [legacyQueueCount] + [UInt16](
+      repeating: 1,
+      count: srClassPriorityMap.count
+    )
+    var offset: [UInt16] = [legacyQueueOffset] + [UInt16](
+      repeating: 0,
+      count: srClassPriorityMap.count
+    )
+
+    for srClass in srClassPriorityMap.keys {
+      let tc = Int(srClass.tc)
+      guard tc != 0, offset.indices.contains(tc), let queue = queues[srClass] else {
+        continue
+      }
+
+      precondition(queue > 0 && queue <= UInt16.max)
+
+      offset[tc] = UInt16(queue) - 1
+    }
+
+    try self.init(
+      numTC: srClassPriorityMap.keys.count + 1, // typically 3 (0-2)
+      priorityMap: priorityMap,
+      hwOffload: true,
+      count: count,
+      offset: offset,
+      mode: .dcb,
+      shaper: .dcb
+    )
   }
 }
 

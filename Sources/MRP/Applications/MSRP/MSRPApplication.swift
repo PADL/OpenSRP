@@ -22,6 +22,18 @@ import Synchronization
 public let MSRPEtherType: UInt16 = 0x22EA
 
 protocol MSRPAwareBridge<P>: Bridge where P: AVBPort {
+  func configureQueues(
+    port: P,
+    srClassPriorityMap: SRClassPriorityMap,
+    queues: [SRclassID: UInt]
+  ) async throws
+
+  func unconfigureQueues(
+    port: P,
+    srClassPriorityMap: SRClassPriorityMap,
+    queues: [SRclassID: UInt]
+  ) async throws
+
   func adjustCreditBasedShaper(
     port: P,
     queue: UInt,
@@ -999,7 +1011,12 @@ extension MSRPApplication {
     )
 
     // assert that talker has already been added to participant
-    precondition(talkers.contains(where: { ($0.1 as! MSRPTalkerAdvertiseValue).streamID == talkerRegistration.streamID } ))
+    precondition(
+      talkers
+        .contains(where: {
+          ($0.1 as! MSRPTalkerAdvertiseValue).streamID == talkerRegistration.streamID
+        })
+    )
 
     var streams = [SRclassID: [MSRPTSpec]]()
 
