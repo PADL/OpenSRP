@@ -833,6 +833,10 @@ extension LinuxBridge: MSRPAwareBridge {
     srClassPriorityMap: SRClassPriorityMap,
     queues: [SRclassID: UInt]
   ) throws -> RTNLMQPrioQDisc {
+    guard let _nlQDiscHandle else {
+      throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
+    }
+
     var numTXQueues = UInt(port._rtnl.numTXQueues)
     if numTXQueues == 0 {
       numTXQueues = 4 // FIXME: we need to get this information more accurately
@@ -851,6 +855,9 @@ extension LinuxBridge: MSRPAwareBridge {
     }
 
     return try RTNLMQPrioQDisc(
+      port: port,
+      handle: UInt32(_nlQDiscHandle) << 16,
+      parent: UInt32.max,
       srClassPriorityMap: srClassPriorityMap,
       queues: queues,
       legacyQueueCount: legacyQueueCount,
@@ -863,13 +870,7 @@ extension LinuxBridge: MSRPAwareBridge {
     srClassPriorityMap: SRClassPriorityMap,
     queues: [SRclassID: UInt]
   ) async throws {
-    guard let _nlQDiscHandle else {
-      throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
-    }
-
     try await port._rtnl.add(
-      handle: UInt32(_nlQDiscHandle) << 16,
-      parent: UInt32.max,
       mqprio: _getMQPrio(port: port, srClassPriorityMap: srClassPriorityMap, queues: queues),
       socket: _nlLinkSocket
     )
@@ -880,13 +881,7 @@ extension LinuxBridge: MSRPAwareBridge {
     srClassPriorityMap: SRClassPriorityMap,
     queues: [SRclassID: UInt]
   ) async throws {
-    guard let _nlQDiscHandle else {
-      throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
-    }
-
     try await port._rtnl.remove(
-      handle: UInt32(_nlQDiscHandle) << 16,
-      parent: UInt32.max,
       mqprio: _getMQPrio(port: port, srClassPriorityMap: srClassPriorityMap, queues: queues),
       socket: _nlLinkSocket
     )
@@ -973,6 +968,9 @@ fileprivate extension RTNLMQPrioQDisc {
   }
 
   convenience init(
+    port: LinuxPort,
+    handle: UInt32,
+    parent: UInt32,
     srClassPriorityMap: SRClassPriorityMap,
     queues: [SRclassID: UInt], // classID to Qdisc handle map
     legacyQueueCount: UInt16 = 2,
@@ -1006,6 +1004,9 @@ fileprivate extension RTNLMQPrioQDisc {
     }
 
     try self.init(
+      interfaceIndex: port._rtnl.index,
+      handle: handle,
+      parent: parent,
       numTC: srClassPriorityMap.keys.count + 1, // typically 3 (0-2)
       priorityMap: priorityMap,
       hwOffload: true,
