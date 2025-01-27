@@ -1004,7 +1004,6 @@ fileprivate extension RTNLMQPrioQDisc {
     }
 
     try self.init(
-      interfaceIndex: port._rtnl.index,
       handle: handle,
       parent: parent,
       numTC: srClassPriorityMap.keys.count + 1, // typically 3 (0-2)
