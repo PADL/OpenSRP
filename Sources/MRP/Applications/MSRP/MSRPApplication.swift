@@ -29,9 +29,7 @@ protocol MSRPAwareBridge<P>: Bridge where P: AVBPort {
   ) async throws
 
   func unconfigureQueues(
-    port: P,
-    srClassPriorityMap: SRClassPriorityMap,
-    queues: [SRclassID: UInt]
+    port: P
   ) async throws
 
   func adjustCreditBasedShaper(
@@ -144,6 +142,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
   fileprivate var _priorityMapNotificationTask: Task<(), Error>?
   fileprivate let _deltaBandwidths: [SRclassID: Int]
   fileprivate let _forceAvbCapable: Bool
+  fileprivate let _configureQueues: Bool
 
   public init(
     controller: MRPController<P>,
@@ -154,7 +153,8 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     maxSRClass: SRclassID = .B,
     queues: [SRclassID: UInt] = [.A: 4, .B: 3],
     deltaBandwidths: [SRclassID: Int]? = nil,
-    forceAvbCapable: Bool = false
+    forceAvbCapable: Bool = false,
+    configureQueues: Bool = false // this will become a default after further testing
   ) async throws {
     _controller = Weak(controller)
     _logger = controller.logger
@@ -166,6 +166,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     _queues = queues
     _deltaBandwidths = deltaBandwidths ?? DefaultDeltaBandwidths
     _forceAvbCapable = forceAvbCapable
+    _configureQueues = configureQueues
     _mmrp = try? await controller.application(for: MMRPEtherType)
     try await controller.register(application: self)
     _priorityMapNotificationTask = Task {
@@ -204,13 +205,27 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
 
     for port in context {
       if port.isAvbCapable, let bridge = (controller?.bridge as? any MSRPAwareBridge<P>) {
-        srClassPriorityMap[port.id] = try? await bridge.getSRClassPriorityMap(port: port)
-        _logger.debug("MSRP: allocating port state for \(port), prio map \(srClassPriorityMap)")
+        if _configureQueues {
+          try await bridge.configureQueues(
+            port: port,
+            srClassPriorityMap: DefaultSRClassPriorityMap,
+            queues: _queues
+          )
+          srClassPriorityMap[port.id] = DefaultSRClassPriorityMap
+          _logger
+            .debug(
+              "MSRP: allocating port state for \(port), configuring queues with default prio map"
+            )
+        } else {
+          srClassPriorityMap[port.id] = try? await bridge.getSRClassPriorityMap(port: port)
+          _logger.debug("MSRP: allocating port state for \(port), prio map \(srClassPriorityMap)")
+        }
       } else if _forceAvbCapable {
         srClassPriorityMap[port.id] = DefaultSRClassPriorityMap
         _logger.warning("MRRP: forcing port \(port) to advertise as AVB capable")
       } else {
         _logger.debug("MRRP: port \(port) is not AVB capable, skipping")
+        continue
       }
     }
 
@@ -261,6 +276,16 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     with context: MAPContext<P>
   ) throws {
     guard contextIdentifier == MAPBaseSpanningTreeContext else { return }
+
+    if _configureQueues {
+      Task {
+        for port in context {
+          guard port.isAvbCapable,
+                let bridge = (controller?.bridge as? any MSRPAwareBridge<P>) else { continue }
+          try? await bridge.unconfigureQueues(port: port)
+        }
+      }
+    }
 
     _portStates.withLock {
       for port in context {

@@ -828,11 +828,11 @@ private extension SRClassPriorityMap {
 }
 
 extension LinuxBridge: MSRPAwareBridge {
-  private func _getMQPrio(
+  func configureQueues(
     port: P,
     srClassPriorityMap: SRClassPriorityMap,
     queues: [SRclassID: UInt]
-  ) throws -> RTNLMQPrioQDisc {
+  ) async throws {
     guard let _nlQDiscHandle else {
       throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
     }
@@ -855,8 +855,7 @@ extension LinuxBridge: MSRPAwareBridge {
       throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
     }
 
-    return try RTNLMQPrioQDisc(
-      port: port,
+    let mqprio = try RTNLMQPrioQDisc(
       handle: UInt32(_nlQDiscHandle) << 16,
       parent: UInt32.max,
       srClassPriorityMap: srClassPriorityMap,
@@ -864,26 +863,19 @@ extension LinuxBridge: MSRPAwareBridge {
       legacyQueueCount: legacyQueueCount,
       legacyQueueOffset: legacyQueueOffset
     )
-  }
 
-  func configureQueues(
-    port: P,
-    srClassPriorityMap: SRClassPriorityMap,
-    queues: [SRclassID: UInt]
-  ) async throws {
-    try await port._rtnl.add(
-      mqprio: _getMQPrio(port: port, srClassPriorityMap: srClassPriorityMap, queues: queues),
-      socket: _nlLinkSocket
-    )
+    try await port._rtnl.add(mqprio: mqprio, socket: _nlLinkSocket)
   }
 
   func unconfigureQueues(
-    port: P,
-    srClassPriorityMap: SRClassPriorityMap,
-    queues: [SRclassID: UInt]
+    port: P
   ) async throws {
+    guard let _nlQDiscHandle else {
+      throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
+    }
+
     try await port._rtnl.remove(
-      mqprio: _getMQPrio(port: port, srClassPriorityMap: srClassPriorityMap, queues: queues),
+      mqprio: RTNLMQPrioQDisc(handle: UInt32(_nlQDiscHandle) << 16, parent: UInt32.max),
       socket: _nlLinkSocket
     )
   }
@@ -969,7 +961,6 @@ fileprivate extension RTNLMQPrioQDisc {
   }
 
   convenience init(
-    port: LinuxPort,
     handle: UInt32,
     parent: UInt32,
     srClassPriorityMap: SRClassPriorityMap,

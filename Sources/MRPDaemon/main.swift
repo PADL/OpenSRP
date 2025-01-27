@@ -71,6 +71,9 @@ private final class MRPDaemon: AsyncParsableCommand {
   @Option(name: .long, help: "MSRP SR class B delta bandwidth percentage")
   var classBDeltaBandwidth: Int? = nil
 
+  @Flag(name: .long, help: "Automatically configure MQPRIO queues")
+  var configureQueues: Bool = false
+
   @Option(name: .long, help: "Default MSRP SR PVID")
   var srPVid: UInt16 = SR_PVID.id
 
@@ -110,6 +113,7 @@ private final class MRPDaemon: AsyncParsableCommand {
     case classBDeltaBandwidth
     case classAQdiscHandle
     case classBQdiscHandle
+    case configureQueues
     case excludeIface
     case excludeVlan
     case logLevel
@@ -174,7 +178,8 @@ private final class MRPDaemon: AsyncParsableCommand {
         srPVid: VLAN(id: srPVid),
         queues: queues,
         deltaBandwidths: deltaBandwidths.isEmpty ? nil : deltaBandwidths,
-        forceAvbCapable: forceAvbCapable
+        forceAvbCapable: forceAvbCapable,
+        configureQueues: configureQueues
       )
     }
 
