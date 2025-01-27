@@ -3,9 +3,9 @@
 BR=br0
 HANDLE=9000
 
-for INDEX in 4 8s0
+for INDEX in p4 s8s0
 do
-	ETH="ens${INDEX}"
+	ETH="en${INDEX}"
 	echo "Unconfiguring ${ETH} Qdisc..."
 
 	tc qdisc del dev ${ETH} parent root handle ${HANDLE} mqprio
@@ -33,9 +33,9 @@ echo ""
 
 # https://tsn.readthedocs.io/qdiscs.html
 
-for INDEX in 4 8s0
+for INDEX in p4 s8s0
 do
-	ETH="ens${INDEX}"
+	ETH="en${INDEX}"
 	echo "Configuring ${ETH} Qdisc..."
 
 	tc qdisc del dev ${ETH} parent root handle ${HANDLE} || : >/dev/null 2>&1
