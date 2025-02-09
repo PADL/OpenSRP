@@ -103,7 +103,8 @@ The current test environments consist of:
 
 Endpoints we are testing include:
 
-* MOTU Ultralite AVB (tested with i210)
+* MOTU Ultralite AVB (tested with i210 and MochaBIN)
+* MOTU M64 (tested with MochaBIN)
 * macOS AVB stack (tested with i210)
 * XMOS lib\_tsn (TBA)
 * JOYNED lib\_joyned (TBA)
