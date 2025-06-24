@@ -21,7 +21,7 @@ import ServiceLifecycle
 import Systemd
 import SystemdLifecycle
 
-extension Logger.Level: ExpressibleByArgument {
+extension Logger.Level: @retroactive ExpressibleByArgument {
   public var defaultValueDescription: String {
     String(describing: self)
   }
