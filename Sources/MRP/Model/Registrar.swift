@@ -110,7 +110,14 @@ private extension Registrar.State {
       }
       self = .IN
     case .rLv:
-      fallthrough
+      if self == .IN {
+        // modified by Avnu ProAV Bridge Specification 9.2
+        action = .Lv
+        self = .MT
+        break
+      } else {
+        fallthrough
+      }
     case .rLA:
       fallthrough
     case .txLA:
