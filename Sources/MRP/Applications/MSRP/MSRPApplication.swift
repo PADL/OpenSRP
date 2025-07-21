@@ -727,6 +727,11 @@ extension MSRPApplication {
         throw MSRPFailure(systemID: port.systemID, failureCode: .fanInPortLimitReached)
       }
 
+      guard tSpec.maxIntervalFrames != 0 else {
+        _logger.error("MSRP: MaxIntervalFrames cannot be zero")
+        throw MSRPFailure(systemID: port.systemID, failureCode: .insufficientBridgeResources)
+      }
+
       guard try await _checkAvailableBandwidth(
         participant: participant,
         portState: portState,
