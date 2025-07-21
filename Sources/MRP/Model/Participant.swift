@@ -549,6 +549,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     case .nonParticipant:
       flags.insert(.registrationFixedNewIgnored)
     }
+    // TODO: add flags for when attribute is empty, so Applicant State Machine can
+    // ignore transition to LO from VO/AO/QO when receiving rLA!, txLA!, or txLAF!
     return flags
   }
 
