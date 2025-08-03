@@ -64,7 +64,7 @@ struct MMRPMACValue: Value, Equatable, Hashable {
   func serialize(into serializationContext: inout SerializationContext) throws {
     precondition((_macAddress & 0xFFFF_0000_0000_0000) == 0)
     serializationContext.serialize(uint32: UInt32(_macAddress >> 16))
-    serializationContext.serialize(uint16: UInt16(_macAddress & 0xFFF))
+    serializationContext.serialize(uint16: UInt16(_macAddress & 0xFFFF))
   }
 
   private init(_macAddress: UInt64) {
@@ -74,7 +74,8 @@ struct MMRPMACValue: Value, Equatable, Hashable {
   init(deserializationContext: inout DeserializationContext) throws {
     let high: UInt32 = try deserializationContext.deserialize()
     let low: UInt16 = try deserializationContext.deserialize()
-    _macAddress = UInt64(high << 16) | UInt64(low)
+    _macAddress = UInt64(high) << 16 | UInt64(low)
+    precondition((_macAddress & 0xFFFF_0000_0000_0000) == 0)
   }
 
   var index: UInt64 {
