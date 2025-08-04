@@ -848,7 +848,7 @@ extension LinuxBridge: MSRPAwareBridge {
       // classes, and we assume class A gets the highest. queues start at 1.
       0
     } else if let queueForLowestClass = queues[srClassPriorityMap.lowestClassID] {
-      // otherwise, most likely, trying to work around for i210 weirness where
+      // otherwise, most likely, trying to work around for i210 weirdness where
       // queue numbers are inverted
       UInt16(numTXQueues) - UInt16(queueForLowestClass)
     } else {
