@@ -831,28 +831,36 @@ extension LinuxBridge: MSRPAwareBridge {
   func configureQueues(
     port: P,
     srClassPriorityMap: SRClassPriorityMap,
-    queues: [SRclassID: UInt]
+    queues: [SRclassID: UInt], // map a SR class (TC) to a queue number
+    forceAvbCapable: Bool
   ) async throws {
     guard let _nlQDiscHandle else {
       throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
     }
 
-    let numTXQueues = UInt(port._rtnl.numTXQueues)
-    guard numTXQueues >= srClassPriorityMap.count else {
-      throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
-    }
+    var legacyQueueCount: UInt16?
+    var legacyQueueOffset: UInt16?
 
-    let legacyQueueCount = UInt16(numTXQueues) - UInt16(srClassPriorityMap.count)
-    let legacyQueueOffset: UInt16 = if queues[.A] == numTXQueues {
-      // normal situation gives higher number queues to higher numbered traffic
-      // classes, and we assume class A gets the highest. queues start at 1.
-      0
-    } else if let queueForLowestClass = queues[srClassPriorityMap.lowestClassID] {
-      // otherwise, most likely, trying to work around for i210 weirdness where
-      // queue numbers are inverted
-      UInt16(numTXQueues) - UInt16(queueForLowestClass)
-    } else {
-      throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
+    do {
+      let numTXQueues = UInt(port._rtnl.numTXQueues)
+      guard numTXQueues >= srClassPriorityMap.count else {
+        throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
+      }
+
+      legacyQueueCount = UInt16(numTXQueues) - UInt16(srClassPriorityMap.count)
+      legacyQueueOffset = if queues[.A] == numTXQueues {
+        // normal situation gives higher number queues to higher numbered traffic
+        // classes, and we assume class A gets the highest. queues start at 1.
+        0
+      } else if let queueForLowestClass = queues[srClassPriorityMap.lowestClassID] {
+        // otherwise, most likely, trying to work around for i210 weirdness where
+        // queue numbers are inverted
+        UInt16(numTXQueues) - UInt16(queueForLowestClass)
+      } else {
+        throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
+      }
+    } catch let error as MSRPFailure {
+      guard forceAvbCapable, error.failureCode == .egressPortIsNotAvbCapable else { throw error }
     }
 
     let mqprio = try RTNLMQPrioQDisc(
@@ -963,24 +971,24 @@ fileprivate extension RTNLMQPrioQDisc {
   convenience init(
     handle: UInt32,
     parent: UInt32,
-    srClassPriorityMap: SRClassPriorityMap,
-    queues: [SRclassID: UInt], // classID to Qdisc handle map
-    legacyQueueCount: UInt16 = 2,
-    legacyQueueOffset: UInt16 = 0
+    srClassPriorityMap: SRClassPriorityMap, // SR class to PCP map
+    queues: [SRclassID: UInt], // SR class to Qdisc handle map
+    legacyQueueCount: UInt16? = nil,
+    legacyQueueOffset: UInt16? = nil
   ) throws {
     let priorityMap: [UInt8: UInt8] = Dictionary(
       uniqueKeysWithValues: srClassPriorityMap
         .map { srClass, srClassPriority in
-          (srClass.tc, _mapSRClassPriorityToUP(srClassPriority))
+          (_mapSRClassPriorityToUP(srClassPriority), srClass.tc)
         }
     )
 
-    let count: [UInt16] = [legacyQueueCount] + [UInt16](
-      repeating: 1,
+    let count: [UInt16] = [legacyQueueCount ?? 2] + [UInt16](
+      repeating: 1, // one queue per SR class
       count: srClassPriorityMap.count
     )
-    var offset: [UInt16] = [legacyQueueOffset] + [UInt16](
-      repeating: 0,
+    var offset: [UInt16] = [legacyQueueOffset ?? 0] + [UInt16](
+      repeating: 0, // actual value will be set below
       count: srClassPriorityMap.count
     )
 

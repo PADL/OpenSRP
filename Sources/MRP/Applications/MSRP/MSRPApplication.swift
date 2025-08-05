@@ -25,7 +25,8 @@ protocol MSRPAwareBridge<P>: Bridge where P: AVBPort {
   func configureQueues(
     port: P,
     srClassPriorityMap: SRClassPriorityMap,
-    queues: [SRclassID: UInt]
+    queues: [SRclassID: UInt],
+    forceAvbCapable: Bool
   ) async throws
 
   func unconfigureQueues(
@@ -213,7 +214,8 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
         try await bridge.configureQueues(
           port: port,
           srClassPriorityMap: DefaultSRClassPriorityMap,
-          queues: _queues
+          queues: _queues,
+          forceAvbCapable: _forceAvbCapable
         )
         srClassPriorityMap[port.id] = DefaultSRClassPriorityMap
         _logger
