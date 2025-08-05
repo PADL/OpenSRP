@@ -149,6 +149,7 @@ private final class MRPDaemon: AsyncParsableCommand {
       portExclusions: Set(excludeIface)
     )
     if enableSRP {
+      enableMMRP = false
       enableMVRP = true
       enableMSRP = true
     }
