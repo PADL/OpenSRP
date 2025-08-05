@@ -203,23 +203,26 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
 
     var srClassPriorityMap = [P.ID: SRClassPriorityMap]()
 
+    guard let bridge = (controller?.bridge as? any MSRPAwareBridge<P>) else {
+      _logger.error("MSRP: bridge is not MSRP-aware, cannot declare domains")
+      return
+    }
+
     for port in context {
-      if port.isAvbCapable, let bridge = (controller?.bridge as? any MSRPAwareBridge<P>) {
-        if _configureQueues {
-          try await bridge.configureQueues(
-            port: port,
-            srClassPriorityMap: DefaultSRClassPriorityMap,
-            queues: _queues
+      if _configureQueues {
+        try await bridge.configureQueues(
+          port: port,
+          srClassPriorityMap: DefaultSRClassPriorityMap,
+          queues: _queues
+        )
+        srClassPriorityMap[port.id] = DefaultSRClassPriorityMap
+        _logger
+          .debug(
+            "MSRP: allocating port state for \(port), configuring queues with default prio map"
           )
-          srClassPriorityMap[port.id] = DefaultSRClassPriorityMap
-          _logger
-            .debug(
-              "MSRP: allocating port state for \(port), configuring queues with default prio map"
-            )
-        } else {
-          srClassPriorityMap[port.id] = try? await bridge.getSRClassPriorityMap(port: port)
-          _logger.debug("MSRP: allocating port state for \(port), prio map \(srClassPriorityMap)")
-        }
+      } else if port.isAvbCapable {
+        srClassPriorityMap[port.id] = try? await bridge.getSRClassPriorityMap(port: port)
+        _logger.debug("MSRP: allocating port state for \(port), prio map \(srClassPriorityMap)")
       } else if _forceAvbCapable {
         srClassPriorityMap[port.id] = DefaultSRClassPriorityMap
         _logger.warning("MRRP: forcing port \(port) to advertise as AVB capable")
