@@ -211,6 +211,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
 
     for port in context {
       if _configureQueues {
+        try? await bridge.unconfigureQueues(port: port)
         try await bridge.configureQueues(
           port: port,
           srClassPriorityMap: DefaultSRClassPriorityMap,
