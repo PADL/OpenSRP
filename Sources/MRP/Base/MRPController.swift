@@ -260,12 +260,12 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
 
   private func _handleRxPackets() async throws {
     for try await (id, packet) in _rxPackets {
-      // find the application for this ethertype
       guard let port = _ports[id] else {
-        logger.info("port \(id) not found, skipping")
+        logger.debug("port \(id) not found, skipping")
         continue
       }
 
+      // find the application for this ethertype
       guard let application = _applications[packet.etherType] else {
         logger.debug("application 0x\(packet.etherType) on port \(port) not found, skipping")
         continue
