@@ -215,7 +215,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
   }
 
   private func _didAdd(port: P) async throws {
-    logger.debug("added port \(port)")
+    logger.debug("added port \(port.id): \(port)")
 
     _startTx(port: port)
 
@@ -224,7 +224,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
   }
 
   private func _didRemove(port: P) throws {
-    logger.debug("removed port \(port)")
+    logger.debug("removed port \(port.id): \(port)")
 
     _stopTx(port: port)
 
@@ -233,7 +233,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
   }
 
   private func _didUpdate(port: P) async throws {
-    logger.debug("updated port \(port)")
+    logger.debug("updated port \(port.id): \(port)")
 
     try await _applyContextIdentifierChanges(beforeAddingOrUpdating: port, isNewPort: false)
     _ports[port.id] = port
