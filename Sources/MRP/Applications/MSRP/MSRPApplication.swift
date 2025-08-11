@@ -1011,11 +1011,19 @@ extension MSRPApplication {
        declarationType == .listenerReady || declarationType == .listenerReadyFailed
     {
       _logger.debug("MSRP: registering FDB entries for \(talkerRegistration.dataFrameParameters)")
-      try await bridge.register(
-        macAddress: talkerRegistration.dataFrameParameters.destinationAddress,
-        vlan: talkerRegistration.dataFrameParameters.vlanIdentifier,
-        on: [port]
-      )
+      do {
+        try await bridge.register(
+          macAddress: talkerRegistration.dataFrameParameters.destinationAddress,
+          vlan: talkerRegistration.dataFrameParameters.vlanIdentifier,
+          on: [port]
+        )
+      } catch {
+        _logger
+          .debug(
+            "MSRP: failed to register FDB entries for \(talkerRegistration.dataFrameParameters): \(error)"
+          )
+        throw error
+      }
     } else {
       _logger.debug("MSRP: deregistering FDB entries for \(talkerRegistration.dataFrameParameters)")
       try? await bridge.deregister(
@@ -1069,12 +1077,17 @@ extension MSRPApplication {
 
     _logger.debug("MSRP: adjusting idle slope, port \(port), streams \(streams)")
 
-    try await bridge.adjustCreditBasedShaper(
-      application: self,
-      port: port,
-      portState: portState,
-      streams: streams
-    )
+    do {
+      try await bridge.adjustCreditBasedShaper(
+        application: self,
+        port: port,
+        portState: portState,
+        streams: streams
+      )
+    } catch {
+      _logger.debug("MSRP: failed to adjust credit based shaped: \(error)")
+      throw error
+    }
   }
 
   private func _updatePortParameters(
