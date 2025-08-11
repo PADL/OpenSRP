@@ -1085,7 +1085,7 @@ extension MSRPApplication {
         streams: streams
       )
     } catch {
-      _logger.debug("MSRP: failed to adjust credit based shaped: \(error)")
+      _logger.debug("MSRP: failed to adjust credit based shaper: \(error)")
       throw error
     }
   }
