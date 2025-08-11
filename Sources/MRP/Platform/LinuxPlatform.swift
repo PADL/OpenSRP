@@ -900,19 +900,27 @@ extension LinuxBridge: MSRPAwareBridge {
       throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
     }
     let parent = UInt32(_nlQDiscHandle) << 16 | UInt32(queue)
-    if hiCredit == 0, loCredit == 0, idleSlope == 0 {
-      try await port._rtnl.remove(handle: 0, parent: parent, socket: _nlLinkSocket)
-    } else {
-      try await port._rtnl.add(
-        handle: 0, // this allows the kernel to assign a handle
-        parent: parent,
-        offload: true,
-        hiCredit: Int32(hiCredit),
-        loCredit: Int32(loCredit),
-        idleSlope: Int32(idleSlope),
-        sendSlope: Int32(sendSlope),
-        socket: _nlLinkSocket
+
+    do {
+      if hiCredit == 0, loCredit == 0, idleSlope == 0 {
+        try await port._rtnl.remove(handle: 0, parent: parent, socket: _nlLinkSocket)
+      } else {
+        try await port._rtnl.add(
+          handle: 0, // this allows the kernel to assign a handle
+          parent: parent,
+          offload: true,
+          hiCredit: Int32(hiCredit),
+          loCredit: Int32(loCredit),
+          idleSlope: Int32(idleSlope),
+          sendSlope: Int32(sendSlope),
+          socket: _nlLinkSocket
+        )
+      }
+    } catch {
+      debugPrint(
+        "adjustCreditBasedShaper: bridge \(self) port \(port) parent \(parent) hiCredit \(hiCredit) loCredit \(loCredit) idleSlope \(idleSlope) sendSlope \(sendSlope) failed: \(error)"
       )
+      throw error
     }
   }
 
