@@ -36,6 +36,9 @@ PlatformTargetDependencies = [
     name: "NetLink",
     package: "NetLinkSwift"
   ),
+  .product(name: "nldump", package: "NetLinkSwift"),
+  .product(name: "nlmonitor", package: "NetLinkSwift"),
+  .product(name: "nltool", package: "NetLinkSwift"),
   .product(
     name: "IORing",
     package: "IORingSwift"
