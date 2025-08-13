@@ -99,6 +99,7 @@ The current test environments consist of:
 
 * An x86\_64 server with two Intel i210 NICs with their SDP pins tied, using `ts2phc` and `ptp4l` in 802.1AS mode (no longer being tested)
 * A Global Scale Technologies [MochaBIN](https://globalscaletechnologies.com/product/mochabin-copy/) with its stock 88E6141 switch chip replaced with a 88E6341, also using `ptp4l`
+* A custom board (’XEBRA’) with a Raspberry Pi CM4 and a Marvell 88E6352
 
 Endpoints we are testing include:
 
