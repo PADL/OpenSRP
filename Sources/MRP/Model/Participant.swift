@@ -731,6 +731,11 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
 
       return true
     } catch {
+      if let participant {
+        participant._logger.trace(
+          "\(participant): caught error \(error) matching \(String(describing: attributeType)) against filter \(filter)"
+        )
+      }
       return false
     }
   }
