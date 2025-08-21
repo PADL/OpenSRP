@@ -290,7 +290,10 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       matching: filter,
       createIfMissing: false
     )
-    guard let attributeValueState else { return nil }
+    guard let attributeValueState else {
+      _logger.trace("\(self): could not find attribute type \(attributeType) matching \(filter)")
+      return nil
+    }
     guard attributeValueState.registrarState == .IN else {
       _logger
         .trace(
