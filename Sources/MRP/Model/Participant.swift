@@ -290,7 +290,14 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       matching: filter,
       createIfMissing: false
     )
-    guard let attributeValueState, attributeValueState.registrarState == .IN else { return nil }
+    guard let attributeValueState else { return nil }
+    guard attributeValueState.registrarState == .IN else {
+      _logger
+        .trace(
+          "\(self): found attribute value \(attributeValueState), but registrar state was not .IN"
+        )
+      return nil
+    }
     return (attributeValueState.attributeSubtype, attributeValueState.unwrappedValue)
   }
 
