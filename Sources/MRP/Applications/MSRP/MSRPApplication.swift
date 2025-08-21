@@ -1167,6 +1167,15 @@ extension MSRPApplication {
       return
     }
 
+    // make sure talker registration isn't from listener port, that wouldn't make sense
+    guard talkerRegistration.0.port != port else {
+      _logger
+        .error(
+          "MSRP: talker registration \(talkerRegistration) found on listener port \(port), ignoring"
+        )
+      return
+    }
+
     // TL;DR: propagate merged Listener declarations to _talker_ port
     let mergedDeclarationType = try await _mergeListenerDeclarations(
       contextIdentifier: contextIdentifier,
