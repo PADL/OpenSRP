@@ -899,10 +899,12 @@ extension LinuxBridge: MSRPAwareBridge {
     guard let _nlQDiscHandle else {
       throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
     }
+
+    let removeShaper = hiCredit == 0 && loCredit == 0 && idleSlope == 0
     let parent = UInt32(_nlQDiscHandle) << 16 | UInt32(queue)
 
     do {
-      if hiCredit == 0, loCredit == 0, idleSlope == 0 {
+      if removeShaper {
         try await port._rtnl.remove(handle: 0, parent: parent, socket: _nlLinkSocket)
       } else {
         try await port._rtnl.add(
@@ -916,6 +918,9 @@ extension LinuxBridge: MSRPAwareBridge {
           socket: _nlLinkSocket
         )
       }
+    } catch Errno.invalidArgument {
+      // removing a CBS that doesn't exist can return invalidArgument so trap that
+      guard removeShaper else { throw Errno.invalidArgument }
     } catch {
       debugPrint(
         "adjustCreditBasedShaper: bridge \(self) port \(port) parent \(parent) hiCredit \(hiCredit) loCredit \(loCredit) idleSlope \(idleSlope) sendSlope \(sendSlope) failed: \(error)"
