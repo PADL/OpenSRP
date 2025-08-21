@@ -1162,7 +1162,7 @@ extension MSRPApplication {
     guard let talkerRegistration = try? await _findTalkerRegistration(for: streamID) else {
       _logger
         .error(
-          "MSRP: could not find talker registration for listener stream \(streamID) on port \(port)"
+          "MSRP: could not find talker registration for listener stream \(streamID)"
         )
       return
     }
