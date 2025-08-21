@@ -1097,6 +1097,7 @@ extension MSRPApplication {
     talkerRegistration: (Participant<MSRPApplication>, any MSRPTalkerValue)
   ) async throws {
     var portState: MSRPPortState<P>?
+
     withPortState(port: port) {
       if mergedDeclarationType == .listenerReady || mergedDeclarationType == .listenerReadyFailed {
         $0.register(streamID: streamID)
