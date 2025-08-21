@@ -947,7 +947,15 @@ extension MSRPApplication {
     var talkerRegistration: (Participant<MSRPApplication>, any MSRPTalkerValue)?
 
     await apply { participant in
-      talkerRegistration = await _findTalkerRegistration(for: streamID, participant: participant)
+      guard let participantTalkerRegistration = await _findTalkerRegistration(
+        for: streamID,
+        participant: participant
+      ) else {
+        return
+      }
+      if talkerRegistration == nil {
+        talkerRegistration = participantTalkerRegistration
+      }
     }
 
     return talkerRegistration
