@@ -1176,8 +1176,8 @@ extension MSRPApplication {
       return
     }
 
-    // make sure talker registration isn't from listener port, that wouldn't make sense
-    guard talkerRegistration.0.port != port else {
+    // point-to-point talker registrations should not come from the same port as the listener
+    if port.isPointToPoint, talkerRegistration.0.port == port {
       _logger
         .error(
           "MSRP: talker registration \(talkerRegistration) found on listener port \(port), ignoring"
