@@ -696,7 +696,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
     attributeSubtype = subtype
     self.value = AnyValue(value)
     if participant._type != .applicantOnly {
-      registrar = Registrar(onLeaveTimerExpired: onLeaveTimerExpired)
+      registrar = Registrar(onLeaveTimerExpired: _onLeaveTimerExpired)
     }
   }
 
@@ -705,7 +705,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
   }
 
   @Sendable
-  private func onLeaveTimerExpired() async throws {
+  private func _onLeaveTimerExpired() async throws {
     try await handle(
       event: .leavetimer,
       eventSource: .leaveTimer
