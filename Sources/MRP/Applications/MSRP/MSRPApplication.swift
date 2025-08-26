@@ -109,6 +109,8 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
   BaseApplicationContextObserver,
   ApplicationEventHandler, CustomStringConvertible, @unchecked Sendable where P == P
 {
+  private typealias TalkerRegistration = (Participant<MSRPApplication>, any MSRPTalkerValue)
+
   // for now, we only operate in the Base Spanning Tree Context
   public var nonBaseContextsSupported: Bool { false }
 
@@ -946,7 +948,7 @@ extension MSRPApplication {
   private func _findTalkerRegistration(
     for streamID: MSRPStreamID,
     participant: Participant<MSRPApplication>
-  ) async -> (Participant<MSRPApplication>, any MSRPTalkerValue)? {
+  ) async -> TalkerRegistration? {
     if let value = await participant.findAttribute(
       attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
       matching: .matchIndex(MSRPTalkerAdvertiseValue(streamID: streamID))
@@ -964,8 +966,8 @@ extension MSRPApplication {
 
   private func _findTalkerRegistration(
     for streamID: MSRPStreamID
-  ) async throws -> (Participant<MSRPApplication>, any MSRPTalkerValue)? {
-    var talkerRegistration: (Participant<MSRPApplication>, any MSRPTalkerValue)?
+  ) async throws -> TalkerRegistration? {
+    var talkerRegistration: TalkerRegistration?
 
     await apply { participant in
       guard let participantTalkerRegistration = await _findTalkerRegistration(
@@ -987,12 +989,12 @@ extension MSRPApplication {
     port: P,
     streamID: MSRPStreamID,
     declarationType: MSRPDeclarationType,
-    talkerRegistration: any MSRPTalkerValue,
+    talkerRegistration: TalkerRegistration,
     isJoin: Bool
   ) async throws -> MSRPDeclarationType? {
     var mergedDeclarationType: MSRPDeclarationType? = if isJoin {
       if declarationType == .listenerAskingFailed ||
-        talkerRegistration is MSRPTalkerFailedValue
+        talkerRegistration.1 is MSRPTalkerFailedValue
       {
         .listenerAskingFailed
       } else {
@@ -1130,7 +1132,7 @@ extension MSRPApplication {
     port: P,
     streamID: MSRPStreamID,
     mergedDeclarationType: MSRPDeclarationType?,
-    talkerRegistration: (Participant<MSRPApplication>, any MSRPTalkerValue)
+    talkerRegistration: TalkerRegistration
   ) async throws {
     var portState: MSRPPortState<P>?
 
@@ -1226,7 +1228,7 @@ extension MSRPApplication {
       port: port,
       streamID: streamID,
       declarationType: declarationType,
-      talkerRegistration: talkerRegistration.1,
+      talkerRegistration: talkerRegistration,
       isJoin: true
     )
 
@@ -1404,7 +1406,7 @@ extension MSRPApplication {
       port: port,
       streamID: streamID,
       declarationType: declarationType,
-      talkerRegistration: talkerRegistration.1,
+      talkerRegistration: talkerRegistration,
       isJoin: false
     )
 
