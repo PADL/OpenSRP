@@ -1206,6 +1206,13 @@ extension MSRPApplication {
       return
     }
 
+    if talkerRegistration.1 is MSRPTalkerFailedValue {
+      _logger
+        .trace(
+          "MSRP: talker registration \(talkerRegistration) is talker failed, will not propagate listener ready"
+        )
+    }
+
     // TL;DR: propagate merged Listener declarations to _talker_ port
     let mergedDeclarationType = try await _mergeListenerDeclarations(
       contextIdentifier: contextIdentifier,
