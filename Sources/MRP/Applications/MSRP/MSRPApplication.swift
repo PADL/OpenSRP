@@ -1004,10 +1004,14 @@ extension MSRPApplication {
       nil
     }
 
-    // collect listener declarations from all ports except the declaration being processed
-    // by the caller, and merge declaration type
+    // collect listener declarations from all ports and merge declaration type
     await apply(for: contextIdentifier) { participant in
+      // exclude registering port
       guard participant.port != port else { return }
+
+      // exclude talker port
+      guard participant.port != talkerRegistration.0.port else { return }
+
       for listenerAttribute in await participant.findAttributes(
         attributeType: MSRPAttributeType.listener.rawValue,
         matching: .matchAnyIndex(streamID.id)
