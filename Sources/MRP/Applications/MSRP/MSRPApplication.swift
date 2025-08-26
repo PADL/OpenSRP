@@ -904,22 +904,34 @@ extension MSRPApplication {
     declarationType firstDeclarationType: MSRPDeclarationType,
     with secondDeclarationType: MSRPDeclarationType?
   ) -> MSRPDeclarationType {
+    var mergedDeclarationType: MSRPDeclarationType!
+
     if firstDeclarationType == .listenerReady {
       if secondDeclarationType == nil || secondDeclarationType == .listenerReady {
-        return .listenerReady
+        mergedDeclarationType = .listenerReady
       } else if secondDeclarationType == .listenerReadyFailed || secondDeclarationType ==
         .listenerAskingFailed
       {
-        return .listenerReadyFailed
+        mergedDeclarationType = .listenerReadyFailed
       }
     } else if firstDeclarationType == .listenerAskingFailed {
       if secondDeclarationType == .listenerReady || secondDeclarationType == .listenerReadyFailed {
         return .listenerReadyFailed
       } else if secondDeclarationType == nil || secondDeclarationType == .listenerAskingFailed {
-        return .listenerAskingFailed
+        mergedDeclarationType = .listenerAskingFailed
       }
     }
-    return .listenerReadyFailed
+
+    if mergedDeclarationType == nil {
+      mergedDeclarationType = .listenerReadyFailed
+    }
+
+    _logger
+      .trace(
+        "MSRP: \(firstDeclarationType) + \(secondDeclarationType != nil ? String(describing: secondDeclarationType!) : "<nil>") -> \(mergedDeclarationType!)"
+      )
+
+    return mergedDeclarationType
   }
 
   private func _findTalkerRegistration(
