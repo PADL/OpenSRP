@@ -940,11 +940,6 @@ extension MSRPApplication {
       mergedDeclarationType = .listenerReadyFailed
     }
 
-    _logger
-      .trace(
-        "MSRP: merge \(firstDeclarationType) + \(String(describing: secondDeclarationType)) -> \(mergedDeclarationType)"
-      )
-
     return mergedDeclarationType
   }
 
@@ -1020,10 +1015,17 @@ extension MSRPApplication {
         if mergedDeclarationType == nil {
           mergedDeclarationType = declarationType
         } else {
+          let previousMergedDeclarationType = mergedDeclarationType
+
           mergedDeclarationType = _mergeListener(
             declarationType: declarationType,
-            with: mergedDeclarationType
+            with: previousMergedDeclarationType
           )
+
+          _logger
+            .trace(
+              "MSRP@\(port): merge \(declarationType)@\(participant.port) + \(String(describing: previousMergedDeclarationType)) -> \(mergedDeclarationType!)"
+            )
         }
       }
     }
