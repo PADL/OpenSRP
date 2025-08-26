@@ -1209,7 +1209,7 @@ extension MSRPApplication {
 
     _logger
       .info(
-        "MSRP: register attach indication from port \(port) streamID \(streamID) declarationType \(declarationType) to participant \(talkerRegistration)"
+        "MSRP: register attach indication from port \(port) streamID \(streamID) declarationType \(declarationType) -> \(mergedDeclarationType != nil ? String(describing: mergedDeclarationType!) : "<nil>") to participant \(talkerRegistration)"
       )
 
     try await talkerRegistration.0.join(
