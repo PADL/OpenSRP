@@ -19,7 +19,7 @@ import IEEE802
 
 public typealias ProtocolVersion = UInt8
 
-struct ThreePackedEvents: Equatable {
+struct ThreePackedEvents: Equatable, CustomStringConvertible {
   let value: UInt8
 
   init(_ value: UInt8) {
@@ -41,6 +41,10 @@ struct ThreePackedEvents: Equatable {
     return r
   }
 
+  var description: String {
+    "ThreePackedEvents(tuple: \(tuple))"
+  }
+
   static func chunked(_ values: [UInt8]) -> [ThreePackedEvents] {
     let values = values.chunks(ofCount: 3)
     return values.map {
@@ -49,7 +53,7 @@ struct ThreePackedEvents: Equatable {
   }
 }
 
-struct FourPackedEvents: Equatable {
+struct FourPackedEvents: Equatable, CustomStringConvertible {
   let value: UInt8
 
   init(_ value: UInt8) {
@@ -71,6 +75,10 @@ struct FourPackedEvents: Equatable {
     value -= r.2 * 4
     r.3 = value
     return r
+  }
+
+  var description: String {
+    "FourPackedEvents(tuple: \(tuple))"
   }
 
   static func chunked(_ values: [UInt8]) -> [FourPackedEvents] {
