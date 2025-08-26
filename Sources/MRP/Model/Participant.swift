@@ -695,7 +695,7 @@ private final class _AttributeValue<A: Application>: @unchecked Sendable, Hashab
     registrar?.state
   }
 
-  var description: String {
+  nonisolated var description: String {
     "_AttributeValue(attributeType: \(attributeType), attributeSubtype: \(attributeSubtype ?? 0), attributeValue: \(value), A \(applicant) R \(registrar?.description ?? "-"))"
   }
 
