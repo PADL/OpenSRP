@@ -251,7 +251,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     }
   }
 
-  private func _findAttributeValueState(
+  private func _findOrCreateAttribute(
     attributeType: AttributeType,
     attributeSubtype: AttributeSubtype?,
     matching filter: AttributeValueFilter,
@@ -289,7 +289,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     attributeType: AttributeType,
     matching filter: AttributeValueFilter
   ) -> (AttributeSubtype?, any Value)? {
-    let attributeValueState = try? _findAttributeValueState(
+    let attributeValueState = try? _findOrCreateAttribute(
       attributeType: attributeType,
       attributeSubtype: nil,
       matching: filter,
@@ -536,7 +536,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
           UInt64(i)
         ))
 
-        guard let attribute = try? _findAttributeValueState(
+        guard let attribute = try? _findOrCreateAttribute(
           attributeType: message.attributeType,
           attributeSubtype: filter._subtype,
           matching: filter,
@@ -622,7 +622,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     isNew: Bool,
     eventSource: EventSource = .internal
   ) async throws {
-    let attribute = try _findAttributeValueState(
+    let attribute = try _findOrCreateAttribute(
       attributeType: attributeType,
       attributeSubtype: attributeSubtype,
       matching: .matchEqual(attributeValue), // don't match on subtype, we want to replace it
@@ -638,7 +638,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     attributeValue: some Value,
     eventSource: EventSource = .internal
   ) async throws {
-    let attribute = try _findAttributeValueState(
+    let attribute = try _findOrCreateAttribute(
       attributeType: attributeType,
       attributeSubtype: attributeSubtype,
       matching: .matchEqual(attributeValue), // don't match on subtype, we want to replace it
