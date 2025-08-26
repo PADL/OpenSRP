@@ -94,7 +94,11 @@ private enum EnqueuedEvent<A: Application>: Equatable, CustomStringConvertible {
     } else if case let .attributeEvent(self) = self, case let .attributeEvent(event) = event {
       // another event with the same attribute type and value had encodingOptional set,
       // which allows it to be elided from the transmitted packet
-      self.encodingOptional && self.attributeValue == event.attributeValue
+
+      // NOTE: this does _not_ compare the attrbiuteSubtype; last one wins
+      self.encodingOptional &&
+        self.attributeValue.attributeType == event.attributeValue.attributeType &&
+        self.attributeValue.value == event.attributeValue.value
     } else {
       // this is a new event
       false
@@ -428,7 +432,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
         _logger.trace("\(self): event \(event) was already encoded, skipping")
         return
       }
-      // if encodingOptional is set to false, the event is always encode, but it
+      // if encodingOptional is set to false, the event is always encoded, but it
       // may replace a previous event of any event type that had it set to true.
       if let eventIndex = _enqueuedEvents.values[index]
         .firstIndex(where: { $0.canBeReplacedBy(event: event) })
