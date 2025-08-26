@@ -1238,7 +1238,7 @@ extension MSRPApplication {
 
     _logger
       .info(
-        "MSRP: register attach indication from port \(port) streamID \(streamID) declarationType \(declarationType) -> \(mergedDeclarationType != nil ? String(describing: mergedDeclarationType!) : "<nil>") to participant \(talkerRegistration)"
+        "MSRP: register attach indication from port \(port) streamID \(streamID) declarationType \(declarationType) -> \(mergedDeclarationType != nil ? String(describing: mergedDeclarationType!) : "<nil>") to participant \(talkerRegistration.0)"
       )
 
     try await talkerRegistration.0.join(
@@ -1411,7 +1411,7 @@ extension MSRPApplication {
 
     _logger
       .info(
-        "MSRP: deregister attach indication from port \(port) streamID \(streamID) declarationType \(declarationType) -> \(mergedDeclarationType != nil ? String(describing: mergedDeclarationType!) : "<nil>") to participant \(talkerRegistration)"
+        "MSRP: deregister attach indication from port \(port) streamID \(streamID) declarationType \(declarationType) -> \(mergedDeclarationType != nil ? String(describing: mergedDeclarationType!) : "<nil>") to participant \(talkerRegistration.0)"
       )
 
     if let mergedDeclarationType {
