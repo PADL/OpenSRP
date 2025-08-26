@@ -472,17 +472,18 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     event: ProtocolEvent,
     eventSource: EventSource
   ) async throws {
-    let action = _leaveAll.action(for: event)
-
-    if action == .leavealltimer {
+    switch _leaveAll.action(for: event) {
+    case .leavealltimer:
       _leaveAll.startLeaveAllTimer()
-    } else if action == .sLA {
+    case .sLA:
       // a) The LeaveAll state machine associated with that instance of the
       // Applicant or Registrar state machine performs the sLA action
       // (10.7.6.6); or a MRPDU is received with a LeaveAll
       _logger.debug("\(self): sending leave all events, source \(eventSource)")
       try await _apply(event: .rLA, eventSource: eventSource)
       try _txEnqueueLeaveAllEvents()
+    default:
+      break
     }
   }
 
