@@ -940,6 +940,11 @@ extension MSRPApplication {
       mergedDeclarationType = .listenerReadyFailed
     }
 
+    _logger
+      .trace(
+        "MSRP: merge \(firstDeclarationType) + \(String(describing: secondDeclarationType)) -> \(mergedDeclarationType)"
+      )
+
     return mergedDeclarationType
   }
 
