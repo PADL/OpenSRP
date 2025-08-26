@@ -260,6 +260,9 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     if let attributeValue = _attributes[attributeType]?
       .first(where: { $0.matches(attributeType: attributeType, matching: filter) })
     {
+      if let attributeSubtype { // don't take mutex unless necessary
+        attributeValue.attributeSubtype = attributeSubtype
+      }
       return attributeValue
     }
 
@@ -288,8 +291,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   ) -> (AttributeSubtype?, any Value)? {
     let attributeValueState = try? _findAttributeValueState(
       attributeType: attributeType,
-      attributeSubtype: filter._subtype,
-      // ignored unless createIfMissing is true, but fill in anyway
+      attributeSubtype: nil,
       matching: filter,
       createIfMissing: false
     )
@@ -540,6 +542,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
           matching: filter,
           createIfMissing: true
         ) else { continue }
+
         try await _handle(
           attributeEvent: packedEvents[i],
           with: attribute,
@@ -663,11 +666,13 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
   }
 
   private let _participant: Weak<P>
+  private let _attributeSubtype: Mutex<AttributeSubtype?>
+
   private let applicant = Applicant() // A per-Attribute Applicant state machine (10.7.7)
   // note registrar is not mutated outside init() so it does not need a mutex
   private var registrar: Registrar? // A per-Attribute Registrar state machine (10.7.8)
+
   let attributeType: AttributeType
-  let attributeSubtype: AttributeSubtype?
   let value: AnyValue
 
   let counters = Mutex(EventCounters<A>())
@@ -675,6 +680,16 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
   var index: UInt64 { value.index }
   var participant: P? { _participant.object }
   var unwrappedValue: any Value { value.value }
+
+  var attributeSubtype: AttributeSubtype? {
+    get {
+      _attributeSubtype.withLock { $0 }
+    }
+
+    set {
+      _attributeSubtype.withLock { $0 = newValue }
+    }
+  }
 
   var registrarState: Registrar.State? {
     registrar?.state
@@ -694,7 +709,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
     _participant = participant
     registrar = nil
     attributeType = type
-    attributeSubtype = subtype
+    _attributeSubtype = .init(subtype)
     self.value = value
   }
 
@@ -702,7 +717,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
     precondition(!(value is AnyValue))
     _participant = Weak(participant)
     attributeType = type
-    attributeSubtype = subtype
+    _attributeSubtype = .init(subtype)
     self.value = AnyValue(value)
     if participant._type != .applicantOnly {
       registrar = Registrar(onLeaveTimerExpired: _onLeaveTimerExpired)
