@@ -93,8 +93,8 @@ let MAPBaseSpanningTreeContext = MAPContextIdentifier(0)
 
 // 200 milliseconds
 let JoinTime = Duration.seconds(0.2)
-// 5000 milliseconds
-let LeaveTime = Duration.seconds(5)
+// 1000 milliseconds
+let LeaveTime = Duration.seconds(1)
 // 10-15 seconds
 let LeaveAllTime = 10.0
 
