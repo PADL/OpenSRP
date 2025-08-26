@@ -410,7 +410,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   }
 
   private func _txEnqueue(_ event: EnqueuedEvent<A>) {
-    _logger.trace("\(self): enqueing event \(event)")
+    _logger.trace("\(self): enqueuing event \(event)")
 
     if let index = _enqueuedEvents.index(forKey: event.attributeType) {
       let isAlreadyEncoded = _enqueuedEvents.values[index].contains {
