@@ -19,7 +19,7 @@ import IEEE802
 
 public typealias ProtocolVersion = UInt8
 
-struct ThreePackedEvents: Equatable, CustomStringConvertible {
+private struct ThreePackedEvents: Equatable, CustomStringConvertible {
   let value: UInt8
 
   init(_ value: UInt8) {
@@ -53,7 +53,7 @@ struct ThreePackedEvents: Equatable, CustomStringConvertible {
   }
 }
 
-struct FourPackedEvents: Equatable, CustomStringConvertible {
+private struct FourPackedEvents: Equatable, CustomStringConvertible {
   let value: UInt8
 
   init(_ value: UInt8) {
@@ -145,8 +145,8 @@ struct VectorAttribute<V: Value>: Sendable, Equatable {
   // (10.8.2.3) for the Attribute to which the message applies.
 
   let firstValue: V
-  let threePackedEvents: [ThreePackedEvents]
-  let fourPackedEvents: [FourPackedEvents]?
+  private let threePackedEvents: [ThreePackedEvents]
+  private let fourPackedEvents: [FourPackedEvents]?
 
   var leaveAllEvent: LeaveAllEvent { vectorHeader.leaveAllEvent }
   var numberOfValues: NumberOfValues { vectorHeader.numberOfValues }
@@ -173,7 +173,7 @@ struct VectorAttribute<V: Value>: Sendable, Equatable {
     }
   }
 
-  init(
+  private init(
     vectorHeader: VectorHeader,
     firstValue: V,
     threePackedEvents: [ThreePackedEvents],
@@ -185,7 +185,7 @@ struct VectorAttribute<V: Value>: Sendable, Equatable {
     self.fourPackedEvents = fourPackedEvents
   }
 
-  init(
+  private init(
     leaveAllEvent: LeaveAllEvent,
     numberOfValues: NumberOfValues,
     firstValue: V,
