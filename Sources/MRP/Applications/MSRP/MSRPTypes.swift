@@ -277,7 +277,7 @@ public struct MSRPDataFrameParameters: Value, Equatable, CustomStringConvertible
   }
 }
 
-public struct MSRPPriorityAndRank: SerDes, Equatable, Comparable {
+public struct MSRPPriorityAndRank: SerDes, Equatable, Comparable, CustomStringConvertible {
   public static func < (lhs: MSRPPriorityAndRank, rhs: MSRPPriorityAndRank) -> Bool {
     lhs.value < rhs.value
   }
@@ -306,6 +306,10 @@ public struct MSRPPriorityAndRank: SerDes, Equatable, Comparable {
 
   public var rank: Bool {
     value & 0x10 != 0
+  }
+
+  public var description: String {
+    "MSRPPriorityAndRank(dataFramePriority: \(dataFramePriority), rank: \(rank))"
   }
 }
 
