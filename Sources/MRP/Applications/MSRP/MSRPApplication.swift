@@ -1391,11 +1391,6 @@ extension MSRPApplication {
     declarationType: MSRPDeclarationType,
     eventSource: EventSource
   ) async throws {
-    _logger
-      .info(
-        "MSRP: deregister attach indication from port \(port) streamID \(streamID) source \(eventSource)"
-      )
-
     // On receipt of a MAD_Leave.indication for a Listener Declaration, if the
     // StreamID of the Declaration matches a Stream that the Talker is
     // transmitting, then the Talker shall stop the transmission for this
@@ -1413,6 +1408,11 @@ extension MSRPApplication {
       talkerRegistration: talkerRegistration,
       isJoin: false
     )
+
+    _logger
+      .info(
+        "MSRP: deregister attach indication from port \(port) streamID \(streamID) declarationType \(declarationType) -> \(mergedDeclarationType != nil ? String(describing: mergedDeclarationType!) : "<nil>") to participant \(talkerRegistration)"
+      )
 
     if let mergedDeclarationType {
       try await talkerRegistration.0.join(
