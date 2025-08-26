@@ -664,6 +664,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
 
   private let _participant: Weak<P>
   private let applicant = Applicant() // A per-Attribute Applicant state machine (10.7.7)
+  // note registrar is not mutated outside init() so it does not need a mutex
   private var registrar: Registrar? // A per-Attribute Registrar state machine (10.7.8)
   let attributeType: AttributeType
   let attributeSubtype: AttributeSubtype?
