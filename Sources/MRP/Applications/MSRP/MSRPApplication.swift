@@ -904,32 +904,41 @@ extension MSRPApplication {
     declarationType firstDeclarationType: MSRPDeclarationType,
     with secondDeclarationType: MSRPDeclarationType?
   ) -> MSRPDeclarationType {
-    var mergedDeclarationType: MSRPDeclarationType!
+    let mergedDeclarationType: MSRPDeclarationType
 
-    if firstDeclarationType == .listenerReady {
-      if secondDeclarationType == nil || secondDeclarationType == .listenerReady {
+    // 35.2.4.4.3 Merge Listener Declarations
+    switch firstDeclarationType {
+    case .listenerReady:
+      switch secondDeclarationType {
+      case nil:
+        fallthrough
+      case .listenerReady:
         mergedDeclarationType = .listenerReady
-      } else if secondDeclarationType == .listenerReadyFailed || secondDeclarationType ==
-        .listenerAskingFailed
-      {
+      case .listenerReadyFailed:
+        fallthrough
+      case .listenerAskingFailed:
+        fallthrough
+      default:
         mergedDeclarationType = .listenerReadyFailed
       }
-    } else if firstDeclarationType == .listenerAskingFailed {
-      if secondDeclarationType == .listenerReady || secondDeclarationType == .listenerReadyFailed {
-        return .listenerReadyFailed
-      } else if secondDeclarationType == nil || secondDeclarationType == .listenerAskingFailed {
+    case .listenerReadyFailed:
+      mergedDeclarationType = .listenerReadyFailed
+    case .listenerAskingFailed:
+      switch secondDeclarationType {
+      case .listenerReady:
+        fallthrough
+      case .listenerReadyFailed:
+        mergedDeclarationType = .listenerReadyFailed
+      case nil:
+        fallthrough
+      case .listenerAskingFailed:
+        fallthrough
+      default:
         mergedDeclarationType = .listenerAskingFailed
       }
-    }
-
-    if mergedDeclarationType == nil {
+    default:
       mergedDeclarationType = .listenerReadyFailed
     }
-
-    _logger
-      .trace(
-        "MSRP: \(firstDeclarationType) + \(secondDeclarationType != nil ? String(describing: secondDeclarationType!) : "<nil>") -> \(mergedDeclarationType!)"
-      )
 
     return mergedDeclarationType
   }
