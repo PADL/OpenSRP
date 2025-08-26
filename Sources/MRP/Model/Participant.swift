@@ -49,7 +49,7 @@ enum ParticipantType {
 private enum EnqueuedEvent<A: Application>: Equatable, CustomStringConvertible {
   struct AttributeEvent: Equatable, CustomStringConvertible {
     let attributeEvent: MRP.AttributeEvent
-    let attributeValue: _AttributeValueState<A>
+    let attributeValue: _AttributeValue<A>
     let encodingOptional: Bool
 
     var description: String {
@@ -124,7 +124,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
 
   private typealias EnqueuedEvents = [AttributeType: [EnqueuedEvent<A>]]
 
-  private var _attributes = [AttributeType: Set<_AttributeValueState<A>>]()
+  private var _attributes = [AttributeType: Set<_AttributeValue<A>>]()
   private var _enqueuedEvents = EnqueuedEvents()
   private var _leaveAll: LeaveAll!
   private var _jointimer: Timer?
@@ -256,7 +256,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     attributeSubtype: AttributeSubtype?,
     matching filter: AttributeValueFilter,
     createIfMissing: Bool
-  ) throws -> _AttributeValueState<A> {
+  ) throws -> _AttributeValue<A> {
     if let attributeValue = _attributes[attributeType]?
       .first(where: { $0.matches(attributeType: attributeType, matching: filter) })
     {
@@ -271,7 +271,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     }
 
     let filterValue = try filter._value!
-    let attributeValue = _AttributeValueState(
+    let attributeValue = _AttributeValue(
       participant: self,
       type: attributeType,
       subtype: attributeSubtype,
@@ -449,7 +449,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
 
   fileprivate func _txEnqueue(
     attributeEvent: AttributeEvent,
-    attributeValue: _AttributeValueState<A>,
+    attributeValue: _AttributeValue<A>,
     encodingOptional: Bool
   ) {
     let event = EnqueuedEvent<A>.AttributeEvent(
@@ -503,7 +503,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
 
   private func _handle(
     attributeEvent: AttributeEvent,
-    with attributeValue: _AttributeValueState<A>,
+    with attributeValue: _AttributeValue<A>,
     eventSource: EventSource
   ) async throws {
     try await attributeValue.handle(
@@ -650,16 +650,16 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
 }
 
 private typealias AsyncParticipantApplyFunction<A: Application> =
-  @Sendable (_AttributeValueState<A>) async throws -> ()
+  @Sendable (_AttributeValue<A>) async throws -> ()
 
 private typealias ParticipantApplyFunction<A: Application> =
-  @Sendable (_AttributeValueState<A>) throws -> ()
+  @Sendable (_AttributeValue<A>) throws -> ()
 
-private final class _AttributeValueState<A: Application>: @unchecked Sendable, Hashable, Equatable,
+private final class _AttributeValue<A: Application>: @unchecked Sendable, Hashable, Equatable,
   CustomStringConvertible
 {
   typealias P = Participant<A>
-  static func == (lhs: _AttributeValueState<A>, rhs: _AttributeValueState<A>) -> Bool {
+  static func == (lhs: _AttributeValue<A>, rhs: _AttributeValue<A>) -> Bool {
     lhs.attributeType == rhs.attributeType &&
       lhs.attributeSubtype == rhs.attributeSubtype &&
       lhs.value == rhs.value
@@ -696,7 +696,7 @@ private final class _AttributeValueState<A: Application>: @unchecked Sendable, H
   }
 
   var description: String {
-    "_AttributeValueState(attributeType: \(attributeType), attributeSubtype: \(attributeSubtype ?? 0), attributeValue: \(value), A \(applicant) R \(registrar?.description ?? "-"))"
+    "_AttributeValue(attributeType: \(attributeType), attributeSubtype: \(attributeSubtype ?? 0), attributeValue: \(value), A \(applicant) R \(registrar?.description ?? "-"))"
   }
 
   private init(
