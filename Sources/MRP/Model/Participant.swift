@@ -253,6 +253,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
 
   private func _findAttributeValueState(
     attributeType: AttributeType,
+    attributeSubtype: AttributeSubtype?,
     matching filter: AttributeValueFilter,
     createIfMissing: Bool
   ) throws -> _AttributeValueState<A> {
@@ -270,7 +271,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     let attributeValue = _AttributeValueState(
       participant: self,
       type: attributeType,
-      subtype: filter._subtype,
+      subtype: attributeSubtype,
       value: filterValue
     )
     if let index = _attributes.index(forKey: attributeType) {
@@ -287,6 +288,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   ) -> (AttributeSubtype?, any Value)? {
     let attributeValueState = try? _findAttributeValueState(
       attributeType: attributeType,
+      attributeSubtype: filter._subtype,
+      // ignored unless createIfMissing is true, but fill in anyway
       matching: filter,
       createIfMissing: false
     )
@@ -525,13 +528,16 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
         throw MRPError.badVectorAttribute
       }
       for i in 0..<Int(vectorAttribute.numberOfValues) {
+        let filter = AttributeValueFilter.matchRelativeWithSubtype((
+          vectorAttribute.applicationEvents?[i],
+          vectorAttribute.firstValue.value,
+          UInt64(i)
+        ))
+
         guard let attribute = try? _findAttributeValueState(
           attributeType: message.attributeType,
-          matching: .matchRelativeWithSubtype((
-            vectorAttribute.applicationEvents?[i],
-            vectorAttribute.firstValue.value,
-            UInt64(i)
-          )),
+          attributeSubtype: filter._subtype,
+          matching: filter,
           createIfMissing: true
         ) else { continue }
         try await _handle(
@@ -615,7 +621,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   ) async throws {
     let attribute = try _findAttributeValueState(
       attributeType: attributeType,
-      matching: .matchEqualWithSubtype((attributeSubtype, attributeValue)),
+      attributeSubtype: attributeSubtype,
+      matching: .matchEqual(attributeValue), // don't match on subtype, we want to replace it
       createIfMissing: true
     )
     try await attribute.handle(event: isNew ? .New : .Join, eventSource: eventSource)
@@ -630,7 +637,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   ) async throws {
     let attribute = try _findAttributeValueState(
       attributeType: attributeType,
-      matching: .matchEqualWithSubtype((attributeSubtype, attributeValue)),
+      attributeSubtype: attributeSubtype,
+      matching: .matchEqual(attributeValue), // don't match on subtype, we want to replace it
       createIfMissing: false
     )
     try await attribute.handle(event: .Lv, eventSource: eventSource)
