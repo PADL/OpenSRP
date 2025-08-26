@@ -576,7 +576,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   func tx() async throws {
     guard let application, let controller else { throw MRPError.internalError }
     guard let pdu = try await _txDequeue() else { return }
-    _logger.debug("\(self): sending PDU \(pdu)")
+    _logger.trace("\(self): sending PDU \(pdu)")
     try await controller.bridge.tx(
       pdu: pdu,
       for: application,
