@@ -420,6 +420,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
                 !$0.isLeaveAll,
                 $0.unsafeAttributeEvent.attributeEvent == event.unsafeAttributeEvent.attributeEvent,
                 $0.unsafeAttributeEvent.attributeValue == event.unsafeAttributeEvent.attributeValue,
+                $0.unsafeAttributeEvent.encodingOptional == false,
                 event.unsafeAttributeEvent.encodingOptional
         {
           true
