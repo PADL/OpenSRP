@@ -16,7 +16,7 @@
 
 import IEEE802
 
-enum AttributeEvent: UInt8 {
+enum AttributeEvent: UInt8, Comparable {
   case New = 0
   case JoinIn = 1
   case In = 2
@@ -39,6 +39,12 @@ enum AttributeEvent: UInt8 {
     case .Lv:
       .rLv
     }
+  }
+
+  // note: this comparison is inverted intentionally, as it is used to indicate
+  // precedence (e.g. New has higher precedence than Lv)
+  static func <(lhs: AttributeEvent, rhs: AttributeEvent) -> Bool {
+    lhs.rawValue > rhs.rawValue
   }
 }
 

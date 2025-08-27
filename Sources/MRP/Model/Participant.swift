@@ -93,8 +93,10 @@ private enum EnqueuedEvent<A: Application>: Equatable, CustomStringConvertible {
       true
     } else if case let .attributeEvent(self) = self, case let .attributeEvent(event) = event {
       // another event with the same attribute type and value had encodingOptional set,
-      // which allows it to be elided from the transmitted packet
-      self.encodingOptional && self.attributeValue == event.attributeValue
+      // which allows it to be elided from the transmitted packet; or, the event has higher
+      // precedence than this one (see note in AttributeEvent Comparable conformance)
+      self.attributeValue == event.attributeValue &&
+        (self.encodingOptional || event.attributeEvent > self.attributeEvent)
     } else {
       // this is a new event
       false
