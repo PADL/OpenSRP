@@ -413,6 +413,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
 
   private func _txEnqueue(_ event: EnqueuedEvent<A>) {
     if let index = _enqueuedEvents.index(forKey: event.attributeType) {
+      #if false
       let isAlreadyEncoded = _enqueuedEvents.values[index].contains {
         // TODO: is this still required? why is not covered by canBeReplacedBy(event:)?
         // if the enqueued event already exists, then ignore it; if it already exists
@@ -435,6 +436,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
         _logger.trace("\(self): event \(event) was already encoded, skipping")
         return
       }
+      #endif
 
       // if encodingOptional is set to false, the event is always encoded, but it
       // may replace a previous event of any event type that had it set to true.
