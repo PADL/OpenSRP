@@ -490,14 +490,14 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   private func _txDequeue() async throws -> MRPDU? {
     guard let application else { throw MRPError.internalError }
     let enqueuedMessages = try _packMessages(with: _enqueuedEvents)
-    if enqueuedMessages.isEmpty { return nil }
+    _enqueuedEvents.removeAll()
+
+    guard !enqueuedMessages.isEmpty else { return nil }
 
     let pdu = MRPDU(
       protocolVersion: application.protocolVersion,
       messages: enqueuedMessages
     )
-
-    _enqueuedEvents.removeAll()
 
     return pdu
   }
