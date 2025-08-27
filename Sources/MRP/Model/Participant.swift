@@ -291,24 +291,24 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     attributeType: AttributeType,
     matching filter: AttributeValueFilter
   ) -> (AttributeSubtype?, any Value)? {
-    let attributeValueState = try? _findOrCreateAttribute(
+    let attributeValue = try? _findOrCreateAttribute(
       attributeType: attributeType,
       attributeSubtype: nil,
       matching: filter,
       createIfMissing: false
     )
-    guard let attributeValueState else {
+    guard let attributeValue else {
       _logger.trace("\(self): could not find attribute type \(attributeType) matching \(filter)")
       return nil
     }
-    guard attributeValueState.registrarState == .IN else {
+    guard attributeValue.registrarState == .IN else {
       _logger
         .trace(
-          "\(self): found attribute value \(attributeValueState), but registrar state was not .IN"
+          "\(self): found attribute value \(attributeValue), but registrar state was not .IN"
         )
       return nil
     }
-    return (attributeValueState.attributeSubtype, attributeValueState.unwrappedValue)
+    return (attributeValue.attributeSubtype, attributeValue.unwrappedValue)
   }
 
   public func findAttributes(
@@ -317,13 +317,13 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   ) -> [(AttributeSubtype?, any Value)] {
     var attributeValues = [(AttributeSubtype?, any Value)]()
 
-    for attributeValueState in _attributes[attributeType] ?? [] {
-      guard attributeValueState.matches(attributeType: attributeType, matching: filter) else {
+    for attributeValue in _attributes[attributeType] ?? [] {
+      guard attributeValue.matches(attributeType: attributeType, matching: filter) else {
         continue
       }
       attributeValues.append((
-        attributeValueState.attributeSubtype,
-        attributeValueState.unwrappedValue
+        attributeValue.attributeSubtype,
+        attributeValue.unwrappedValue
       ))
     }
 
@@ -341,16 +341,16 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     eventSource: EventSource,
     _ isIncluded: @Sendable (AttributeType, AttributeSubtype?, any Value) -> Bool
   ) async throws {
-    try await _apply { attributeValueState in
+    try await _apply { attributeValue in
       guard isIncluded(
-        attributeValueState.attributeType,
-        attributeValueState.attributeSubtype,
-        attributeValueState.unwrappedValue
+        attributeValue.attributeType,
+        attributeValue.attributeSubtype,
+        attributeValue.unwrappedValue
       ) else {
         return
       }
 
-      try await attributeValueState.handle(event: .rLA, eventSource: eventSource)
+      try await attributeValue.handle(event: .rLA, eventSource: eventSource)
     }
   }
 
