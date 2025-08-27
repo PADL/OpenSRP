@@ -102,13 +102,25 @@ public enum EventSource: Sendable {
   case application
 }
 
-struct StateMachineHandlerFlags: OptionSet {
+struct StateMachineHandlerFlags: OptionSet, CustomStringConvertible {
   typealias RawValue = UInt32
 
   var rawValue: RawValue
 
   init(rawValue: RawValue) {
     self.rawValue = rawValue
+  }
+
+  var description: String {
+    var flags = [String]()
+
+    if contains(.operPointToPointMAC) { flags.append("operPointToPointMAC") }
+    if contains(.registrationFixedNewIgnored) { flags.append("registrationFixedNewIgnored") }
+    if contains(.registrationFixedNewPropagated) { flags.append("registrationFixedNewPropagated") }
+    if contains(.registrationForbidden) { flags.append("registrationForbidden") }
+    if contains(.applicantOnlyParticipant) { flags.append("applicantOnlyParticipant") }
+
+    return "[" + flags.joined(separator: ", ") + "]"
   }
 
   static let operPointToPointMAC = StateMachineHandlerFlags(rawValue: 1 << 0)
