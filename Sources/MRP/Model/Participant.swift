@@ -410,8 +410,6 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   }
 
   private func _txEnqueue(_ event: EnqueuedEvent<A>) {
-    _logger.trace("\(self): enqueuing event \(event)")
-
     if let index = _enqueuedEvents.index(forKey: event.attributeType) {
       let isAlreadyEncoded = _enqueuedEvents.values[index].contains {
         // if the enqueued event already exists, then ignore it; if it already exists
@@ -433,16 +431,20 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
         _logger.trace("\(self): event \(event) was already encoded, skipping")
         return
       }
-      // if encodingOptional is set to false, the event is always encode, but it
+
+      // if encodingOptional is set to false, the event is always encoded, but it
       // may replace a previous event of any event type that had it set to true.
       if let eventIndex = _enqueuedEvents.values[index]
         .firstIndex(where: { $0.canBeReplacedBy(event: event) })
       {
+        _logger.trace("\(self): replacing event \(event) at index \(eventIndex)")
         _enqueuedEvents.values[index][eventIndex] = event
       } else {
+        _logger.trace("\(self): adding event \(event)")
         _enqueuedEvents.values[index].append(event)
       }
     } else {
+      _logger.trace("\(self): adding event \(event)")
       _enqueuedEvents[event.attributeType] = [event]
     }
   }
