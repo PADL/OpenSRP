@@ -432,7 +432,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
           attributeEvents: [],
           applicationEvents: nil
         )
-        vectorAttributes.append(vectorAttribute)
+        vectorAttributes = [vectorAttribute]
       }
       if !vectorAttributes.isEmpty {
         messages.append(Message(attributeType: attributeType, attributeList: vectorAttributes))

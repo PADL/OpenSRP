@@ -223,6 +223,18 @@ final class MRPTests: XCTestCase {
     )
   }
 
+  func testLeaveAllOnlyVectorAttribute() {
+    let vectorAttribute = try VectorAttribute<AnyValue>(
+      leaveAllEvent: .LeaveAll,
+      firstValue: AnyValue(MSRPTalkerAdvertiseValue()),
+      attributeEvents: [],
+      applicationEvents: nil
+    )
+    let vectorAttributes = [vectorAttribute]
+    XCTAssertEqual(vectorAttributes.count, 1)
+    XCTAssertEqual(vectorAttribute.numberOfValues, 0)
+  }
+
   func testMMRPSerialization() async throws {
     let logger = Logger(label: "com.padl.MRPTests.MMRP")
     let bridge = MockBridge()
