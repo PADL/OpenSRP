@@ -822,13 +822,8 @@ Sendable, Hashable, Equatable,
         return index == value.index
       case let .matchEqual(value):
         return self.value == value.eraseToAny()
-      case .matchEqualWithSubtype(let (subtype, value)):
-        return self.value == value.eraseToAny() && attributeSubtype == subtype
       case .matchRelative(let (value, offset)):
         return try self.value == value.makeValue(relativeTo: offset).eraseToAny()
-      case .matchRelativeWithSubtype(let (subtype, value, offset)):
-        return try self
-          .value == value.makeValue(relativeTo: offset).eraseToAny() && attributeSubtype == subtype
       }
     } catch {
       return false
@@ -975,12 +970,8 @@ private extension AttributeValueFilter {
       case let .matchIndex(value):
         fallthrough
       case let .matchEqual(value):
-        fallthrough
-      case .matchEqualWithSubtype(let (_, value)):
         return value
       case .matchRelative(let (value, index)):
-        fallthrough
-      case .matchRelativeWithSubtype(let (_, value, index)):
         return try value.makeValue(relativeTo: index)
       }
     }

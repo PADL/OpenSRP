@@ -23,8 +23,6 @@ public enum AttributeValueFilter: Sendable {
   case matchIndex(any Value)
   // match value which matches exactly
   case matchEqual(any Value)
-  case matchEqualWithSubtype((AttributeSubtype?, any Value))
   // match value which matches exactly, relative to provided index
   case matchRelative((any Value, UInt64))
-  case matchRelativeWithSubtype((AttributeSubtype?, any Value, UInt64))
 }

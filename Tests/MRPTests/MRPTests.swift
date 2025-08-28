@@ -419,25 +419,6 @@ final class MRPTests: XCTestCase {
       subtype: 10,
       value: AnyValue(vlan1)
     )
-
-    // Test matchEqualWithSubtype
-    XCTAssertTrue(av2.matches(attributeType: 1, matching: .matchEqualWithSubtype((10, vlan1))))
-    XCTAssertFalse(av2.matches(attributeType: 1, matching: .matchEqualWithSubtype((5, vlan1))))
-    XCTAssertFalse(av2.matches(attributeType: 1, matching: .matchEqualWithSubtype((10, vlan2))))
-
-    // Test matchRelativeWithSubtype
-    XCTAssertTrue(av2.matches(
-      attributeType: 1,
-      matching: .matchRelativeWithSubtype((10, VLAN(vid: 95), 5))
-    ))
-    XCTAssertFalse(av2.matches(
-      attributeType: 1,
-      matching: .matchRelativeWithSubtype((5, VLAN(vid: 95), 5))
-    ))
-    XCTAssertFalse(av2.matches(
-      attributeType: 1,
-      matching: .matchRelativeWithSubtype((10, VLAN(vid: 90), 5))
-    ))
   }
 
   func testAttributeValueMatchesErrorHandling() async throws {
@@ -452,10 +433,6 @@ final class MRPTests: XCTestCase {
     // Test that invalid relative operations return false instead of throwing
     // This should fail because 4095 + 1 = 4096 which is invalid for VLAN
     XCTAssertFalse(av1.matches(attributeType: 1, matching: .matchRelative((vlan1, 1))))
-    XCTAssertFalse(av1.matches(
-      attributeType: 1,
-      matching: .matchRelativeWithSubtype((nil, vlan1, 1))
-    ))
   }
 
   func testMSRPTalkerAdvertiseEncoding() throws {
@@ -1067,13 +1044,8 @@ private final class AttributeValue<A: Application>: @unchecked Sendable, Equatab
         return index == value.index
       case let .matchEqual(value):
         return self.value == value.eraseToAny()
-      case .matchEqualWithSubtype(let (subtype, value)):
-        return self.value == value.eraseToAny() && attributeSubtype == subtype
       case .matchRelative(let (value, offset)):
         return try self.value == value.makeValue(relativeTo: offset).eraseToAny()
-      case .matchRelativeWithSubtype(let (subtype, value, offset)):
-        return try self
-          .value == value.makeValue(relativeTo: offset).eraseToAny() && attributeSubtype == subtype
       }
     } catch {
       return false
