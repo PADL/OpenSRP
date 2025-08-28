@@ -578,9 +578,16 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   ) {
     let threePackedEventsString = try! attribute.attributeEvents
       .compactMap { String(describing: $0) }.joined(separator: ", ")
-    let fourPackedEventsString = attribute.applicationEvents?
-      .compactMap { String(describing: MSRPAttributeSubtype(rawValue: $0)!) }
-      .joined(separator: ", ")
+    let fourPackedEventsString = attribute.applicationEvents.map { events in
+      let trimmedEvents = if let lastNonZeroIndex = events.lastIndex(where: { $0 != 0 }) {
+        events[...lastNonZeroIndex]
+      } else {
+        events[0..<0]
+      }
+      return trimmedEvents
+        .compactMap { String(describing: MSRPAttributeSubtype(rawValue: $0)!) }
+        .joined(separator: ", ")
+    }
 
     if let fourPackedEventsString {
       _logger
