@@ -259,6 +259,10 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     }
   }
 
+  private func _pointToPointTxNow(eventSource: EventSource) async throws {
+    if _type == .pointToPoint { try await _txOpportunity(eventSource: eventSource) }
+  }
+
   private func _findOrCreateAttribute(
     attributeType: AttributeType,
     attributeSubtype: AttributeSubtype?,
@@ -564,7 +568,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
         )
       }
     }
-    if _type == .pointToPoint { try await _txOpportunity(eventSource: eventSource) }
+    try await _pointToPointTxNow(eventSource: eventSource)
   }
 
   fileprivate func _getSmFlags(for attributeType: AttributeType) throws
@@ -652,7 +656,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   func flush() async throws {
     try await _apply(event: .Flush, eventSource: .internal)
     try await _handleLeaveAll(event: .Flush, eventSource: .internal)
-    if _type == .pointToPoint { try await _txOpportunity(eventSource: .internal) }
+    try await _pointToPointTxNow(eventSource: .internal)
   }
 
   // A Re-declare! event signals to the Applicant and Registrar state machines
@@ -666,7 +670,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   // Designated Port to either Root Port or Alternate Port.
   func redeclare() async throws {
     try await _apply(event: .ReDeclare, eventSource: .internal)
-    if _type == .pointToPoint { try await _txOpportunity(eventSource: .internal) }
+    try await _pointToPointTxNow(eventSource: .internal)
   }
 
   func join(
@@ -683,7 +687,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       createIfMissing: true
     )
     try await attribute.handle(event: isNew ? .New : .Join, eventSource: eventSource)
-    if _type == .pointToPoint { try await _txOpportunity(eventSource: eventSource) }
+    try await _pointToPointTxNow(eventSource: eventSource)
   }
 
   func leave(
@@ -699,7 +703,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       createIfMissing: false
     )
     try await attribute.handle(event: .Lv, eventSource: eventSource)
-    if _type == .pointToPoint { try await _txOpportunity(eventSource: eventSource) }
+    try await _pointToPointTxNow(eventSource: eventSource)
   }
 }
 
