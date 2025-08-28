@@ -268,9 +268,6 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     if let attributeValue = _attributes[attributeType]?
       .first(where: { $0.matches(attributeType: attributeType, matching: filter) })
     {
-      if let attributeSubtype { // don't take mutex unless necessary
-        attributeValue.attributeSubtype = attributeSubtype
-      }
       return attributeValue
     }
 
@@ -543,15 +540,25 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
         throw MRPError.badVectorAttribute
       }
       for i in 0..<Int(vectorAttribute.numberOfValues) {
+        let attributeEvent = packedEvents[i]
+        let attributeSubtype = vectorAttribute.applicationEvents?[i]
+
         guard let attribute = try? _findOrCreateAttribute(
           attributeType: message.attributeType,
-          attributeSubtype: vectorAttribute.applicationEvents?[i],
+          attributeSubtype: attributeSubtype,
           matching: .matchRelative((vectorAttribute.firstValue.value, UInt64(i))),
           createIfMissing: true
         ) else { continue }
 
+        if let attributeSubtype, attributeEvent == .JoinIn || attributeEvent == .JoinMt {
+          // fast path for MSRP pre-applicant event handler: silently replace attribute
+          // subtypes as if the Listener declaration had been withdrawn and
+          // replaced by the updated Listener declaration (35.2.6)
+          attribute.attributeSubtype = attributeSubtype
+        }
+
         try await _handle(
-          attributeEvent: packedEvents[i],
+          attributeEvent: attributeEvent,
           with: attribute,
           eventSource: eventSource
         )
