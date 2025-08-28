@@ -712,7 +712,8 @@ private typealias AsyncParticipantApplyFunction<A: Application> =
 private typealias ParticipantApplyFunction<A: Application> =
   @Sendable (_AttributeValue<A>) throws -> ()
 
-private final class _AttributeValue<A: Application>: @unchecked Sendable, Hashable, Equatable,
+private final class _AttributeValue<A: Application>: @unchecked
+Sendable, Hashable, Equatable,
   CustomStringConvertible
 {
   typealias P = Participant<A>
