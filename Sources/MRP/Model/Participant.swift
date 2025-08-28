@@ -260,7 +260,10 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       throw MRPError.invalidAttributeValue
     }
 
-    let filterValue = try filter._value!
+    guard let filterValue = try filter._value else {
+      throw MRPError.internalError
+    }
+
     let attributeValue = _AttributeValue(
       participant: self,
       type: attributeType,
@@ -712,7 +715,7 @@ private final class _AttributeValue<A: Application>: @unchecked Sendable, Hashab
   static func == (lhs: _AttributeValue<A>, rhs: _AttributeValue<A>) -> Bool {
     lhs.matches(
       attributeType: rhs.attributeType,
-      matching: .matchEqual(rhs.value)
+      matching: .matchEqual(rhs.unwrappedValue)
     )
   }
 
@@ -803,29 +806,29 @@ private final class _AttributeValue<A: Application>: @unchecked Sendable, Hashab
     attributeType filterAttributeType: AttributeType?,
     matching filter: AttributeValueFilter
   ) -> Bool {
+    if let filterAttributeType {
+      guard attributeType == filterAttributeType else { return false }
+    }
+
     do {
-      if let filterAttributeType {
-        guard attributeType == filterAttributeType else { return false }
+      switch filter {
+      case .matchAny:
+        return true
+      case let .matchAnyIndex(index):
+        return self.index == index
+      case let .matchIndex(value):
+        return index == value.index
+      case let .matchEqual(value):
+        return self.value == AnyValue(value)
+      case .matchEqualWithSubtype(let (subtype, value)):
+        return self.value == AnyValue(value) && attributeSubtype == subtype
+      case .matchRelative(let (value, offset)):
+        return try self.value == AnyValue(value.makeValue(relativeTo: offset))
+      case .matchRelativeWithSubtype(let (subtype, value, offset)):
+        return try self
+          .value == AnyValue(value.makeValue(relativeTo: offset)) && attributeSubtype == subtype
       }
-      if let filterSubtype = filter._subtype {
-        guard attributeSubtype == filterSubtype else { return false }
-      }
-
-      if case let .matchIndex(filter) = filter {
-        guard value.index == filter.index else { return false }
-      } else if case let .matchAnyIndex(filterIndex) = filter {
-        guard value.index == filterIndex else { return false }
-      } else if let filterValue = try filter._value {
-        guard value == AnyValue(filterValue) else { return false }
-      }
-
-      return true
     } catch {
-      if let participant {
-        participant._logger.trace(
-          "\(participant): caught error \(error) matching \(String(describing: attributeType)) against filter \(filter)"
-        )
-      }
       return false
     }
   }
@@ -955,6 +958,40 @@ private final class _AttributeValue<A: Application>: @unchecked Sendable, Hashab
         attributeValue: context.attributeValue,
         eventSource: context.eventSource
       )
+    }
+  }
+}
+
+private extension AttributeValueFilter {
+  var _value: (any Value)? {
+    get throws {
+      switch self {
+      case .matchAny:
+        fallthrough
+      case .matchAnyIndex:
+        return nil
+      case let .matchIndex(value):
+        fallthrough
+      case let .matchEqual(value):
+        fallthrough
+      case .matchEqualWithSubtype(let (_, value)):
+        return value
+      case .matchRelative(let (value, index)):
+        fallthrough
+      case .matchRelativeWithSubtype(let (_, value, index)):
+        return try value.makeValue(relativeTo: index)
+      }
+    }
+  }
+
+  var _subtype: AttributeSubtype? {
+    switch self {
+    case let .matchEqualWithSubtype((subtype, _)):
+      fallthrough
+    case let .matchRelativeWithSubtype((subtype, _, _)):
+      return subtype
+    default:
+      return nil
     }
   }
 }

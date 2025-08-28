@@ -27,36 +27,4 @@ public enum AttributeValueFilter: Sendable {
   // match value which matches exactly, relative to provided index
   case matchRelative((any Value, UInt64))
   case matchRelativeWithSubtype((AttributeSubtype?, any Value, UInt64))
-
-  var _value: (any Value)? {
-    get throws {
-      switch self {
-      case .matchAny:
-        fallthrough
-      case .matchAnyIndex:
-        return nil
-      case let .matchIndex(value):
-        fallthrough
-      case let .matchEqual(value):
-        fallthrough
-      case .matchEqualWithSubtype(let (_, value)):
-        return value
-      case .matchRelative(let (value, index)):
-        fallthrough
-      case .matchRelativeWithSubtype(let (_, value, index)):
-        return try value.makeValue(relativeTo: index)
-      }
-    }
-  }
-
-  var _subtype: AttributeSubtype? {
-    switch self {
-    case let .matchEqualWithSubtype((subtype, _)):
-      fallthrough
-    case let .matchRelativeWithSubtype((subtype, _, _)):
-      return subtype
-    default:
-      return nil
-    }
-  }
 }

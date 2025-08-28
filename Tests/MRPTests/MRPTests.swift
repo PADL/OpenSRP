@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2024 PADL Software Pty Ltd
+// Copyright (c) 2024-2025 PADL Software Pty Ltd
 //
 // Licensed under the Apache License, Version 2.0 (the License);
 // you may not use this file except in compliance with the License.
@@ -14,6 +14,7 @@
 // limitations under the License.
 //
 
+@_spi(MRPTesting)
 @testable import MRP
 import XCTest
 @preconcurrency
@@ -22,7 +23,9 @@ import IEEE802
 import Logging
 import SystemPackage
 
-struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomStringConvertible {
+struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomStringConvertible,
+  AVBPort
+{
   var id: Int
 
   static func == (lhs: MockPort, rhs: MockPort) -> Bool {
@@ -50,6 +53,12 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
   var mtu: UInt { 1500 }
 
   var linkSpeed: UInt { 1_000_000 }
+
+  var isAvbCapable: Bool { true }
+
+  var isAsCapable: Bool { true }
+
+  func getPortTcMaxLatency(for: SRclassPriority) async throws -> Int { 0 }
 
   init(id: ID) {
     self.id = id
@@ -255,6 +264,239 @@ final class MRPTests: XCTestCase {
     ))
   }
 
+  func testAttributeValueEquality() async throws {
+    // Test with VLAN values
+    let vlan1 = VLAN(vid: 100)
+    let vlan2 = VLAN(vid: 100)
+    let vlan3 = VLAN(vid: 200)
+
+    let av1 = AttributeValue<MSRPApplication<MockPort>>(
+      type: 1,
+      subtype: nil,
+      value: AnyValue(vlan1)
+    )
+    let av2 = AttributeValue<MSRPApplication<MockPort>>(
+      type: 1,
+      subtype: nil,
+      value: AnyValue(vlan2)
+    )
+    let av3 = AttributeValue<MSRPApplication<MockPort>>(
+      type: 1,
+      subtype: nil,
+      value: AnyValue(vlan3)
+    )
+
+    // Test basic equality
+    XCTAssertEqual(av1, av2)
+    XCTAssertNotEqual(av1, av3)
+
+    // Test different attribute types
+    let av4 = AttributeValue<MSRPApplication<MockPort>>(
+      type: 2,
+      subtype: nil,
+      value: AnyValue(vlan1)
+    )
+    XCTAssertNotEqual(av1, av4)
+
+    // Test with subtypes
+    let av5 = AttributeValue<MSRPApplication<MockPort>>(
+      type: 1,
+      subtype: 5,
+      value: AnyValue(vlan1)
+    )
+    let av6 = AttributeValue<MSRPApplication<MockPort>>(
+      type: 1,
+      subtype: 5,
+      value: AnyValue(vlan1)
+    )
+    let av7 = AttributeValue<MSRPApplication<MockPort>>(
+      type: 1,
+      subtype: 10,
+      value: AnyValue(vlan1)
+    )
+
+    // Note: equality ignores subtype differences (as per comment in main code)
+    XCTAssertEqual(av5, av6)
+    XCTAssertEqual(av5, av7) // subtypes ignored in equality
+    XCTAssertEqual(av1, av5) // nil subtype == any subtype for equality
+
+    // Test with MMRP service requirement values
+    let serviceReq1 = MMRPServiceRequirementValue.allGroups
+    let serviceReq2 = MMRPServiceRequirementValue.allGroups
+    let serviceReq3 = MMRPServiceRequirementValue.allUnregisteredGroups
+
+    let av8 = AttributeValue<MSRPApplication<MockPort>>(
+      type: 3,
+      subtype: nil,
+      value: AnyValue(serviceReq1)
+    )
+    let av9 = AttributeValue<MSRPApplication<MockPort>>(
+      type: 3,
+      subtype: nil,
+      value: AnyValue(serviceReq2)
+    )
+    let av10 = AttributeValue<MSRPApplication<MockPort>>(
+      type: 3,
+      subtype: nil,
+      value: AnyValue(serviceReq3)
+    )
+
+    XCTAssertEqual(av8, av9)
+    XCTAssertNotEqual(av8, av10)
+
+    // Test with MAC values
+    let mac1 = MMRPMACValue(macAddress: (0x01, 0x80, 0xC2, 0x00, 0x00, 0x21))
+    let mac2 = MMRPMACValue(macAddress: (0x01, 0x80, 0xC2, 0x00, 0x00, 0x21))
+    let mac3 = MMRPMACValue(macAddress: (0x01, 0x80, 0xC2, 0x00, 0x00, 0x22))
+
+    let av11 = AttributeValue<MSRPApplication<MockPort>>(
+      type: 4,
+      subtype: nil,
+      value: AnyValue(mac1)
+    )
+    let av12 = AttributeValue<MSRPApplication<MockPort>>(
+      type: 4,
+      subtype: nil,
+      value: AnyValue(mac2)
+    )
+    let av13 = AttributeValue<MSRPApplication<MockPort>>(
+      type: 4,
+      subtype: nil,
+      value: AnyValue(mac3)
+    )
+
+    XCTAssertEqual(av11, av12)
+    XCTAssertNotEqual(av11, av13)
+  }
+
+  func testAttributeValueMatchesFiltering() async throws {
+    let vlan1 = VLAN(vid: 100)
+    let vlan2 = VLAN(vid: 105)
+
+    let av1 = AttributeValue<MSRPApplication<MockPort>>(
+      type: 1,
+      subtype: nil,
+      value: AnyValue(vlan1)
+    )
+
+    // Test matchAny
+    XCTAssertTrue(av1.matches(attributeType: 1, matching: .matchAny))
+    XCTAssertTrue(av1.matches(attributeType: nil, matching: .matchAny))
+    XCTAssertFalse(av1.matches(attributeType: 2, matching: .matchAny))
+
+    // Test matchEqual
+    XCTAssertTrue(av1.matches(attributeType: 1, matching: .matchEqual(vlan1)))
+    XCTAssertFalse(av1.matches(attributeType: 1, matching: .matchEqual(vlan2)))
+    XCTAssertFalse(av1.matches(attributeType: 2, matching: .matchEqual(vlan1)))
+
+    // Test matchAnyIndex
+    XCTAssertTrue(av1.matches(attributeType: 1, matching: .matchAnyIndex(vlan1.index)))
+    XCTAssertFalse(av1.matches(attributeType: 1, matching: .matchAnyIndex(vlan2.index)))
+
+    // Test matchIndex
+    XCTAssertTrue(av1.matches(attributeType: 1, matching: .matchIndex(vlan1)))
+    XCTAssertFalse(av1.matches(attributeType: 1, matching: .matchIndex(vlan2)))
+
+    // Test matchRelative (VLAN supports makeValue)
+    XCTAssertTrue(av1.matches(attributeType: 1, matching: .matchRelative((VLAN(vid: 95), 5))))
+    XCTAssertFalse(av1.matches(attributeType: 1, matching: .matchRelative((VLAN(vid: 90), 5))))
+
+    // Test with subtype
+    let av2 = AttributeValue<MSRPApplication<MockPort>>(
+      type: 1,
+      subtype: 10,
+      value: AnyValue(vlan1)
+    )
+
+    // Test matchEqualWithSubtype
+    XCTAssertTrue(av2.matches(attributeType: 1, matching: .matchEqualWithSubtype((10, vlan1))))
+    XCTAssertFalse(av2.matches(attributeType: 1, matching: .matchEqualWithSubtype((5, vlan1))))
+    XCTAssertFalse(av2.matches(attributeType: 1, matching: .matchEqualWithSubtype((10, vlan2))))
+
+    // Test matchRelativeWithSubtype
+    XCTAssertTrue(av2.matches(
+      attributeType: 1,
+      matching: .matchRelativeWithSubtype((10, VLAN(vid: 95), 5))
+    ))
+    XCTAssertFalse(av2.matches(
+      attributeType: 1,
+      matching: .matchRelativeWithSubtype((5, VLAN(vid: 95), 5))
+    ))
+    XCTAssertFalse(av2.matches(
+      attributeType: 1,
+      matching: .matchRelativeWithSubtype((10, VLAN(vid: 90), 5))
+    ))
+  }
+
+  func testAttributeValueMatchesErrorHandling() async throws {
+    let vlan1 = VLAN(vid: 4095) // Max valid VLAN ID
+
+    let av1 = AttributeValue<MSRPApplication<MockPort>>(
+      type: 1,
+      subtype: nil,
+      value: AnyValue(vlan1)
+    )
+
+    // Test that invalid relative operations return false instead of throwing
+    // This should fail because 4095 + 1 = 4096 which is invalid for VLAN
+    XCTAssertFalse(av1.matches(attributeType: 1, matching: .matchRelative((vlan1, 1))))
+    XCTAssertFalse(av1.matches(
+      attributeType: 1,
+      matching: .matchRelativeWithSubtype((nil, vlan1, 1))
+    ))
+  }
+
+  func testMSRPEquality() async throws {
+    let streamID = MSRPStreamID(0x0001_F2FE_D2A4_0000)
+    let dataFrameParams = MSRPDataFrameParameters(
+      destinationAddress: (0x91, 0xE0, 0xF0, 0x00, 0x01, 0x02),
+      vlanIdentifier: 2
+    )
+    let tSpec = MSRPTSpec(maxFrameSize: 224, maxIntervalFrames: 1)
+    let priorityAndRank = MSRPPriorityAndRank(dataFramePriority: .CA, rank: true)
+
+    let talkerAdvertise = MSRPTalkerAdvertiseValue(
+      streamID: streamID,
+      dataFrameParameters: dataFrameParams,
+      tSpec: tSpec,
+      priorityAndRank: priorityAndRank,
+      accumulatedLatency: 650_000
+    )
+
+    XCTAssertEqual(talkerAdvertise, talkerAdvertise)
+
+    let av1 = MSRPAttributeValue(
+      type: 1,
+      subtype: nil,
+      value: AnyValue(talkerAdvertise)
+    )
+    let av2 = MSRPAttributeValue(
+      type: 1,
+      subtype: nil,
+      value: AnyValue(talkerAdvertise)
+    )
+
+    XCTAssertEqual(av1, av2)
+
+    let ae1 = MSRPEnqueuedEvent.AttributeEvent(
+      attributeEvent: .JoinIn,
+      attributeValue: av1,
+      encodingOptional: false
+    )
+    let ae2 = MSRPEnqueuedEvent.AttributeEvent(
+      attributeEvent: .JoinIn,
+      attributeValue: av2,
+      encodingOptional: false
+    )
+
+    XCTAssertEqual(ae1, ae2)
+
+    let ee1 = MSRPEnqueuedEvent.attributeEvent(ae1)
+    let ee2 = MSRPEnqueuedEvent.attributeEvent(ae2)
+
+    XCTAssertEqual(ee1, ee2)
+  }
+
   func testMSRPSerialization() async throws {
     let streamID = MSRPStreamID(0x1234_5678_9ABC_DEF0)
     let dataFrameParams = MSRPDataFrameParameters()
@@ -297,6 +539,13 @@ final class MRPTests: XCTestCase {
     XCTAssertEqual(deserializedDomain.srClassID, domain.srClassID)
     XCTAssertEqual(deserializedDomain.srClassPriority, domain.srClassPriority)
     XCTAssertEqual(deserializedDomain.srClassVID, domain.srClassVID)
+  }
+
+  func testAttributeEventEquality() {
+    let e1 = AttributeEvent.JoinMt
+    let e2 = AttributeEvent.JoinMt
+
+    XCTAssertEqual(e1, e2)
   }
 
   func testThreePackedEvents() {
@@ -480,7 +729,8 @@ final class MRPTests: XCTestCase {
     XCTAssertNil(applicant.action(for: .rJoinIn, flags: pointToPointFlags))
     XCTAssertEqual(applicant.description, "QA")
 
-    // Test rJoinIn event from QA -> QA (no transition without point-to-point, different from AA case)
+    // Test rJoinIn event from QA -> QA (no transition without point-to-point, different from AA
+    // case)
     XCTAssertNil(applicant.action(for: .rJoinIn, flags: normalFlags))
     XCTAssertEqual(applicant.description, "QA")
 
@@ -711,3 +961,102 @@ final class MRPTests: XCTestCase {
     XCTAssertEqual(leaveAll.state, .Passive)
   }
 }
+
+private final class AttributeValue<A: Application>: @unchecked Sendable, Equatable {
+  static func == (lhs: AttributeValue<A>, rhs: AttributeValue<A>) -> Bool {
+    lhs.matches(
+      attributeType: rhs.attributeType,
+      matching: .matchEqual(rhs.unwrappedValue)
+    )
+  }
+
+  let attributeType: AttributeType
+  let attributeSubtype: AttributeSubtype?
+  let value: AnyValue
+
+  var index: UInt64 { value.index }
+  var unwrappedValue: any Value { value.value }
+
+  init(
+    type: AttributeType,
+    subtype: AttributeSubtype?,
+    value: AnyValue
+  ) {
+    attributeType = type
+    attributeSubtype = subtype
+    self.value = value
+  }
+
+  func matches(
+    attributeType filterAttributeType: AttributeType?,
+    matching filter: AttributeValueFilter
+  ) -> Bool {
+    if let filterAttributeType {
+      guard attributeType == filterAttributeType else { return false }
+    }
+
+    do {
+      switch filter {
+      case .matchAny:
+        return true
+      case let .matchAnyIndex(index):
+        return self.index == index
+      case let .matchIndex(value):
+        return index == value.index
+      case let .matchEqual(value):
+        return self.value == AnyValue(value)
+      case .matchEqualWithSubtype(let (subtype, value)):
+        return self.value == AnyValue(value) && attributeSubtype == subtype
+      case .matchRelative(let (value, offset)):
+        return try self.value == AnyValue(value.makeValue(relativeTo: offset))
+      case .matchRelativeWithSubtype(let (subtype, value, offset)):
+        return try self
+          .value == AnyValue(value.makeValue(relativeTo: offset)) && attributeSubtype == subtype
+      }
+    } catch {
+      return false
+    }
+  }
+}
+
+private typealias MSRPAttributeValue = AttributeValue<MSRPApplication<MockPort>>
+
+private enum EnqueuedEvent<A: Application>: Equatable {
+  struct AttributeEvent: Equatable {
+    let attributeEvent: MRP.AttributeEvent
+    let attributeValue: AttributeValue<A>
+    let encodingOptional: Bool
+  }
+
+  case attributeEvent(AttributeEvent)
+  case leaveAllEvent(AttributeType)
+
+  var attributeType: AttributeType {
+    switch self {
+    case let .attributeEvent(attributeEvent):
+      attributeEvent.attributeValue.attributeType
+    case let .leaveAllEvent(attributeType):
+      attributeType
+    }
+  }
+
+  var isLeaveAll: Bool {
+    switch self {
+    case .attributeEvent:
+      false
+    case .leaveAllEvent:
+      true
+    }
+  }
+
+  var attributeEvent: AttributeEvent? {
+    switch self {
+    case let .attributeEvent(attributeEvent):
+      attributeEvent
+    case .leaveAllEvent:
+      nil
+    }
+  }
+}
+
+private typealias MSRPEnqueuedEvent = EnqueuedEvent<MSRPApplication<MockPort>>
