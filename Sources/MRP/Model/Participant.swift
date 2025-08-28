@@ -324,6 +324,9 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       guard attributeValue.matches(attributeType: attributeType, matching: filter) else {
         continue
       }
+      guard attributeValue.registrarState != .MT else {
+        continue
+      }
       attributeValues.append((
         attributeValue.attributeSubtype,
         attributeValue.unwrappedValue
