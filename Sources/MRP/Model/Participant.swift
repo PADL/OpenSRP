@@ -543,16 +543,10 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
         throw MRPError.badVectorAttribute
       }
       for i in 0..<Int(vectorAttribute.numberOfValues) {
-        let filter = AttributeValueFilter.matchRelativeWithSubtype((
-          vectorAttribute.applicationEvents?[i],
-          vectorAttribute.firstValue.value,
-          UInt64(i)
-        ))
-
         guard let attribute = try? _findOrCreateAttribute(
           attributeType: message.attributeType,
           attributeSubtype: vectorAttribute.applicationEvents?[i],
-          matching: filter,
+          matching: .matchRelative((vectorAttribute.firstValue.value, UInt64(i))),
           createIfMissing: true
         ) else { continue }
 
