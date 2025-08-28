@@ -446,7 +446,57 @@ final class MRPTests: XCTestCase {
     ))
   }
 
-  func testMSRPEquality() async throws {
+  func testMSRPTalkerAdvertiseEncoding() throws {
+    let bytes: [UInt8] = [
+      0x00,
+      0x01,
+      0xF2,
+      0xFE,
+      0xD2,
+      0xA4,
+      0x00,
+      0x00,
+      0x91,
+      0xE0,
+      0xF0,
+      0x00,
+      0xB3,
+      0x68,
+      0x00,
+      0x02,
+      0x00,
+      0xE0,
+      0x00,
+      0x01,
+      0x70,
+      0x00,
+      0x0B,
+      0xF9,
+      0x47,
+    ]
+    let streamID = MSRPStreamID(0x0001_F2FE_D2A4_0000)
+    let dataFrameParams = MSRPDataFrameParameters(
+      destinationAddress: (0x91, 0xE0, 0xF0, 0x00, 0xB3, 0x68),
+      vlanIdentifier: 2
+    )
+    let tSpec = MSRPTSpec(maxFrameSize: 224, maxIntervalFrames: 1)
+    let priorityAndRank = MSRPPriorityAndRank(dataFramePriority: .CA, rank: true)
+
+    let talkerAdvertise = MSRPTalkerAdvertiseValue(
+      streamID: streamID,
+      dataFrameParameters: dataFrameParams,
+      tSpec: tSpec,
+      priorityAndRank: priorityAndRank,
+      accumulatedLatency: 784_711
+    )
+
+    var serializationContext = SerializationContext()
+    try talkerAdvertise.serialize(into: &serializationContext)
+
+    XCTAssertEqual(bytes, serializationContext.bytes)
+  }
+
+  func testMSRPEquality() {
     let streamID = MSRPStreamID(0x0001_F2FE_D2A4_0000)
     let dataFrameParams = MSRPDataFrameParameters(
       destinationAddress: (0x91, 0xE0, 0xF0, 0x00, 0x01, 0x02),
