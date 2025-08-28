@@ -379,9 +379,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
           )
         }
 
-      if !vectorAttributes.isEmpty {
-        messages.append(Message(attributeType: attributeType, attributeList: vectorAttributes))
-      } else if leaveAll {
+      if vectorAttributes.isEmpty, leaveAll {
         let vectorAttribute = try VectorAttribute<AnyValue>(
           leaveAllEvent: .LeaveAll,
           firstValue: AnyValue(application.makeNullValue(for: attributeType)),
@@ -389,6 +387,9 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
           applicationEvents: nil
         )
         vectorAttributes.append(vectorAttribute)
+      }
+      if !vectorAttributes.isEmpty {
+        messages.append(Message(attributeType: attributeType, attributeList: vectorAttributes))
       }
     }
 
