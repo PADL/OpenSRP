@@ -78,29 +78,17 @@ private enum EnqueuedEvent<A: Application>: Equatable, CustomStringConvertible {
     }
   }
 
-  var unsafeAttributeEvent: AttributeEvent {
+  var attributeEvent: AttributeEvent? {
     switch self {
     case let .attributeEvent(attributeEvent):
       attributeEvent
     case .leaveAllEvent:
-      fatalError("attemped to unsafely unwrap LeaveAll event")
+      nil
     }
   }
 
-  func canBeReplacedBy(event: Self) -> Bool {
-    if self == event {
-      // we were replaced with an identical event within the current jointimer window
-      true
-    } else if case let .attributeEvent(self) = self, case let .attributeEvent(event) = event {
-      // another event with the same attribute type and value had encodingOptional set,
-      // which allows it to be elided from the transmitted packet; or, the event has higher
-      // precedence than this one (see note in AttributeEvent Comparable conformance)
-      self.attributeValue == event.attributeValue &&
-        (self.encodingOptional || event.attributeEvent > self.attributeEvent)
-    } else {
-      // this is a new event
-      false
-    }
+  var unsafeAttributeEvent: AttributeEvent {
+    attributeEvent!
   }
 
   var description: String {
@@ -412,46 +400,22 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   }
 
   private func _txEnqueue(_ event: EnqueuedEvent<A>) {
-    if let index = _enqueuedEvents.index(forKey: event.attributeType) {
-      #if false
-      let isAlreadyEncoded = _enqueuedEvents.values[index].contains {
-        // TODO: is this still required? why is not covered by canBeReplacedBy(event:)?
-        // if the enqueued event already exists, then ignore it; if it already exists
-        // and an existing event exists that matches, except it has encodingOptional
-        // set to false and the new event has it set to true, then also ignore it.
-        if $0 == event { true }
-        else if !event.isLeaveAll,
-                !$0.isLeaveAll,
-                $0.unsafeAttributeEvent.attributeEvent == event.unsafeAttributeEvent.attributeEvent,
-                $0.unsafeAttributeEvent.attributeValue == event.unsafeAttributeEvent.attributeValue,
-                $0.unsafeAttributeEvent.encodingOptional == false,
-                event.unsafeAttributeEvent.encodingOptional
-        {
-          true
-        } else {
-          false
-        }
-      }
-      guard !isAlreadyEncoded else {
-        _logger.trace("\(self): event \(event) was already encoded, skipping")
-        return
-      }
-      #endif
+    // for now, don't encode any events for which encodingOptional is set
+    if event.attributeEvent?.encodingOptional == true { return }
 
-      // if encodingOptional is set to false, the event is always encoded, but it
-      // may replace a previous event of any event type that had it set to true.
+    if let index = _enqueuedEvents.index(forKey: event.attributeType) {
       if let eventIndex = _enqueuedEvents.values[index]
-        .firstIndex(where: { $0.canBeReplacedBy(event: event) })
+        .firstIndex(where: { $0 == event })
       {
-        _logger.trace("\(self): replacing event \(event) at index \(eventIndex)")
         _enqueuedEvents.values[index][eventIndex] = event
+        _logger.trace("\(self): replaced existing event \(event) at index \(eventIndex)")
       } else {
-        _logger.trace("\(self): adding event \(event)")
         _enqueuedEvents.values[index].append(event)
+        _logger.trace("\(self): added event \(event)")
       }
     } else {
-      _logger.trace("\(self): adding event \(event)")
       _enqueuedEvents[event.attributeType] = [event]
+      _logger.trace("\(self): added event \(event)")
     }
   }
 
