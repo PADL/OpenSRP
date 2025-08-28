@@ -353,6 +353,15 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     }
   }
 
+  private func _leaveAll(
+    eventSource: EventSource,
+    attributeType leaveAllAttributeType: AttributeType
+  ) async throws {
+    try await _leaveAll(eventSource: eventSource) { attributeType, _, _ in
+      attributeType == leaveAllAttributeType
+    }
+  }
+
   private func _chunkAttributeEvents(_ attributeEvents: [EnqueuedEvent<A>.AttributeEvent])
     -> [[EnqueuedEvent<A>.AttributeEvent]]
   {
@@ -521,11 +530,9 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       port.macAddress
     ) ? .local : .peer
     for vectorAttribute in message.attributeList {
-      // 10.6 Protocol operation: process LeaveAll first,
+      // 10.6 Protocol operation: process LeaveAll first.
       if vectorAttribute.leaveAllEvent == .LeaveAll {
-        try await _leaveAll(eventSource: eventSource) {
-          attributeType, _, _ in attributeType == message.attributeType
-        }
+        try await _leaveAll(eventSource: eventSource, attributeType: message.attributeType)
       }
 
       let packedEvents = try vectorAttribute.attributeEvents
