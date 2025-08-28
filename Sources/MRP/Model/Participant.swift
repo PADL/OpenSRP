@@ -668,10 +668,13 @@ private final class _AttributeValue<A: Application>: @unchecked Sendable, Hashab
   CustomStringConvertible
 {
   typealias P = Participant<A>
+
+  // don't match subtype on comparison, we don't want to emit PDUs with
+  // multiple subtype values (at least, for MSRP)
   static func == (lhs: _AttributeValue<A>, rhs: _AttributeValue<A>) -> Bool {
     lhs.matches(
       attributeType: rhs.attributeType,
-      matching: .matchEqualWithSubtype((rhs.attributeSubtype, rhs.value))
+      matching: .matchEqual(rhs.value)
     )
   }
 
@@ -751,6 +754,7 @@ private final class _AttributeValue<A: Application>: @unchecked Sendable, Hashab
     if let serialized = try? value.serialized() {
       serialized.hash(into: &hasher)
     }
+    // note: subtype is not serialized, intentionally (see comment in ==)
   }
 
   func matches(
