@@ -93,10 +93,10 @@ struct MSRPTalkerAdvertiseValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equ
 
   init(
     streamID: MSRPStreamID,
-    dataFrameParameters: MSRPDataFrameParameters = MSRPDataFrameParameters(),
-    tSpec: MSRPTSpec = MSRPTSpec(),
-    priorityAndRank: MSRPPriorityAndRank = MSRPPriorityAndRank(),
-    accumulatedLatency: UInt32 = 0
+    dataFrameParameters: MSRPDataFrameParameters,
+    tSpec: MSRPTSpec,
+    priorityAndRank: MSRPPriorityAndRank,
+    accumulatedLatency: UInt32
   ) {
     self.streamID = streamID
     self.dataFrameParameters = dataFrameParameters
@@ -119,7 +119,13 @@ struct MSRPTalkerAdvertiseValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equ
   }
 
   init() {
-    self.init(streamID: 0, dataFrameParameters: MSRPDataFrameParameters())
+    self.init(
+      streamID: 0,
+      dataFrameParameters: MSRPDataFrameParameters(),
+      tSpec: MSRPTSpec(),
+      priorityAndRank: MSRPPriorityAndRank(),
+      accumulatedLatency: 0
+    )
   }
 
   public func makeValue(relativeTo index: UInt64) throws -> Self {
@@ -152,12 +158,12 @@ struct MSRPTalkerFailedValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equata
 
   init(
     streamID: MSRPStreamID,
-    dataFrameParameters: MSRPDataFrameParameters = MSRPDataFrameParameters(),
-    tSpec: MSRPTSpec = MSRPTSpec(),
-    priorityAndRank: MSRPPriorityAndRank = MSRPPriorityAndRank(),
-    accumulatedLatency: UInt32 = 0,
-    systemID: UInt64 = 0,
-    failureCode: TSNFailureCode = .insufficientBandwidth
+    dataFrameParameters: MSRPDataFrameParameters,
+    tSpec: MSRPTSpec,
+    priorityAndRank: MSRPPriorityAndRank,
+    accumulatedLatency: UInt32,
+    systemID: UInt64,
+    failureCode: TSNFailureCode
   ) {
     self.streamID = streamID
     self.dataFrameParameters = dataFrameParameters
@@ -186,7 +192,15 @@ struct MSRPTalkerFailedValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equata
   }
 
   init() {
-    self.init(streamID: 0, dataFrameParameters: MSRPDataFrameParameters())
+    self.init(
+      streamID: 0,
+      dataFrameParameters: MSRPDataFrameParameters(),
+      tSpec: MSRPTSpec(),
+      priorityAndRank: MSRPPriorityAndRank(),
+      accumulatedLatency: 0,
+      systemID: 0,
+      failureCode: .unknown
+    )
   }
 
   public func makeValue(relativeTo index: UInt64) throws -> Self {

@@ -956,12 +956,12 @@ extension MSRPApplication {
   ) async -> TalkerRegistration? {
     if let value = await participant.findAttribute(
       attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
-      matching: .matchIndex(MSRPTalkerAdvertiseValue(streamID: streamID))
+      matching: .matchAnyIndex(streamID.index)
     ) {
       (participant, value.1 as! (any MSRPTalkerValue))
     } else if let value = await participant.findAttribute(
       attributeType: MSRPAttributeType.talkerFailed.rawValue,
-      matching: .matchIndex(MSRPTalkerFailedValue(streamID: streamID))
+      matching: .matchAnyIndex(streamID.index)
     ) {
       (participant, value.1 as! (any MSRPTalkerValue))
     } else {
