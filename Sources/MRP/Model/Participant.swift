@@ -546,10 +546,50 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     return flags
   }
 
+  private func _traceAttribute(
+    attributeType: AttributeType,
+    _ attribute: VectorAttribute<AnyValue>
+  ) {
+    let threePackedEventsString = attribute.threePackedEvents.flatMap(\._traceStrings)
+      .joined(separator: ", ")
+    let fourPackedEventsString = attribute.fourPackedEvents?.flatMap(\._traceStrings)
+      .joined(separator: ", ")
+
+    if let fourPackedEventsString {
+      _logger
+        .trace(
+          "\(self): TX: AT \(attributeType) \(attribute.leaveAllEvent == .LeaveAll ? "LA" : "") AV \(attribute.firstValue) 3P [\(threePackedEventsString)] 4P [\(fourPackedEventsString)]"
+        )
+    } else {
+      _logger
+        .trace(
+          "\(self): TX: AT \(attributeType) \(attribute.leaveAllEvent == .LeaveAll ? "LA" : "") AV \(attribute.firstValue) 3P [\(threePackedEventsString)]"
+        )
+    }
+  }
+
+  private func _traceMessage(_ message: Message) {
+    for attribute in message.attributeList {
+      _traceAttribute(attributeType: message.attributeType, attribute)
+    }
+  }
+
+  private func _tracePdu(_ pdu: MRPDU) {
+    _logger.trace("\(self): TX: -------------------------------------------------------------")
+    _logger
+      .trace(
+        "\(self): TX: protocolVersion: \(pdu.protocolVersion) messageCount: \(pdu.messages.count)"
+      )
+    for message in pdu.messages {
+      _traceMessage(message)
+    }
+    _logger.trace("\(self): TX: -------------------------------------------------------------")
+  }
+
   func tx() async throws {
     guard let application, let controller else { throw MRPError.internalError }
     guard let pdu = try await _txDequeue() else { return }
-    _logger.trace("\(self): sending PDU \(pdu)")
+    _tracePdu(pdu)
     try await controller.bridge.tx(
       pdu: pdu,
       for: application,
@@ -891,5 +931,38 @@ private final class _AttributeValue<A: Application>: @unchecked Sendable, Hashab
         eventSource: context.eventSource
       )
     }
+  }
+}
+
+private extension ThreePackedEvents {
+  var _traceStrings: [String] {
+    var traceStrings = [String]()
+    traceStrings.reserveCapacity(3)
+
+    let tuple = tuple
+
+    traceStrings.append(String(describing: AttributeEvent(rawValue: tuple.0)!))
+    traceStrings.append(String(describing: AttributeEvent(rawValue: tuple.1)!))
+    traceStrings.append(String(describing: AttributeEvent(rawValue: tuple.2)!))
+
+    return traceStrings
+  }
+}
+
+private extension FourPackedEvents {
+  var _traceStrings: [String] {
+    // assuming four packed events are MSRP events is an abstraction
+    // violation but it is worth it for useful trace output
+    var traceStrings = [String]()
+    traceStrings.reserveCapacity(4)
+
+    let tuple = tuple
+
+    traceStrings.append(String(describing: MSRPAttributeSubtype(rawValue: tuple.0)!))
+    traceStrings.append(String(describing: MSRPAttributeSubtype(rawValue: tuple.1)!))
+    traceStrings.append(String(describing: MSRPAttributeSubtype(rawValue: tuple.2)!))
+    traceStrings.append(String(describing: MSRPAttributeSubtype(rawValue: tuple.3)!))
+
+    return traceStrings
   }
 }
