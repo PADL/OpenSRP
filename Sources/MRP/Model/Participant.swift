@@ -437,11 +437,11 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
         _logger.trace("\(self): replaced existing event \(event) at index \(eventIndex)")
       } else {
         _enqueuedEvents.values[index].append(event)
-        _logger.trace("\(self): added event \(event)")
+        _logger.trace("\(self): added event \(event) (existing events found)")
       }
     } else {
       _enqueuedEvents[event.attributeType] = [event]
-      _logger.trace("\(self): added event \(event)")
+      _logger.trace("\(self): added event \(event) (first event for attrbiute type)")
     }
   }
 
