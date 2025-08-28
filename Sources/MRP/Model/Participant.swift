@@ -558,12 +558,12 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     if let fourPackedEventsString {
       _logger
         .trace(
-          "\(self): TX: AT \(attributeType) \(attribute.leaveAllEvent == .LeaveAll ? "LA" : "") AV \(attribute.firstValue) 3P [\(threePackedEventsString)] 4P [\(fourPackedEventsString)]"
+          "\(self): TX: AT \(attributeType) \(attribute.leaveAllEvent == .LeaveAll ? "LA " : "")AV \(attribute.firstValue) 3P [\(threePackedEventsString)] 4P [\(fourPackedEventsString)]"
         )
     } else {
       _logger
         .trace(
-          "\(self): TX: AT \(attributeType) \(attribute.leaveAllEvent == .LeaveAll ? "LA" : "") AV \(attribute.firstValue) 3P [\(threePackedEventsString)]"
+          "\(self): TX: AT \(attributeType) \(attribute.leaveAllEvent == .LeaveAll ? "LA " : "")AV \(attribute.firstValue) 3P [\(threePackedEventsString)]"
         )
     }
   }
