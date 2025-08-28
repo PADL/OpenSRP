@@ -98,6 +98,24 @@ private enum EnqueuedEvent<A: Application>: Equatable, CustomStringConvertible {
       "EnqueuedEvent(\(unsafeAttributeEvent))"
     }
   }
+
+  func canBeReplacedBy(_ newEvent: EnqueuedEvent<A>) -> Bool {
+    if self == newEvent {
+      // if the event is identical, replace it (effectively, a no-op)
+      true
+    } else if let existingAttributeEvent = attributeEvent,
+              let newAttributeEvent = newEvent.attributeEvent
+    {
+      // clause 10.6 suggests the message actually transmitted is "that
+      // appropriate to the state of the machine when the opportunity is
+      // presented". I believe this means we can replace any event with the
+      // same attribute value. We could probably simplify this by just
+      // transmitting all current attribute values at TX opportunities.
+      existingAttributeEvent.attributeValue == newAttributeEvent.attributeValue
+    } else {
+      false
+    }
+  }
 }
 
 public final actor Participant<A: Application>: Equatable, Hashable, CustomStringConvertible {
@@ -429,12 +447,12 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   }
 
   private func _txEnqueue(_ event: EnqueuedEvent<A>) {
-    // for now, don't encode any events for which encodingOptional is set
+    // other implementations appear to ignore [s], [sL], and [sJ]; do likewise
     if event.attributeEvent?.encodingOptional == true { return }
 
     if let index = _enqueuedEvents.index(forKey: event.attributeType) {
       if let eventIndex = _enqueuedEvents.values[index]
-        .firstIndex(where: { $0 == event })
+        .firstIndex(where: { $0.canBeReplacedBy(event) })
       {
         _enqueuedEvents.values[index][eventIndex] = event
         _logger.trace("\(self): replaced existing event \(event) at index \(eventIndex)")
