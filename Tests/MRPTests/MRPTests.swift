@@ -189,7 +189,7 @@ final class MRPTests: XCTestCase {
         XCTAssertEqual(firstAttribute.firstValue, AnyValue(VLAN(vid: 1)))
         XCTAssertEqual(firstAttribute.leaveAllEvent, .NullLeaveAllEvent)
         XCTAssertEqual(firstAttribute.threePackedEvents.map(\.value), [114])
-        XCTAssertEqual(try firstAttribute.attributeEvents, [.JoinMt, .JoinIn, .New])
+        XCTAssertEqual(try firstAttribute.attributeEvents, [.JoinMt, .JoinIn])
 
         let v = VectorAttribute(
           leaveAllEvent: .NullLeaveAllEvent,
