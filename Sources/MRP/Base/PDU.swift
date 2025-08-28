@@ -156,7 +156,9 @@ struct VectorAttribute<V: Value>: Sendable, Equatable {
       try threePackedEvents.flatMap {
         let tuple = $0.tuple
         return [tuple.0, tuple.1, tuple.2]
-      }.map {
+      }
+      .prefix(Int(numberOfValues))
+      .map {
         guard let attributeEvent = AttributeEvent(rawValue: $0) else {
           throw MRPError.unknownAttributeEvent
         }
