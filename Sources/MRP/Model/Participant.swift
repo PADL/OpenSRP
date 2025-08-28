@@ -613,10 +613,6 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
 
   private func _tracePdu(_ pdu: MRPDU) {
     _logger.trace("\(self): TX: -------------------------------------------------------------")
-    _logger
-      .trace(
-        "\(self): TX: protocolVersion: \(pdu.protocolVersion) messageCount: \(pdu.messages.count)"
-      )
     for message in pdu.messages {
       _traceMessage(message)
     }
