@@ -709,7 +709,11 @@ private final class _AttributeValue<A: Application>: @unchecked Sendable, Hashab
   }
 
   nonisolated var description: String {
-    "_AttributeValue(attributeType: \(attributeType), attributeSubtype: \(attributeSubtype ?? 0), attributeValue: \(value), A \(applicant) R \(registrar?.description ?? "-"))"
+    if let attributeSubtype {
+      "_AttributeValue(attributeType: \(attributeType), attributeSubtype: \(attributeSubtype), attributeValue: \(value), A \(applicant) R \(registrar?.description ?? "-"))"
+    } else {
+      "_AttributeValue(attributeType: \(attributeType), attributeValue: \(value), A \(applicant) R \(registrar?.description ?? "-"))"
+    }
   }
 
   private init(
