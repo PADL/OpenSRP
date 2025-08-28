@@ -590,16 +590,18 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       .prefix(Int(attribute.numberOfValues))
       .compactMap { String(describing: MSRPAttributeSubtype(rawValue: $0)!) }
       .joined(separator: ", ")
+    let firstValueString = attribute
+      .numberOfValues > 0 ? String(describing: attribute.firstValue) : "--"
 
     if let fourPackedEventsString {
       _logger
         .trace(
-          "\(self): TX: AT \(attributeType) \(attribute.leaveAllEvent == .LeaveAll ? "LA" : "--") AV \(attribute.firstValue) AE [\(threePackedEventsString)] AS [\(fourPackedEventsString)]"
+          "\(self): TX: AT \(attributeType) \(attribute.leaveAllEvent == .LeaveAll ? "LA" : "--") AV \(firstValueString) AE [\(threePackedEventsString)] AS [\(fourPackedEventsString)]"
         )
     } else {
       _logger
         .trace(
-          "\(self): TX: AT \(attributeType) \(attribute.leaveAllEvent == .LeaveAll ? "LA" : "--") AV \(attribute.firstValue) AE [\(threePackedEventsString)]"
+          "\(self): TX: AT \(attributeType) \(attribute.leaveAllEvent == .LeaveAll ? "LA" : "--") AV \(firstValueString) AE [\(threePackedEventsString)]"
         )
     }
   }
