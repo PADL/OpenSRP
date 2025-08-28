@@ -551,7 +551,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
 
         guard let attribute = try? _findOrCreateAttribute(
           attributeType: message.attributeType,
-          attributeSubtype: filter._subtype,
+          attributeSubtype: vectorAttribute.applicationEvents?[i],
           matching: filter,
           createIfMissing: true
         ) else { continue }
@@ -989,17 +989,6 @@ private extension AttributeValueFilter {
       case .matchRelativeWithSubtype(let (_, value, index)):
         return try value.makeValue(relativeTo: index)
       }
-    }
-  }
-
-  var _subtype: AttributeSubtype? {
-    switch self {
-    case let .matchEqualWithSubtype((subtype, _)):
-      fallthrough
-    case let .matchRelativeWithSubtype((subtype, _, _)):
-      return subtype
-    default:
-      return nil
     }
   }
 }
