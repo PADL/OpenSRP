@@ -43,7 +43,7 @@ enum AttributeEvent: UInt8, Comparable {
 
   // note: this comparison is inverted intentionally, as it is used to indicate
   // precedence (e.g. New has higher precedence than Lv)
-  static func <(lhs: AttributeEvent, rhs: AttributeEvent) -> Bool {
+  static func < (lhs: AttributeEvent, rhs: AttributeEvent) -> Bool {
     lhs.rawValue > rhs.rawValue
   }
 }
