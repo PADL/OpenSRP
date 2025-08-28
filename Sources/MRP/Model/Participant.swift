@@ -295,7 +295,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     guard attributeValue.registrarState == .IN else {
       _logger
         .trace(
-          "\(self): found attribute value \(attributeValue), but registrar state was not .IN"
+          "\(self): found attribute value \(attributeValue), but not currently registered"
         )
       return nil
     }
