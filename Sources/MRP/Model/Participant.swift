@@ -827,14 +827,14 @@ Sendable, Hashable, Equatable,
       case let .matchIndex(value):
         return index == value.index
       case let .matchEqual(value):
-        return self.value == AnyValue(value)
+        return self.value == value.eraseToAny()
       case .matchEqualWithSubtype(let (subtype, value)):
-        return self.value == AnyValue(value) && attributeSubtype == subtype
+        return self.value == value.eraseToAny() && attributeSubtype == subtype
       case .matchRelative(let (value, offset)):
-        return try self.value == AnyValue(value.makeValue(relativeTo: offset))
+        return try self.value == value.makeValue(relativeTo: offset).eraseToAny()
       case .matchRelativeWithSubtype(let (subtype, value, offset)):
         return try self
-          .value == AnyValue(value.makeValue(relativeTo: offset)) && attributeSubtype == subtype
+          .value == value.makeValue(relativeTo: offset).eraseToAny() && attributeSubtype == subtype
       }
     } catch {
       return false
