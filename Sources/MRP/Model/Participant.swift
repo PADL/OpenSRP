@@ -342,6 +342,35 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     }
   }
 
+  private func _chunkAttributeEvents(_ attributeEvents: [EnqueuedEvent<A>.AttributeEvent])
+    -> [[EnqueuedEvent<A>.AttributeEvent]]
+  {
+    guard !attributeEvents.isEmpty else { return [] }
+
+    var chunks: [[EnqueuedEvent<A>.AttributeEvent]] = []
+    var currentChunk: [EnqueuedEvent<A>.AttributeEvent] = []
+    var expectedIndex = attributeEvents[0].attributeValue.index
+
+    for attributeEvent in attributeEvents {
+      if attributeEvent.attributeValue.index == expectedIndex {
+        currentChunk.append(attributeEvent)
+        expectedIndex += 1
+      } else {
+        if !currentChunk.isEmpty {
+          chunks.append(currentChunk)
+        }
+        currentChunk = [attributeEvent]
+        expectedIndex = attributeEvent.attributeValue.index + 1
+      }
+    }
+
+    if !currentChunk.isEmpty {
+      chunks.append(currentChunk)
+    }
+
+    return chunks
+  }
+
   private func _packMessages(with events: EnqueuedEvents) throws -> [Message] {
     guard let application else { throw MRPError.internalError }
 
@@ -353,11 +382,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
         .sorted(by: {
           $0.attributeValue.index < $1.attributeValue.index
         })
-      let attributeEventChunks: [[EnqueuedEvent<A>.AttributeEvent]] = attributeEvents
-        .reduce(into: []) {
-          try? $0.last?.last?.attributeValue.advanced(by: 1) == $1.attributeValue ?
-            $0[$0.index(before: $0.endIndex)].append($1) : $0.append([$1])
-        }
+      let attributeEventChunks = _chunkAttributeEvents(attributeEvents)
 
       var vectorAttributes: [VectorAttribute<AnyValue>] = attributeEventChunks
         .compactMap { attributeEventChunk in
@@ -796,15 +821,6 @@ private final class _AttributeValue<A: Application>: @unchecked Sendable, Hashab
       }
       return false
     }
-  }
-
-  func advanced(by offset: Int) throws -> Self {
-    try Self(
-      participant: _participant,
-      type: attributeType,
-      subtype: attributeSubtype,
-      value: value.makeValue(relativeTo: UInt64(offset))
-    )
   }
 
   func handle(
