@@ -550,9 +550,10 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     attributeType: AttributeType,
     _ attribute: VectorAttribute<AnyValue>
   ) {
-    let threePackedEventsString = attribute.threePackedEvents.flatMap(\._traceStrings)
-      .joined(separator: ", ")
-    let fourPackedEventsString = attribute.fourPackedEvents?.flatMap(\._traceStrings)
+    let threePackedEventsString = try! attribute.attributeEvents
+      .compactMap { String(describing: $0) }.joined(separator: ", ")
+    let fourPackedEventsString = attribute.applicationEvents?
+      .compactMap { String(describing: MSRPAttributeSubtype(rawValue: $0)!) }
       .joined(separator: ", ")
 
     if let fourPackedEventsString {
@@ -931,38 +932,5 @@ private final class _AttributeValue<A: Application>: @unchecked Sendable, Hashab
         eventSource: context.eventSource
       )
     }
-  }
-}
-
-private extension ThreePackedEvents {
-  var _traceStrings: [String] {
-    var traceStrings = [String]()
-    traceStrings.reserveCapacity(3)
-
-    let tuple = tuple
-
-    traceStrings.append(String(describing: AttributeEvent(rawValue: tuple.0)!))
-    traceStrings.append(String(describing: AttributeEvent(rawValue: tuple.1)!))
-    traceStrings.append(String(describing: AttributeEvent(rawValue: tuple.2)!))
-
-    return traceStrings
-  }
-}
-
-private extension FourPackedEvents {
-  var _traceStrings: [String] {
-    // assuming four packed events are MSRP events is an abstraction
-    // violation but it is worth it for useful trace output
-    var traceStrings = [String]()
-    traceStrings.reserveCapacity(4)
-
-    let tuple = tuple
-
-    traceStrings.append(String(describing: MSRPAttributeSubtype(rawValue: tuple.0)!))
-    traceStrings.append(String(describing: MSRPAttributeSubtype(rawValue: tuple.1)!))
-    traceStrings.append(String(describing: MSRPAttributeSubtype(rawValue: tuple.2)!))
-    traceStrings.append(String(describing: MSRPAttributeSubtype(rawValue: tuple.3)!))
-
-    return traceStrings
   }
 }
