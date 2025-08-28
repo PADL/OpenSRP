@@ -303,15 +303,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       matching: filter,
       createIfMissing: false
     )
-    guard let attributeValue else {
+    guard let attributeValue, attributeValue.registrarState != .MT else {
       _logger.trace("\(self): could not find attribute type \(attributeType) matching \(filter)")
-      return nil
-    }
-    guard attributeValue.registrarState == .IN else {
-      _logger
-        .trace(
-          "\(self): found attribute value \(attributeValue), but not currently registered"
-        )
       return nil
     }
     return (attributeValue.attributeSubtype, attributeValue.unwrappedValue)
