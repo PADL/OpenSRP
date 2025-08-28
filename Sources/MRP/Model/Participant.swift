@@ -535,14 +535,12 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       for i in 0..<Int(vectorAttribute.numberOfValues) {
         let attributeEvent = packedEvents[i]
         let attributeSubtype = vectorAttribute.applicationEvents?[i]
-        let createIfMissing = attributeEvent == .New || attributeEvent == .JoinIn ||
-          attributeEvent ==
-          .JoinMt
+
         guard let attribute = try? _findOrCreateAttribute(
           attributeType: message.attributeType,
           attributeSubtype: attributeSubtype,
           matching: .matchRelative((vectorAttribute.firstValue.value, UInt64(i))),
-          createIfMissing: createIfMissing
+          createIfMissing: true
         ) else { continue }
 
         if let attributeSubtype, attributeEvent == .JoinIn || attributeEvent == .JoinMt {
