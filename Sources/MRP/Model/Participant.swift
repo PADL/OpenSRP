@@ -669,9 +669,10 @@ private final class _AttributeValue<A: Application>: @unchecked Sendable, Hashab
 {
   typealias P = Participant<A>
   static func == (lhs: _AttributeValue<A>, rhs: _AttributeValue<A>) -> Bool {
-    lhs.attributeType == rhs.attributeType &&
-      lhs.attributeSubtype == rhs.attributeSubtype &&
-      lhs.value == rhs.value
+    lhs.matches(
+      attributeType: rhs.attributeType,
+      matching: .matchEqualWithSubtype((rhs.attributeSubtype, rhs.value))
+    )
   }
 
   private let _participant: Weak<P>
