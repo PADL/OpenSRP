@@ -444,9 +444,6 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   }
 
   private func _txEnqueue(_ event: EnqueuedEvent<A>) {
-    // other implementations appear to ignore [s], [sL], and [sJ]; do likewise
-    if event.attributeEvent?.encodingOptional == true { return }
-
     if let index = _enqueuedEvents.index(forKey: event.attributeType) {
       if let eventIndex = _enqueuedEvents.values[index]
         .firstIndex(where: { $0.canBeReplacedBy(event) })
