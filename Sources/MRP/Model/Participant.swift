@@ -594,7 +594,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     return flags
   }
 
-  private func _traceAttribute(
+  private func _debugLogAttribute(
     attributeType: AttributeType,
     _ attribute: VectorAttribute<AnyValue>
   ) {
@@ -609,35 +609,35 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
 
     if let fourPackedEventsString {
       _logger
-        .trace(
+        .debug(
           "\(self): TX: AT \(attributeType) \(attribute.leaveAllEvent == .LeaveAll ? "LA" : "--") AV \(firstValueString) AE [\(threePackedEventsString)] AS [\(fourPackedEventsString)]"
         )
     } else {
       _logger
-        .trace(
+        .debug(
           "\(self): TX: AT \(attributeType) \(attribute.leaveAllEvent == .LeaveAll ? "LA" : "--") AV \(firstValueString) AE [\(threePackedEventsString)]"
         )
     }
   }
 
-  private func _traceMessage(_ message: Message) {
+  private func _debugLogMessage(_ message: Message) {
     for attribute in message.attributeList {
-      _traceAttribute(attributeType: message.attributeType, attribute)
+      _debugLogAttribute(attributeType: message.attributeType, attribute)
     }
   }
 
-  private func _tracePdu(_ pdu: MRPDU) {
-    _logger.trace("\(self): TX: -------------------------------------------------------------")
+  private func _debugLogPdu(_ pdu: MRPDU) {
+    _logger.debug("\(self): TX: -------------------------------------------------------------")
     for message in pdu.messages {
-      _traceMessage(message)
+      _debugLogMessage(message)
     }
-    _logger.trace("\(self): TX: -------------------------------------------------------------")
+    _logger.debug("\(self): TX: -------------------------------------------------------------")
   }
 
   func tx() async throws {
     guard let application, let controller else { throw MRPError.internalError }
     guard let pdu = try await _txDequeue() else { return }
-    _tracePdu(pdu)
+    _debugLogPdu(pdu)
     try await controller.bridge.tx(
       pdu: pdu,
       for: application,
