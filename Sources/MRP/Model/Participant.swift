@@ -335,11 +335,12 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     _ isIncluded: @Sendable (AttributeType, AttributeSubtype?, any Value)
       -> Bool
   ) async throws {
-    try await _leaveAll(eventSource: .application, isIncluded)
+    try await _leave(eventSource: .application, isLeaveAll: false, isIncluded)
   }
 
-  private func _leaveAll(
+  private func _leave(
     eventSource: EventSource,
+    isLeaveAll: Bool,
     _ isIncluded: @Sendable (AttributeType, AttributeSubtype?, any Value) -> Bool
   ) async throws {
     try await _apply { attributeValue in
@@ -351,7 +352,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
         return
       }
 
-      try await attributeValue.handle(event: .rLA, eventSource: eventSource)
+      try await attributeValue.handle(event: isLeaveAll ? .rLA : .rLv, eventSource: eventSource)
     }
   }
 
@@ -359,7 +360,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     eventSource: EventSource,
     attributeType leaveAllAttributeType: AttributeType
   ) async throws {
-    try await _leaveAll(eventSource: eventSource) { attributeType, _, _ in
+    try await _leave(eventSource: eventSource, isLeaveAll: true) { attributeType, _, _ in
       attributeType == leaveAllAttributeType
     }
   }
