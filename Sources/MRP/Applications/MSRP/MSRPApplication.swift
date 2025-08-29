@@ -1089,14 +1089,24 @@ extension MSRPApplication {
       return
     }
 
-    let talkers = await participant.findAttributes(
+    var talkers: [MSRPTalkerAdvertiseValue] = await participant.findAttributes(
       attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
       matching: .matchAny
-    )
+    ).map { $0.1 as! MSRPTalkerAdvertiseValue }
+
+    if let talkerRegistration = talkerRegistration as? MSRPTalkerAdvertiseValue,
+       !talkers.contains(where: { $0.streamID == talkerRegistration.streamID })
+    {
+      talkers.append(talkerRegistration)
+    } else if let talkerRegistration = talkerRegistration as? MSRPTalkerFailedValue,
+              talkers.contains(where: { $0.streamID == talkerRegistration.streamID })
+    {
+      talkers.removeAll(where: { $0.streamID == talkerRegistration.streamID })
+    }
 
     var streams = [SRclassID: [MSRPTSpec]]()
 
-    for talker in talkers.map({ $0.1 as! MSRPTalkerAdvertiseValue }) {
+    for talker in talkers {
       guard let classID = portState
         .reverseMapSrClassPriority(priority: talker.priorityAndRank.dataFramePriority)
       else { continue }
