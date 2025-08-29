@@ -21,6 +21,17 @@ import ServiceLifecycle
 import Systemd
 import SystemdLifecycle
 
+extension Duration: @retroactive ExpressibleByArgument {
+  public var defaultValueDescription: String {
+    String(describing: self)
+  }
+
+  public init?(argument: String) {
+    guard let argument = Double(argument) else { return nil }
+    self = .seconds(argument)
+  }
+}
+
 extension Logger.Level: @retroactive ExpressibleByArgument {
   public var defaultValueDescription: String {
     String(describing: self)
@@ -101,6 +112,18 @@ private final class MRPDaemon: AsyncParsableCommand {
   @Option(name: .long, help: "PTP management client domain socket path")
   var pmcUdsPath: String? = nil
 
+  @Option(name: .long, help: "MRP Join time interval")
+  var joinTime: Duration = JoinTime
+
+  @Option(name: .long, help: "MRP Leave time interval")
+  var leaveTime: Duration = LeaveTime
+
+  @Option(name: .long, help: "MRP LeaveAll time interval")
+  var leaveAllTime: Duration = LeaveAllTime
+
+  @Option(name: .long, help: "MRP Periodic TX time interval")
+  var periodicTime: Duration = .seconds(1)
+
   enum CodingKeys: String, CodingKey {
     case bridgeInterface
     case nfGroup
@@ -122,6 +145,10 @@ private final class MRPDaemon: AsyncParsableCommand {
     case enableMSRP
     case enableSRP
     case pmcUdsPath
+    case joinTime
+    case leaveTime
+    case leaveAllTime
+    case periodicTime
   }
 
   var logger: Logger!
@@ -137,6 +164,13 @@ private final class MRPDaemon: AsyncParsableCommand {
     logger = Logger(label: "com.padl.mrpd")
     logger.logLevel = logLevel
 
+    let timerConfiguration = MRPTimerConfiguration(
+      joinTime: joinTime,
+      leaveTime: leaveTime,
+      leaveAllTime: leaveAllTime,
+      periodicTime: periodicTime
+    )
+
     let bridge = try await B(
       name: bridgeInterface,
       netFilterGroup: nfGroup,
@@ -146,6 +180,7 @@ private final class MRPDaemon: AsyncParsableCommand {
     let controller = try await MRPController<P>(
       bridge: bridge,
       logger: logger,
+      timerConfiguration: timerConfiguration,
       portExclusions: Set(excludeIface)
     )
     if enableSRP {

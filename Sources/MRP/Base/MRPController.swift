@@ -27,12 +27,32 @@ import IEEE802
 import Logging
 import ServiceLifecycle
 
+public struct MRPTimerConfiguration {
+  public let joinTime: Duration
+  public let leaveTime: Duration
+  public let leaveAllTime: Duration
+  public let periodicTime: Duration
+
+  public init(
+    joinTime: Duration? = nil,
+    leaveTime: Duration? = nil,
+    leaveAllTime: Duration? = nil,
+    periodicTime: Duration? = nil
+  ) {
+    self.joinTime = joinTime ?? JoinTime
+    self.leaveTime = leaveTime ?? LeaveTime
+    self.leaveAllTime = leaveAllTime ?? LeaveAllTime
+    self.periodicTime = periodicTime ?? .seconds(1)
+  }
+}
+
 public actor MRPController<P: Port>: Service, CustomStringConvertible {
   typealias MAPContextDictionary = [MAPContextIdentifier: MAPContext<P>]
 
   let bridge: any Bridge<P>
   let logger: Logger
   var ports: Set<P> { Set(_ports.values) }
+  let timerConfiguration: MRPTimerConfiguration
 
   private var _applications = [UInt16: any Application<P>]()
   private var _ports = [P.ID: P]()
@@ -42,23 +62,25 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
   private let _rxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)>
   private let _portExclusions: Set<String>
 
-  private var periodicTransmissionTime: Duration {
-    .seconds(1)
-  }
-
   var leaveAllTime: Duration {
-    let leaveAllTime = Double.random(in: LeaveAllTime..<(1.5 * LeaveAllTime))
+    let defaultLeaveAllTime: Double = timerConfiguration.leaveAllTime / .seconds(1)
+    let leaveAllTime = Double.random(in: defaultLeaveAllTime..<(1.5 * defaultLeaveAllTime))
     return Duration.seconds(leaveAllTime)
   }
 
   public init(
     bridge: some Bridge<P>,
     logger: Logger,
+    timerConfiguration: MRPTimerConfiguration = .init(),
     portExclusions: Set<String> = []
   ) async throws {
-    logger.debug("initializing MRP with bridge \(bridge), port exclusions \(portExclusions)")
+    logger
+      .debug(
+        "initializing MRP with bridge \(bridge), timers \(timerConfiguration), port exclusions \(portExclusions)"
+      )
     self.bridge = bridge
     self.logger = logger
+    self.timerConfiguration = timerConfiguration
     _rxPackets = try bridge.rxPackets
     _portExclusions = portExclusions
   }
@@ -281,7 +303,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
 
   func periodicEnabled() {
     logger.trace("enabled periodic timer")
-    _periodicTimers.forEach { $0.value.start(interval: periodicTransmissionTime) }
+    _periodicTimers.forEach { $0.value.start(interval: timerConfiguration.periodicTime) }
   }
 
   func periodicDisabled() {
@@ -390,7 +412,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
         }
       }
     }
-    periodicTimer!.start(interval: periodicTransmissionTime)
+    periodicTimer!.start(interval: timerConfiguration.periodicTime)
   }
 
   private func _stopTx(port: P) {
