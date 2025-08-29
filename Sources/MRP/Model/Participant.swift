@@ -672,7 +672,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     attributeSubtype: AttributeSubtype? = nil,
     attributeValue: some Value,
     isNew: Bool,
-    eventSource: EventSource,
+    eventSource: EventSource
   ) async throws {
     let attribute = try _findOrCreateAttribute(
       attributeType: attributeType,
@@ -687,7 +687,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     attributeType: AttributeType,
     attributeSubtype: AttributeSubtype? = nil,
     attributeValue: some Value,
-    eventSource: EventSource,
+    eventSource: EventSource
   ) async throws {
     let attribute = try _findOrCreateAttribute(
       attributeType: attributeType,
