@@ -681,6 +681,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       matching: .matchEqual(attributeValue), // don't match on subtype, we want to replace it
       createIfMissing: true
     )
+
+    if let attributeSubtype { attribute.attributeSubtype = attributeSubtype }
     try await attribute.handle(event: isNew ? .New : .Join, eventSource: eventSource)
   }
 
@@ -696,6 +698,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       matching: .matchEqual(attributeValue), // don't match on subtype, we want to replace it
       createIfMissing: false
     )
+
+    if let attributeSubtype { attribute.attributeSubtype = attributeSubtype }
     try await attribute.handle(event: .Lv, eventSource: eventSource)
   }
 }
