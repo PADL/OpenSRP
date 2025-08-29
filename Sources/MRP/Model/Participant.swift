@@ -249,9 +249,10 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     // of a vector
     switch _leaveAll.state {
     case .Active:
+      // encode attributes first with current registrar states, then process LeaveAll
+      try await _apply(event: .txLA, eventSource: eventSource)
       // sets LeaveAll to passive and emits sLA action
       try await _handleLeaveAll(event: .tx, eventSource: eventSource)
-      try await _apply(event: .txLA, eventSource: eventSource)
     case .Passive:
       try await _apply(event: .tx, eventSource: eventSource)
     }
