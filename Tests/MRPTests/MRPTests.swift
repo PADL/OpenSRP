@@ -831,21 +831,21 @@ final class MRPTests: XCTestCase {
     XCTAssertEqual(registrar.state, .IN)
 
     let action2 = registrar.action(for: .rLv, flags: normalFlags)
-#if AVNU
+    #if AVNU
     // Test rLv event from IN -> MT with Lv action (per Avnu ProAV Bridge Specification)
     XCTAssertEqual(action2, .Lv)
     XCTAssertEqual(registrar.state, .MT)
-#else
+    #else
     XCTAssertEqual(action2, nil)
     XCTAssertEqual(registrar.state, .LV)
-#endif
+    #endif
     // Test rJoinIn from MT -> IN with Join action
     let action3 = registrar.action(for: .rJoinIn, flags: normalFlags)
-#if AVNU
+    #if AVNU
     XCTAssertEqual(action3, .Join)
-#else
+    #else
     XCTAssertEqual(action3, nil)
-#endif
+    #endif
     XCTAssertEqual(registrar.state, .IN)
 
     // Test rLA event from IN -> LV (starts leave timer)
