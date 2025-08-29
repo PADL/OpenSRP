@@ -372,19 +372,24 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     guard let contextDirection = contextAttributeType.direction else { return }
 
     let contextStreamID = (context.attributeValue as! MSRPStreamIDRepresentable).streamID
-    let contextAttributeSubtype = context.attributeSubtype
 
-    try await context.participant.leaveNow { attributeType, attributeSubtype, attributeValue in
+    try await context.participant.leaveNow { attributeType, _, attributeValue in
       let attributeType = MSRPAttributeType(rawValue: attributeType)!
       guard let direction = attributeType.direction else { return false }
       let streamID = (attributeValue as! MSRPStreamIDRepresentable).streamID
 
-      let isIncluded = contextStreamID == streamID && contextDirection == direction &&
-        (contextAttributeType != attributeType || contextAttributeSubtype != attributeSubtype)
+      // force immediate leave if the streamID and direction match and the
+      // attribute type has changed
+      let isIncluded = contextStreamID == streamID &&
+        contextDirection == direction &&
+        contextAttributeType != attributeType
+
+      // NB: we don't handle attribute subtypes here, they are handled in
+      // Participant.swift (this is something of a leaky abstraction)
       if isIncluded {
         _logger
           .debug(
-            "MSRP: forcing immediate leave for stream \(streamID) owing to attribute change: \(attributeType)->\(contextAttributeType) \(String(describing: attributeSubtype))->\(String(describing: contextAttributeSubtype))"
+            "MSRP: forcing immediate leave for stream \(streamID) owing to attribute change: \(attributeType)->\(contextAttributeType)"
           )
       }
       return isIncluded
