@@ -182,13 +182,12 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     // instance of this timer is required on a per-Port, per-MRP Participant
     // basis. The value of JoinTime used to initialize this timer is determined
     // in accordance with 10.7.11.
-    if _type != .pointToPoint {
-      // only required for shared media, in the point-to-point case packets
-      // are transmitted immediately
-      let jointimer = Timer(label: "jointimer", onExpiry: _onJoinTimerExpired)
-      jointimer.start(interval: JoinTime)
-      _jointimer = jointimer
-    }
+
+    // only required for shared media, in the point-to-point case packets
+    // are transmitted immediately
+    let jointimer = Timer(label: "jointimer", onExpiry: _onJoinTimerExpired)
+    jointimer.start(interval: JoinTime)
+    _jointimer = jointimer
 
     // The Leave All Period Timer, leavealltimer, controls the frequency with
     // which the LeaveAll state machine generates LeaveAll PDUs. The timer is
@@ -210,7 +209,6 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
 
   @Sendable
   private func _onJoinTimerExpired() async throws {
-    precondition(_type != .pointToPoint)
     try await _txOpportunity(eventSource: .joinTimer)
   }
 
@@ -257,10 +255,6 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     case .Passive:
       try await _apply(event: .tx, eventSource: eventSource)
     }
-  }
-
-  private func _pointToPointTxNow(eventSource: EventSource) async throws {
-    if _type == .pointToPoint { try await _txOpportunity(eventSource: eventSource) }
   }
 
   private func _findOrCreateAttribute(
@@ -571,7 +565,6 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
         )
       }
     }
-    try await _pointToPointTxNow(eventSource: eventSource)
   }
 
   fileprivate func _getSmFlags(for attributeType: AttributeType) throws
@@ -659,7 +652,6 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   func flush() async throws {
     try await _apply(event: .Flush, eventSource: .internal)
     try await _handleLeaveAll(event: .Flush, eventSource: .internal)
-    try await _pointToPointTxNow(eventSource: .internal)
   }
 
   // A Re-declare! event signals to the Applicant and Registrar state machines
@@ -673,7 +665,6 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   // Designated Port to either Root Port or Alternate Port.
   func redeclare() async throws {
     try await _apply(event: .ReDeclare, eventSource: .internal)
-    try await _pointToPointTxNow(eventSource: .internal)
   }
 
   func join(
@@ -690,7 +681,6 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       createIfMissing: true
     )
     try await attribute.handle(event: isNew ? .New : .Join, eventSource: eventSource)
-    try await _pointToPointTxNow(eventSource: eventSource)
   }
 
   func leave(
@@ -706,7 +696,6 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       createIfMissing: false
     )
     try await attribute.handle(event: .Lv, eventSource: eventSource)
-    try await _pointToPointTxNow(eventSource: eventSource)
   }
 }
 
