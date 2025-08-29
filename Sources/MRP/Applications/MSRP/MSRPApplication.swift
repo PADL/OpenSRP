@@ -1009,6 +1009,10 @@ extension MSRPApplication {
       nil
     }
 
+    if isJoin, talkerRegistration.1 is MSRPTalkerFailedValue {
+      _logger.trace("MSRP: stream \(streamID) talkerFailed propagated as listenerAskingFailed")
+    }
+
     // collect listener declarations from all ports and merge declaration type
     await apply(for: contextIdentifier) { participant in
       // exclude registering port
