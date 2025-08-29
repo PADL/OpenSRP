@@ -302,6 +302,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       matching: filter,
       createIfMissing: false
     )
+    // we allow attributes that are in the leaving state to be "found", because
+    // they haven't yet been timed out yet (and a leave indication issued)
     guard let attributeValue, attributeValue.registrarState != .MT else {
       _logger.trace("\(self): could not find attribute type \(attributeType) matching \(filter)")
       return nil
