@@ -161,7 +161,8 @@ extension Application {
         attributeType: attributeType,
         attributeSubtype: attributeSubtype,
         attributeValue: attributeValue,
-        isNew: isNew
+        isNew: isNew,
+        eventSource: .application
       )
     }
   }
@@ -176,7 +177,8 @@ extension Application {
       try await participant.leave(
         attributeType: attributeType,
         attributeSubtype: attributeSubtype,
-        attributeValue: attributeValue
+        attributeValue: attributeValue,
+        eventSource: .application
       )
     }
   }
