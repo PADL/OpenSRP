@@ -716,7 +716,7 @@ Sendable, Hashable, Equatable,
   static func == (lhs: _AttributeValue<A>, rhs: _AttributeValue<A>) -> Bool {
     lhs.matches(
       attributeType: rhs.attributeType,
-      matching: .matchEqual(rhs.unwrappedValue)
+      matching: .matchIndex(rhs.unwrappedValue)
     )
   }
 
