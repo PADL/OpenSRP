@@ -714,7 +714,8 @@ Sendable, Hashable, Equatable,
   typealias P = Participant<A>
 
   // don't match subtype on comparison, we don't want to emit PDUs with
-  // multiple subtype values (at least, for MSRP)
+  // multiple subtype values (at least, for MSRP). We only match the index
+  // because we can only have one value for each (attributeType, index).
   static func == (lhs: _AttributeValue<A>, rhs: _AttributeValue<A>) -> Bool {
     lhs.matches(
       attributeType: rhs.attributeType,
@@ -799,10 +800,7 @@ Sendable, Hashable, Equatable,
 
   func hash(into hasher: inout Hasher) {
     attributeType.hash(into: &hasher)
-    if let serialized = try? value.serialized() {
-      serialized.hash(into: &hasher)
-    }
-    // note: subtype is not serialized, intentionally (see comment in ==)
+    value.index.hash(into: &hasher)
   }
 
   func matches(
