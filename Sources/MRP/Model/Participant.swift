@@ -590,17 +590,6 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     return pdu
   }
 
-  private func _handle(
-    attributeEvent: AttributeEvent,
-    with attributeValue: _AttributeValue<A>,
-    eventSource: EventSource
-  ) async throws {
-    try await attributeValue.handle(
-      event: attributeEvent.protocolEvent,
-      eventSource: eventSource
-    )
-  }
-
   func rx(message: Message, sourceMacAddress: EUI48) async throws {
     _debugLogMessage(message, direction: .rx)
     let eventSource: EventSource = _isEqualMacAddress(
@@ -628,17 +617,10 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
           createIfMissing: true
         ) else { continue }
 
-        if let attributeSubtype, attributeEvent == .JoinIn || attributeEvent == .JoinMt {
-          // fast path for MSRP pre-applicant event handler: silently replace attribute
-          // subtypes as if the Listener declaration had been withdrawn and
-          // replaced by the updated Listener declaration (35.2.6)
-          attribute.attributeSubtype = attributeSubtype
-        }
-
-        try await _handle(
-          attributeEvent: attributeEvent,
-          with: attribute,
-          eventSource: eventSource
+        try await attribute.handle(
+          event: attributeEvent.protocolEvent,
+          eventSource: eventSource,
+          replacingAttributeSubtype: attributeSubtype
         )
       }
     }
@@ -764,10 +746,10 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       createIfMissing: true
     )
 
-    if let attributeSubtype { attribute.attributeSubtype = attributeSubtype }
     try await attribute.handle(
       event: isNew ? .New : .Join,
-      eventSource: eventSource
+      eventSource: eventSource,
+      replacingAttributeSubtype: attributeSubtype
     )
   }
 
@@ -784,8 +766,11 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       createIfMissing: false
     )
 
-    if let attributeSubtype { attribute.attributeSubtype = attributeSubtype }
-    try await attribute.handle(event: .Lv, eventSource: eventSource)
+    try await attribute.handle(
+      event: .Lv,
+      eventSource: eventSource,
+      replacingAttributeSubtype: attributeSubtype
+    )
   }
 }
 
@@ -965,8 +950,16 @@ Sendable, Hashable, Equatable,
 
   func handle(
     event: ProtocolEvent,
-    eventSource: EventSource
+    eventSource: EventSource,
+    replacingAttributeSubtype subtype: AttributeSubtype? = nil
   ) async throws {
+    if let subtype, event == .rNew || event == .rJoinIn || event == .rJoinMt {
+      // fast path for MSRP pre-applicant event handler: silently replace attribute
+      // subtypes as if the Listener declaration had been withdrawn and
+      // replaced by the updated Listener declaration (35.2.6)
+      attributeSubtype = subtype
+    }
+
     try await handleApplicant(event: event, eventSource: eventSource)
     try await handleRegistrar(event: event, eventSource: eventSource)
   }
