@@ -100,6 +100,8 @@ public enum EventSource: Sendable {
   case map
   // event source was a preApplicantEventHandler/postApplicantEventHandler hook
   case application
+  // event source was immediate re-registration after LeaveAll processing
+  case leaveAll
 }
 
 struct StateMachineHandlerFlags: OptionSet, CustomStringConvertible {

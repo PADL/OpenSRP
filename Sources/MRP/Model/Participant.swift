@@ -504,6 +504,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       _logger.debug("\(self): sending leave all events, source \(eventSource)")
       try await _apply(event: .rLA, eventSource: eventSource)
       try _txEnqueueLeaveAllEvents()
+      // immediately trigger transmission to re-register after LeaveAll
+      try await _txOpportunity(eventSource: .leaveAll)
     default:
       break
     }

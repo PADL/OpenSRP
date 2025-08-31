@@ -216,6 +216,8 @@ extension BaseApplication {
       fallthrough // don't need to propagate this because application calls all participants
     case .map:
       fallthrough
+    case .leaveAll:
+      fallthrough
     case .leaveTimer:
       fallthrough
     case .leaveAllTimer:
