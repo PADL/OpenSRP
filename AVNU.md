@@ -35,7 +35,7 @@
 
 ## 9.2 Instantaneous transition from IN to MT
 
-* 88fdf63d: transition IN / rLv! → (Lv) → MT
+* TODO: transition IN / rLv! → (Lv) → MT
 
 ## 9.3 Talker attribute registration
 
