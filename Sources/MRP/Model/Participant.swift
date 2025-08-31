@@ -268,24 +268,24 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     )
   }
 
+  private func _txOpportunity(eventSource: EventSource) async throws {
+    // this will send a .tx/.txLA event to all attributes which will then make
+    // the appropriate state transitions, potentially triggering the encoding
+    // of a vector
+    switch _leaveAll.state {
+    case .Active:
+      // encode attributes first with current registrar states, then process LeaveAll
+      try await _apply(event: .txLA, eventSource: eventSource)
+      // sets LeaveAll to passive and emits sLA action
+      try await _handleLeaveAll(event: .tx, eventSource: eventSource)
+    case .Passive:
+      try await _apply(event: .tx, eventSource: eventSource)
+    }
+    try await _tx()
+  }
+
   private func _requestTxOpportunity(eventSource: EventSource) async throws {
     guard let controller else { throw MRPError.internalError }
-
-    func performTx(eventSource: EventSource) async throws {
-      // this will send a .tx/.txLA event to all attributes which will then make
-      // the appropriate state transitions, potentially triggering the encoding
-      // of a vector
-      switch _leaveAll.state {
-      case .Active:
-        // encode attributes first with current registrar states, then process LeaveAll
-        try await _apply(event: .txLA, eventSource: eventSource)
-        // sets LeaveAll to passive and emits sLA action
-        try await _handleLeaveAll(event: .tx, eventSource: eventSource)
-      case .Passive:
-        try await _apply(event: .tx, eventSource: eventSource)
-      }
-      try await _tx()
-    }
 
     let now = ContinuousClock.now
     let joinTime = controller.timerConfiguration.joinTime
@@ -307,7 +307,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       }
 
       _transmissionOpportunityTimestamps.append(now)
-      try await performTx(eventSource: eventSource)
+      try await _txOpportunity(eventSource: eventSource)
     } else {
       // Shared media: randomized delay between 0 and JoinTime
       if !_pendingTransmissionRequest {
@@ -318,7 +318,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
         Task {
           do {
             try await Task.sleep(for: randomDelay)
-            try await performTx(eventSource: eventSource)
+            try await _txOpportunity(eventSource: eventSource)
           } catch {
             _logger.error("\(self): failed to perform delayed TX opportunity: \(error)")
           }
