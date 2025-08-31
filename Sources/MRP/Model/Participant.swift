@@ -527,6 +527,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   }
 
   func rx(message: Message, sourceMacAddress: EUI48) async throws {
+    _debugLogMessage(message, direction: .rx)
     let eventSource: EventSource = _isEqualMacAddress(
       sourceMacAddress,
       port.macAddress
@@ -588,9 +589,22 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     return flags
   }
 
+  private enum _Direction: CustomStringConvertible {
+    case tx
+    case rx
+
+    var description: String {
+      switch self {
+      case .tx: "TX"
+      case .rx: "RX"
+      }
+    }
+  }
+
   private func _debugLogAttribute(
     attributeType: AttributeType,
-    _ attribute: VectorAttribute<AnyValue>
+    _ attribute: VectorAttribute<AnyValue>,
+    direction: _Direction
   ) {
     let threePackedEventsString = try! attribute.attributeEvents
       .compactMap { String(describing: $0) }.joined(separator: ", ")
@@ -604,34 +618,36 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     if let fourPackedEventsString {
       _logger
         .debug(
-          "\(self): TX: AT \(attributeType) \(attribute.leaveAllEvent == .LeaveAll ? "LA" : "--") AV \(firstValueString) AE [\(threePackedEventsString)] AS [\(fourPackedEventsString)]"
+          "\(self): \(direction): AT \(attributeType) \(attribute.leaveAllEvent == .LeaveAll ? "LA" : "--") AV \(firstValueString) AE [\(threePackedEventsString)] AS [\(fourPackedEventsString)]"
         )
     } else {
       _logger
         .debug(
-          "\(self): TX: AT \(attributeType) \(attribute.leaveAllEvent == .LeaveAll ? "LA" : "--") AV \(firstValueString) AE [\(threePackedEventsString)]"
+          "\(self): \(direction): AT \(attributeType) \(attribute.leaveAllEvent == .LeaveAll ? "LA" : "--") AV \(firstValueString) AE [\(threePackedEventsString)]"
         )
     }
   }
 
-  private func _debugLogMessage(_ message: Message) {
+  private func _debugLogMessage(_ message: Message, direction: _Direction) {
     for attribute in message.attributeList {
-      _debugLogAttribute(attributeType: message.attributeType, attribute)
+      _debugLogAttribute(attributeType: message.attributeType, attribute, direction: direction)
     }
   }
 
-  private func _debugLogPdu(_ pdu: MRPDU) {
-    _logger.debug("\(self): TX: -------------------------------------------------------------")
+  private func _debugLogPdu(_ pdu: MRPDU, direction: _Direction) {
+    _logger
+      .debug("\(self): \(direction): -------------------------------------------------------------")
     for message in pdu.messages {
-      _debugLogMessage(message)
+      _debugLogMessage(message, direction: direction)
     }
-    _logger.debug("\(self): TX: -------------------------------------------------------------")
+    _logger
+      .debug("\(self): \(direction): -------------------------------------------------------------")
   }
 
   func tx() async throws {
     guard let application, let controller else { throw MRPError.internalError }
     guard let pdu = try await _txDequeue() else { return }
-    _debugLogPdu(pdu)
+    _debugLogPdu(pdu, direction: .tx)
     try await controller.bridge.tx(
       pdu: pdu,
       for: application,
