@@ -74,7 +74,7 @@ private extension LeaveAll.State {
       action = .leavealltimer
       self = .Passive
     case .tx:
-      precondition(self == .Active)
+      guard self == .Active else { return nil }
       action = .sLA
       self = .Passive
     case .rLA:
