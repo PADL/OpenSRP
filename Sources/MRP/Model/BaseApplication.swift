@@ -221,6 +221,8 @@ extension BaseApplication {
     case .leaveTimer:
       fallthrough
     case .leaveAllTimer:
+      fallthrough
+    case .periodicTimer:
       return false // don't recursively call ourselves, and let each participant handle leave timers
     }
   }

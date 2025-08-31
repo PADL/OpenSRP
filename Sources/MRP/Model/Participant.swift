@@ -136,6 +136,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   private var _enqueuedEvents = EnqueuedEvents()
   private var _leaveAll: LeaveAll!
   private var _jointimer: Timer?
+  private var _transmissionOpportunityTimestamps: [ContinuousClock.Instant] = []
+  private var _pendingTransmissionRequest = false
   private nonisolated let _controller: Weak<MRPController<A.P>>
   private nonisolated let _application: Weak<A>
 
@@ -209,7 +211,11 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
 
   @Sendable
   private func _onJoinTimerExpired() async throws {
-    try await _txOpportunity(eventSource: .joinTimer)
+    if _type == .pointToPoint && _pendingTransmissionRequest {
+      // Check if rate limiting window has expired
+      _pendingTransmissionRequest = false
+    }
+    try await _requestTxOpportunity(eventSource: .joinTimer)
   }
 
   @Sendable
@@ -249,18 +255,76 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     }
   }
 
-  private func _txOpportunity(eventSource: EventSource) async throws {
-    // this will send a .tx/.txLA event to all attributes which will then make
-    // the appropriate state transitions, potentially triggering the encoding
-    // of a vector
-    switch _leaveAll.state {
-    case .Active:
-      // encode attributes first with current registrar states, then process LeaveAll
-      try await _apply(event: .txLA, eventSource: eventSource)
-      // sets LeaveAll to passive and emits sLA action
-      try await _handleLeaveAll(event: .tx, eventSource: eventSource)
-    case .Passive:
-      try await _apply(event: .tx, eventSource: eventSource)
+  private func _tx() async throws {
+    guard let application, let controller else { throw MRPError.internalError }
+    guard let pdu = try await _txDequeue() else { return }
+    _debugLogPdu(pdu, direction: .tx)
+    try await controller.bridge.tx(
+      pdu: pdu,
+      for: application,
+      contextIdentifier: contextIdentifier,
+      on: port,
+      controller: controller
+    )
+  }
+
+  private func _requestTxOpportunity(eventSource: EventSource) async throws {
+    guard let controller else { throw MRPError.internalError }
+
+    func performTx(eventSource: EventSource) async throws {
+      // this will send a .tx/.txLA event to all attributes which will then make
+      // the appropriate state transitions, potentially triggering the encoding
+      // of a vector
+      switch _leaveAll.state {
+      case .Active:
+        // encode attributes first with current registrar states, then process LeaveAll
+        try await _apply(event: .txLA, eventSource: eventSource)
+        // sets LeaveAll to passive and emits sLA action
+        try await _handleLeaveAll(event: .tx, eventSource: eventSource)
+      case .Passive:
+        try await _apply(event: .tx, eventSource: eventSource)
+      }
+      try await _tx()
+    }
+
+    let now = ContinuousClock.now
+    let joinTime = controller.timerConfiguration.joinTime
+
+    if _type == .pointToPoint {
+      // Point-to-point: immediate transmission with rate limiting
+      // Remove timestamps older than 1.5 × JoinTime
+      let rateWindow = joinTime * 1.5
+      _transmissionOpportunityTimestamps.removeAll { $0.duration(to: now) > rateWindow }
+
+      // Check rate limit: max 3 transmissions per 1.5 × JoinTime
+      guard _transmissionOpportunityTimestamps.count < 3 else {
+        _logger
+          .trace(
+            "\(self): rate limiting TX opportunity, \(_transmissionOpportunityTimestamps.count) transmissions in last \(rateWindow)"
+          )
+        _pendingTransmissionRequest = true
+        return
+      }
+
+      _transmissionOpportunityTimestamps.append(now)
+      try await performTx(eventSource: eventSource)
+    } else {
+      // Shared media: randomized delay between 0 and JoinTime
+      if !_pendingTransmissionRequest {
+        _pendingTransmissionRequest = true
+        let randomDelay = Duration
+          .nanoseconds(Int64.random(in: 0..<joinTime.nanoseconds))
+
+        Task {
+          do {
+            try await Task.sleep(for: randomDelay)
+            try await performTx(eventSource: eventSource)
+          } catch {
+            _logger.error("\(self): failed to perform delayed TX opportunity: \(error)")
+          }
+          _pendingTransmissionRequest = false
+        }
+      }
     }
   }
 
@@ -505,7 +569,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       try await _apply(event: .rLA, eventSource: eventSource)
       try _txEnqueueLeaveAllEvents()
       // immediately trigger transmission to re-register after LeaveAll
-      try await _txOpportunity(eventSource: .leaveAll)
+      try await _requestTxOpportunity(eventSource: .leaveAll)
     default:
       break
     }
@@ -655,17 +719,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       .debug("\(self): \(direction): -------------------------------------------------------------")
   }
 
-  func tx() async throws {
-    guard let application, let controller else { throw MRPError.internalError }
-    guard let pdu = try await _txDequeue() else { return }
-    _debugLogPdu(pdu, direction: .tx)
-    try await controller.bridge.tx(
-      pdu: pdu,
-      for: application,
-      contextIdentifier: contextIdentifier,
-      on: port,
-      controller: controller
-    )
+  func periodic() async throws {
+    try await _requestTxOpportunity(eventSource: .periodicTimer)
   }
 
   // A Flush! event signals to the Registrar state machine that there is a
@@ -1037,5 +1092,11 @@ private extension AttributeValueFilter {
         return try value.makeValue(relativeTo: index)
       }
     }
+  }
+}
+
+private extension Duration {
+  var nanoseconds: Int64 {
+    components.seconds * 1_000_000_000 + components.attoseconds / 1_000_000_000
   }
 }

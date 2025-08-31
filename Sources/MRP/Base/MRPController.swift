@@ -27,7 +27,7 @@ import IEEE802
 import Logging
 import ServiceLifecycle
 
-public struct MRPTimerConfiguration {
+public struct MRPTimerConfiguration: Sendable {
   public let joinTime: Duration
   public let leaveTime: Duration
   public let leaveAllTime: Duration

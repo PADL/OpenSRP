@@ -107,7 +107,7 @@ extension Application {
 
   func periodic(for contextIdentifier: MAPContextIdentifier? = nil) async throws {
     try await apply(for: contextIdentifier) { participant in
-      try await participant.tx()
+      try await participant.periodic()
     }
   }
 

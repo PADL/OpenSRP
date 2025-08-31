@@ -90,6 +90,8 @@ public enum EventSource: Sendable {
   case leaveTimer
   // event source was leave all timer
   case leaveAllTimer
+  // event source was periodic timer
+  case periodicTimer
   // event source was the local port (e.g. kernel MVRP)
   case local
   // event source was a remote peer
