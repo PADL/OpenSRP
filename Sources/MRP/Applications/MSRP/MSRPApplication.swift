@@ -1018,9 +1018,9 @@ extension MSRPApplication {
       _logger.trace("MSRP: stream \(streamID) talkerFailed propagated as listenerAskingFailed")
     }
 
-    // collect listener declarations from all ports and merge declaration type
+    // collect listener declarations from all other ports and merge declaration type
     await apply(for: contextIdentifier) { participant in
-      // exclude registering port
+      // exclude registering or leaving port
       guard participant.port != port else { return }
 
       // exclude talker port
