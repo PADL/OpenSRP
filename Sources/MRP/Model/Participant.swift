@@ -221,6 +221,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   @Sendable
   private func _onLeaveAllTimerExpired() async throws {
     try await _handleLeaveAll(event: .leavealltimer, eventSource: .leaveAllTimer)
+    // Table 10.5: Request opportunity to transmit on entry to the Active state
+    try await _requestTxOpportunity(eventSource: .leaveAll)
   }
 
   private func _apply(
@@ -568,8 +570,6 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       _logger.debug("\(self): sending leave all events, source \(eventSource)")
       try await _apply(event: .rLA, eventSource: eventSource)
       try _txEnqueueLeaveAllEvents()
-      // immediately trigger transmission to re-register after LeaveAll
-      try await _requestTxOpportunity(eventSource: .leaveAll)
     default:
       break
     }
