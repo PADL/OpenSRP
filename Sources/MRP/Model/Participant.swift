@@ -424,7 +424,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
         return
       }
 
-      try await attributeValue.handleApplicantRegistrar(
+      try await attributeValue.handle(
         event: isLeaveAll ? .rLA : .rLv,
         eventSource: eventSource
       )
@@ -595,7 +595,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     with attributeValue: _AttributeValue<A>,
     eventSource: EventSource
   ) async throws {
-    try await attributeValue.handleApplicantRegistrar(
+    try await attributeValue.handle(
       event: attributeEvent.protocolEvent,
       eventSource: eventSource
     )
@@ -765,7 +765,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     )
 
     if let attributeSubtype { attribute.attributeSubtype = attributeSubtype }
-    try await attribute.handleApplicantRegistrar(
+    try await attribute.handle(
       event: isNew ? .New : .Join,
       eventSource: eventSource
     )
@@ -785,7 +785,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     )
 
     if let attributeSubtype { attribute.attributeSubtype = attributeSubtype }
-    try await attribute.handleApplicantRegistrar(event: .Lv, eventSource: eventSource)
+    try await attribute.handle(event: .Lv, eventSource: eventSource)
   }
 }
 
@@ -880,7 +880,7 @@ Sendable, Hashable, Equatable,
 
   @Sendable
   private func _onLeaveTimerExpired() async throws {
-    try await handleApplicantRegistrar(
+    try await handle(
       event: .leavetimer,
       eventSource: .leaveTimer
     )
@@ -963,7 +963,7 @@ Sendable, Hashable, Equatable,
     try await _handleRegistrar(context: context)
   }
 
-  func handleApplicantRegistrar(
+  func handle(
     event: ProtocolEvent,
     eventSource: EventSource
   ) async throws {
