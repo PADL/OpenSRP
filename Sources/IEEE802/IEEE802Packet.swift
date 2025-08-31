@@ -20,7 +20,7 @@ public struct IEEE802Packet: Sendable, CustomStringConvertible {
   public struct TCI: Sendable {
     public var tci: UInt16
 
-    public enum PCP: UInt8, Sendable {
+    public enum PCP: UInt8, Sendable, CustomStringConvertible {
       case BK = 0
       case BE = 1
       case EE = 2 // class B
@@ -29,6 +29,19 @@ public struct IEEE802Packet: Sendable, CustomStringConvertible {
       case VO = 5
       case IC = 6
       case NC = 7
+
+      public var description: String {
+        switch self {
+        case .BK: "BK"
+        case .BE: "BE"
+        case .EE: "EE"
+        case .CA: "CA"
+        case .VI: "VI"
+        case .VO: "VO"
+        case .IC: "IC"
+        case .NC: "NC"
+        }
+      }
     }
 
     public var pcp: PCP {

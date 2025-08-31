@@ -313,7 +313,7 @@ public struct MSRPPriorityAndRank: SerDes, Equatable, Comparable, CustomStringCo
   }
 }
 
-public enum SRclassID: UInt8, Sendable, CaseIterable {
+public enum SRclassID: UInt8, Sendable, CaseIterable, CustomStringConvertible {
   case A = 6
   case B = 5
   case C = 4
@@ -332,6 +332,18 @@ public enum SRclassID: UInt8, Sendable, CaseIterable {
       default:
         throw MRPError.invalidSRclassID
       }
+    }
+  }
+
+  public var description: String {
+    switch self {
+    case .A: "A"
+    case .B: "B"
+    case .C: "C"
+    case .D: "D"
+    case .E: "E"
+    case .F: "F"
+    case .G: "G"
     }
   }
 }
