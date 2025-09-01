@@ -1359,9 +1359,11 @@ extension MSRPApplication {
   private func _onDeregisterStreamIndication(
     contextIdentifier: MAPContextIdentifier,
     port: P,
-    streamID: MSRPStreamID,
+    talkerValue: any MSRPTalkerValue,
     eventSource: EventSource
   ) async throws {
+    let streamID = talkerValue.streamID
+
     _logger
       .info(
         "MSRP: deregister stream indication from port \(port) streamID \(streamID) source \(eventSource)"
@@ -1374,6 +1376,7 @@ extension MSRPApplication {
     // Talker for those Listener attributes. This is a special case of the
     // behavior described in 35.2.4.4.1.
     guard let talkerParticipant = try? findParticipant(port: port) else { return }
+
     try await apply { participant in
       guard let listenerAttribute = await participant.findAttribute(
         attributeType: MSRPAttributeType.listener.rawValue,
@@ -1386,6 +1389,14 @@ extension MSRPApplication {
         attributeSubtype: listenerAttribute.0,
         attributeValue: listenerAttribute.1,
         eventSource: .map
+      )
+
+      // Update port parameters for each listener port to clean up CBS queues and FDB entries
+      try await _updatePortParameters(
+        port: participant.port,
+        streamID: streamID,
+        mergedDeclarationType: nil,
+        talkerRegistration: (talkerParticipant, talkerValue)
       )
     }
   }
@@ -1472,14 +1483,14 @@ extension MSRPApplication {
       try await _onDeregisterStreamIndication(
         contextIdentifier: contextIdentifier,
         port: port,
-        streamID: (attributeValue as! MSRPTalkerAdvertiseValue).streamID,
+        talkerValue: (attributeValue as! MSRPTalkerAdvertiseValue),
         eventSource: eventSource
       )
     case .talkerFailed:
       try await _onDeregisterStreamIndication(
         contextIdentifier: contextIdentifier,
         port: port,
-        streamID: (attributeValue as! MSRPTalkerFailedValue).streamID,
+        talkerValue: (attributeValue as! MSRPTalkerFailedValue),
         eventSource: eventSource
       )
     case .listener:
