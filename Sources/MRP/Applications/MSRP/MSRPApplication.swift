@@ -314,7 +314,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
   public var description: String {
     let participants: String = _participants.withLock { String(describing: $0) }
     let portStates: String = _portStates.withLock { String(describing: $0) }
-    return "MSRPApplication(controller: \(controller!), participants: \(participants), portStates: \(portStates)"
+    return "MSRPApplication(controller: \(controller?.description ?? "<nil>"), participants: \(participants), portStates: \(portStates)"
   }
 
   public var name: String { "MSRP" }
