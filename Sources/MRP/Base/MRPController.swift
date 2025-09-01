@@ -239,7 +239,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
   private func _didAdd(port: P) async throws {
     logger.debug("added port \(port.id): \(port)")
 
-    _startTx(port: port)
+    if timerConfiguration.periodicTime != .zero { _startPeriodicTimer(port: port) }
 
     try await _applyContextIdentifierChanges(beforeAddingOrUpdating: port, isNewPort: true)
     _ports[port.id] = port
@@ -248,7 +248,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
   private func _didRemove(port: P) throws {
     logger.debug("removed port \(port.id): \(port)")
 
-    _stopTx(port: port)
+    if timerConfiguration.periodicTime != .zero { _stopPeriodicTimer(port: port) }
 
     try _applyContextIdentifierChanges(beforeRemoving: port)
     _ports[port.id] = nil
@@ -402,8 +402,9 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
     }
   }
 
-  private func _startTx(port: P) {
-    logger.debug("controller starting TX on port \(port)")
+  private func _startPeriodicTimer(port: P) {
+    precondition(timerConfiguration.periodicTime != .zero)
+    logger.debug("controller starting periodic timer on port \(port)")
     var periodicTimer = _periodicTimers[port.id]
     if periodicTimer == nil {
       periodicTimer = Timer(label: "periodictimer") {
@@ -415,8 +416,9 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
     periodicTimer!.start(interval: timerConfiguration.periodicTime)
   }
 
-  private func _stopTx(port: P) {
-    logger.debug("controller stopping TX on port \(port)")
+  private func _stopPeriodicTimer(port: P) {
+    precondition(timerConfiguration.periodicTime != .zero)
+    logger.debug("controller stopping periodic timer on port \(port)")
     _periodicTimers[port.id]?.stop()
   }
 
