@@ -112,20 +112,10 @@ extension MSRPAwareBridge {
   ) async throws {
     // If no streams, disable CBS by setting slopes to zero
     if streams.isEmpty {
-      if let queueA = application._queues[.A] {
+      for queue in application._queues.values.sorted() {
         try await adjustCreditBasedShaper(
           port: port,
-          queue: queueA,
-          idleSlope: 0,
-          sendSlope: 0,
-          hiCredit: 0,
-          loCredit: 0
-        )
-      }
-      if let queueB = application._queues[.B] {
-        try await adjustCreditBasedShaper(
-          port: port,
-          queue: queueB,
+          queue: queue,
           idleSlope: 0,
           sendSlope: 0,
           hiCredit: 0,
