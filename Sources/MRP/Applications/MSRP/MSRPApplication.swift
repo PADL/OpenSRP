@@ -184,6 +184,10 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     }
   }
 
+  deinit {
+    _priorityMapNotificationTask?.cancel()
+  }
+
   @discardableResult
   fileprivate func withPortState<T>(
     port: P,
