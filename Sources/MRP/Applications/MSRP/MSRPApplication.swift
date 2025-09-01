@@ -294,7 +294,11 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
         for port in context {
           guard port.isAvbCapable,
                 let bridge = (controller?.bridge as? any MSRPAwareBridge<P>) else { continue }
-          try? await bridge.unconfigureQueues(port: port)
+          do {
+            try await bridge.unconfigureQueues(port: port)
+          } catch {
+            _logger.error("MSRP: failed to unconfigure queues for port \\(port): \\(error)")
+          }
         }
       }
     }
