@@ -918,9 +918,6 @@ extension LinuxBridge: MSRPAwareBridge {
           socket: _nlLinkSocket
         )
       }
-    } catch Errno.invalidArgument {
-      // removing a CBS that doesn't exist can return invalidArgument so trap that
-      guard removeShaper else { throw Errno.invalidArgument }
     } catch {
       debugPrint(
         "adjustCreditBasedShaper: bridge \(self) port \(port) parent \(parent) hiCredit \(hiCredit) loCredit \(loCredit) idleSlope \(idleSlope) sendSlope \(sendSlope) failed: \(error)"
