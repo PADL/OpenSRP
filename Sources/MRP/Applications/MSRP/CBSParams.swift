@@ -110,6 +110,30 @@ extension MSRPAwareBridge {
     portState: MSRPPortState<P>,
     streams: [SRclassID: [MSRPTSpec]]
   ) async throws {
+    // If no streams, disable CBS by setting slopes to zero
+    if streams.isEmpty {
+      if let queueA = application._queues[.A] {
+        try await adjustCreditBasedShaper(
+          port: port,
+          queue: queueA,
+          idleSlope: 0,
+          sendSlope: 0,
+          hiCredit: 0,
+          loCredit: 0
+        )
+      }
+      if let queueB = application._queues[.B] {
+        try await adjustCreditBasedShaper(
+          port: port,
+          queue: queueB,
+          idleSlope: 0,
+          sendSlope: 0,
+          hiCredit: 0,
+          loCredit: 0
+        )
+      }
+      return
+    }
     let (maxFrameSizeA, idleslopeA) = try! calcSrClassParams(
       application: application,
       portState: portState,
