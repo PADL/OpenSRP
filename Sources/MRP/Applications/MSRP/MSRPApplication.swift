@@ -234,9 +234,9 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
         _logger.debug("MSRP: allocating port state for \(port), prio map \(srClassPriorityMap)")
       } else if _forceAvbCapable {
         srClassPriorityMap[port.id] = DefaultSRClassPriorityMap
-        _logger.warning("MRRP: forcing port \(port) to advertise as AVB capable")
+        _logger.warning("MSRP: forcing port \(port) to advertise as AVB capable")
       } else {
-        _logger.debug("MRRP: port \(port) is not AVB capable, skipping")
+        _logger.debug("MSRP: port \(port) is not AVB capable, skipping")
         continue
       }
     }
