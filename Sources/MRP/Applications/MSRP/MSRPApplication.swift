@@ -1255,6 +1255,7 @@ extension MSRPApplication {
       talkerRegistration: talkerRegistration,
       isJoin: true
     )
+    precondition(mergedDeclarationType != nil) // should be non-nil because isJoin
 
     _logger
       .info(
