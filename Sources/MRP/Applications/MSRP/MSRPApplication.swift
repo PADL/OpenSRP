@@ -1094,7 +1094,7 @@ extension MSRPApplication {
     }
 
     guard let participant = try? findParticipant(port: port) else {
-      _logger.info("MSRP: failed to find participant for port \(port)")
+      _logger.error("MSRP: failed to find participant for port \(port)")
       return
     }
 
@@ -1136,7 +1136,7 @@ extension MSRPApplication {
         streams: streams
       )
     } catch {
-      _logger.debug("MSRP: failed to adjust credit based shaper: \(error)")
+      _logger.error("MSRP: failed to adjust credit based shaper: \(error)")
       throw error
     }
   }
@@ -1160,7 +1160,7 @@ extension MSRPApplication {
     guard let portState else { throw MRPError.portNotFound }
 
     _logger
-      .debug(
+      .info(
         "MSRP: updating port parameters for port \(port) streamID \(streamID) declaration type \(String(describing: mergedDeclarationType)) talker \(talkerRegistration.0.port):\(talkerRegistration.1)"
       )
 
