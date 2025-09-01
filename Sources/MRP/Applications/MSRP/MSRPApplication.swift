@@ -773,19 +773,17 @@ extension MSRPApplication {
   private func _onRegisterStreamIndication(
     contextIdentifier: MAPContextIdentifier,
     port: P,
-    streamID: MSRPStreamID,
-    declarationType: MSRPDeclarationType,
-    dataFrameParameters: MSRPDataFrameParameters,
-    tSpec: MSRPTSpec,
-    priorityAndRank: MSRPPriorityAndRank,
-    accumulatedLatency: UInt32,
+    talkerValue: any MSRPTalkerValue,
     failureInformation: MSRPFailure?,
     isNew: Bool,
     eventSource: EventSource
   ) async throws {
+    let declarationType: MSRPDeclarationType = talkerValue is MSRPTalkerAdvertiseValue ?
+      .talkerAdvertise : .talkerFailed
+
     _logger
       .info(
-        "MSRP: register stream indication from port \(port) streamID \(streamID) declarationType \(declarationType) dataFrameParameters \(dataFrameParameters) isNew \(isNew) source \(eventSource)"
+        "MSRP: register stream indication from port \(port) streamID \(talkerValue.streamID) declarationType \(declarationType) dataFrameParameters \(talkerValue.dataFrameParameters) isNew \(isNew) source \(eventSource)"
       )
 
     // TL;DR: propagate Talker declarations to other ports
@@ -800,32 +798,32 @@ extension MSRPApplication {
       guard await !_shouldPruneTalkerDeclaration(
         port: port,
         portState: portState,
-        streamID: streamID,
+        streamID: talkerValue.streamID,
         declarationType: declarationType,
-        dataFrameParameters: dataFrameParameters,
-        tSpec: tSpec,
-        priorityAndRank: priorityAndRank,
-        accumulatedLatency: accumulatedLatency,
+        dataFrameParameters: talkerValue.dataFrameParameters,
+        tSpec: talkerValue.tSpec,
+        priorityAndRank: talkerValue.priorityAndRank,
+        accumulatedLatency: talkerValue.accumulatedLatency,
         isNew: isNew,
         eventSource: eventSource
       ) else {
         _logger
           .debug(
-            "MSRP: pruned talker declaration for stream \(streamID) destination \(dataFrameParameters) on port \(port)"
+            "MSRP: pruned talker declaration for stream \(talkerValue.streamID) destination \(talkerValue.dataFrameParameters) on port \(port)"
           )
         return
       }
 
-      var accumulatedLatency = accumulatedLatency
+      var accumulatedLatency = talkerValue.accumulatedLatency
       do {
         let portTcMaxLatency = try await port
-          .getPortTcMaxLatency(for: priorityAndRank.dataFramePriority)
+          .getPortTcMaxLatency(for: talkerValue.priorityAndRank.dataFramePriority)
         guard portTcMaxLatency >= 0 else { throw MRPError.portLatencyIsNegative(portTcMaxLatency) }
         accumulatedLatency += UInt32(portTcMaxLatency)
       } catch {
         _logger
           .error(
-            "MSRP: failed to request max latency for \(port) priority \(priorityAndRank.dataFramePriority): \(error)"
+            "MSRP: failed to request max latency for \(port) priority \(talkerValue.priorityAndRank.dataFramePriority): \(error)"
           )
         accumulatedLatency += 500 // clause 35.2.2.8.6, 500ns default
       }
@@ -835,20 +833,20 @@ extension MSRPApplication {
           try await _canBridgeTalker(
             participant: participant,
             portState: portState,
-            streamID: streamID,
+            streamID: talkerValue.streamID,
             declarationType: declarationType,
-            dataFrameParameters: dataFrameParameters,
-            tSpec: tSpec,
-            priorityAndRank: priorityAndRank,
+            dataFrameParameters: talkerValue.dataFrameParameters,
+            tSpec: talkerValue.tSpec,
+            priorityAndRank: talkerValue.priorityAndRank,
             accumulatedLatency: accumulatedLatency,
             isNew: isNew,
             eventSource: eventSource
           )
           let talkerAdvertise = MSRPTalkerAdvertiseValue(
-            streamID: streamID,
-            dataFrameParameters: dataFrameParameters,
-            tSpec: tSpec,
-            priorityAndRank: priorityAndRank,
+            streamID: talkerValue.streamID,
+            dataFrameParameters: talkerValue.dataFrameParameters,
+            tSpec: talkerValue.tSpec,
+            priorityAndRank: talkerValue.priorityAndRank,
             accumulatedLatency: accumulatedLatency
           )
           _logger
@@ -863,10 +861,10 @@ extension MSRPApplication {
           )
         } catch let error as MSRPFailure {
           let talkerFailed = MSRPTalkerFailedValue(
-            streamID: streamID,
-            dataFrameParameters: dataFrameParameters,
-            tSpec: tSpec,
-            priorityAndRank: priorityAndRank,
+            streamID: talkerValue.streamID,
+            dataFrameParameters: talkerValue.dataFrameParameters,
+            tSpec: talkerValue.tSpec,
+            priorityAndRank: talkerValue.priorityAndRank,
             accumulatedLatency: accumulatedLatency,
             systemID: error.systemID,
             failureCode: error.failureCode
@@ -885,10 +883,10 @@ extension MSRPApplication {
       } else {
         precondition(declarationType == .talkerFailed)
         let talkerFailed = MSRPTalkerFailedValue(
-          streamID: streamID,
-          dataFrameParameters: dataFrameParameters,
-          tSpec: tSpec,
-          priorityAndRank: priorityAndRank,
+          streamID: talkerValue.streamID,
+          dataFrameParameters: talkerValue.dataFrameParameters,
+          tSpec: talkerValue.tSpec,
+          priorityAndRank: talkerValue.priorityAndRank,
           accumulatedLatency: accumulatedLatency,
           systemID: failureInformation!.systemID,
           failureCode: failureInformation!.failureCode
@@ -1293,12 +1291,7 @@ extension MSRPApplication {
       try await _onRegisterStreamIndication(
         contextIdentifier: contextIdentifier,
         port: port,
-        streamID: attributeValue.streamID,
-        declarationType: .talkerAdvertise,
-        dataFrameParameters: attributeValue.dataFrameParameters,
-        tSpec: attributeValue.tSpec,
-        priorityAndRank: attributeValue.priorityAndRank,
-        accumulatedLatency: attributeValue.accumulatedLatency,
+        talkerValue: attributeValue,
         failureInformation: nil,
         isNew: isNew,
         eventSource: eventSource
@@ -1308,12 +1301,7 @@ extension MSRPApplication {
       try await _onRegisterStreamIndication(
         contextIdentifier: contextIdentifier,
         port: port,
-        streamID: attributeValue.streamID,
-        declarationType: .talkerAdvertise,
-        dataFrameParameters: attributeValue.dataFrameParameters,
-        tSpec: attributeValue.tSpec,
-        priorityAndRank: attributeValue.priorityAndRank,
-        accumulatedLatency: attributeValue.accumulatedLatency,
+        talkerValue: attributeValue,
         failureInformation: MSRPFailure(
           systemID: attributeValue.systemID,
           failureCode: attributeValue.failureCode
