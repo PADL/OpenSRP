@@ -297,7 +297,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
           do {
             try await bridge.unconfigureQueues(port: port)
           } catch {
-            _logger.error("MSRP: failed to unconfigure queues for port \\(port): \\(error)")
+            _logger.error("MSRP: failed to unconfigure queues for port \(port): \(error)")
           }
         }
       }
