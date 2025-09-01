@@ -188,7 +188,7 @@ public struct MSRPFailure: Error, Equatable {
   }
 }
 
-public struct MSRPTSpec: SerDes, Equatable {
+public struct MSRPTSpec: SerDes, Equatable, Hashable {
   let maxFrameSize: UInt16
   let maxIntervalFrames: UInt16
 
@@ -214,7 +214,7 @@ public struct MSRPTSpec: SerDes, Equatable {
   }
 }
 
-public struct MSRPDataFrameParameters: Value, Equatable, CustomStringConvertible {
+public struct MSRPDataFrameParameters: Value, Equatable, Hashable, CustomStringConvertible {
   let destinationAddress: EUI48
   let vlanIdentifier: VLAN
 
@@ -229,6 +229,11 @@ public struct MSRPDataFrameParameters: Value, Equatable, CustomStringConvertible
   public static func == (lhs: MSRPDataFrameParameters, rhs: MSRPDataFrameParameters) -> Bool {
     _isEqualMacAddress(lhs.destinationAddress, rhs.destinationAddress) && lhs.vlanIdentifier == rhs
       .vlanIdentifier
+  }
+
+  public func hash(into hasher: inout Hasher) {
+    _hashMacAddress(destinationAddress, into: &hasher)
+    vlanIdentifier.hash(into: &hasher)
   }
 
   public var description: String {
@@ -277,7 +282,9 @@ public struct MSRPDataFrameParameters: Value, Equatable, CustomStringConvertible
   }
 }
 
-public struct MSRPPriorityAndRank: SerDes, Equatable, Comparable, CustomStringConvertible {
+public struct MSRPPriorityAndRank: SerDes, Equatable, Hashable, Comparable,
+  CustomStringConvertible
+{
   public static func < (lhs: MSRPPriorityAndRank, rhs: MSRPPriorityAndRank) -> Bool {
     lhs.value < rhs.value
   }

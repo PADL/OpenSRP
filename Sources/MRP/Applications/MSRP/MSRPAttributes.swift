@@ -77,7 +77,7 @@ private extension MSRPTalkerValue {
   }
 }
 
-struct MSRPTalkerAdvertiseValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equatable {
+struct MSRPTalkerAdvertiseValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equatable, Hashable {
   let streamID: MSRPStreamID
   let dataFrameParameters: MSRPDataFrameParameters
   let tSpec: MSRPTSpec
@@ -87,6 +87,13 @@ struct MSRPTalkerAdvertiseValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equ
   static func == (lhs: MSRPTalkerAdvertiseValue, rhs: MSRPTalkerAdvertiseValue) -> Bool {
     lhs.streamID == rhs.streamID && lhs.dataFrameParameters == rhs.dataFrameParameters && lhs
       .tSpec == rhs.tSpec && lhs.priorityAndRank == rhs.priorityAndRank
+  }
+
+  func hash(into hasher: inout Hasher) {
+    streamID.hash(into: &hasher)
+    dataFrameParameters.hash(into: &hasher)
+    tSpec.hash(into: &hasher)
+    priorityAndRank.hash(into: &hasher)
   }
 
   var index: UInt64 { streamID.id }
