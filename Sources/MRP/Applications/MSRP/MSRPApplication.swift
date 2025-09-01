@@ -1085,6 +1085,7 @@ extension MSRPApplication {
     port: P,
     portState: MSRPPortState<P>,
     streamID: MSRPStreamID,
+    declarationType: MSRPDeclarationType?,
     talkerRegistration: any MSRPTalkerValue
   ) async throws {
     guard let controller, let bridge = controller.bridge as? any MSRPAwareBridge<P> else {
@@ -1096,19 +1097,21 @@ extension MSRPApplication {
       return
     }
 
-    var talkers: [MSRPTalkerAdvertiseValue] = await participant.findAttributes(
+    var talkers: Set<MSRPTalkerAdvertiseValue> = await Set(participant.findAttributes(
       attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
       matching: .matchAny
-    ).map { $0.1 as! MSRPTalkerAdvertiseValue }
+    ).map { $0.1 as! MSRPTalkerAdvertiseValue })
 
+    // Remove the specific talker stream if no listeners or listener asking failed
+    if let index = talkers.firstIndex(where: { $0.streamID == talkerRegistration.streamID }) {
+      talkers.remove(at: index)
+    }
+
+    // Only add it back if there are active listeners
     if let talkerRegistration = talkerRegistration as? MSRPTalkerAdvertiseValue,
-       !talkers.contains(where: { $0.streamID == talkerRegistration.streamID })
+       declarationType == .listenerReady || declarationType == .listenerReadyFailed
     {
-      talkers.append(talkerRegistration)
-    } else if let talkerRegistration = talkerRegistration as? MSRPTalkerFailedValue,
-              talkers.contains(where: { $0.streamID == talkerRegistration.streamID })
-    {
-      talkers.removeAll(where: { $0.streamID == talkerRegistration.streamID })
+      talkers.insert(talkerRegistration)
     }
 
     var streams = [SRclassID: [MSRPTSpec]]()
@@ -1169,6 +1172,7 @@ extension MSRPApplication {
           port: port,
           portState: portState,
           streamID: streamID,
+          declarationType: mergedDeclarationType,
           talkerRegistration: talkerRegistration.1
         )
       }
@@ -1184,6 +1188,7 @@ extension MSRPApplication {
           port: port,
           portState: portState,
           streamID: streamID,
+          declarationType: mergedDeclarationType,
           talkerRegistration: talkerRegistration.1
         )
       }
