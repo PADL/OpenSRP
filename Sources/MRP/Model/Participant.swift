@@ -957,8 +957,9 @@ Sendable, Hashable, Equatable,
       attributeSubtype = subtype
     }
 
-    try await handleApplicant(protocolEvent: event, eventSource: eventSource)
-    try await handleRegistrar(protocolEvent: event, eventSource: eventSource)
+    let context = try await _getEventContext(for: event, eventSource: eventSource)
+    try await _handleApplicant(context: context)
+    try await _handleRegistrar(context: context)
   }
 
   private func _handleApplicant(context: EventContext<A>) async throws {
