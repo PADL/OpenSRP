@@ -1399,7 +1399,9 @@ extension MSRPApplication {
         )
       }
 
-      // Propagate talker deregistration to other ports
+      // 35.2.4.3: If no Talker attributes are registered for a StreamID then
+      // no Talker attributes for that StreamID will be declared on any other
+      // port of the Bridge. i.e. implement as ordinary attribute propagation
       try await participant.leave(
         attributeType: talkerValue.declarationType!.attributeType.rawValue,
         attributeSubtype: nil,
