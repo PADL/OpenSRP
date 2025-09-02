@@ -70,7 +70,9 @@ public struct MRPTimerConfiguration: Sendable {
         .lowerBound : Self.ValidLeaveTimes.upperBound
     }
 
-    if leaveAllTime == nil {
+    if leaveAllTime == .zero {
+      self.leaveAllTime = .zero
+    } else if leaveAllTime == nil {
       self.leaveAllTime = LeaveAllTime
     } else if Self.ValidLeaveAllTimes.contains(leaveAllTime!) {
       self.leaveAllTime = leaveAllTime!
