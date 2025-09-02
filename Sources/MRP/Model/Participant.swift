@@ -927,24 +927,14 @@ Sendable, Hashable, Equatable,
     protocolEvent event: ProtocolEvent,
     eventSource: EventSource
   ) async throws {
-    guard let participant else { throw MRPError.internalError }
-
-    let context = try await _getEventContext(for: event, eventSource: eventSource)
-    precondition(!(unwrappedValue is AnyValue))
-    participant._logger.trace("\(participant): handling applicant \(context)")
-    try await _handleApplicant(context: context)
+    try await _handleApplicant(context: _getEventContext(for: event, eventSource: eventSource))
   }
 
   func handleRegistrar(
     protocolEvent event: ProtocolEvent,
     eventSource: EventSource
   ) async throws {
-    guard let participant else { throw MRPError.internalError }
-
-    let context = try await _getEventContext(for: event, eventSource: eventSource)
-    precondition(!(unwrappedValue is AnyValue))
-    participant._logger.trace("\(participant): handling registrar \(context)")
-    try await _handleRegistrar(context: context)
+    try await _handleRegistrar(context: _getEventContext(for: event, eventSource: eventSource))
   }
 
   func handle(
@@ -972,6 +962,8 @@ Sendable, Hashable, Equatable,
   }
 
   private func _handleApplicant(context: EventContext<A>) async throws {
+    context.participant._logger.trace("\(context.participant): handling applicant \(context)")
+
     let applicantAction = applicant.action(for: context.event, flags: context.smFlags)
 
     if let applicantAction {
@@ -1033,6 +1025,8 @@ Sendable, Hashable, Equatable,
   }
 
   private func _handleRegistrar(context: EventContext<A>) async throws {
+    context.participant._logger.trace("\(context.participant): handling registrar \(context)")
+
     if let registrarAction = context.registrar?.action(for: context.event, flags: context.smFlags) {
       context.participant._logger
         .trace(
