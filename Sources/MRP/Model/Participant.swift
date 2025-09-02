@@ -961,7 +961,9 @@ Sendable, Hashable, Equatable,
 
     if let subtype, attributeSubtype != subtype {
       context.participant._logger
-        .error("\(context.participant): attribute subtype \(attributeSubtype != nil ? String(describing: attributeSubtype!) : "<nil>") replaced with \(subtype) on inappropriate protocol event \(event)")
+        .error(
+          "\(context.participant): attribute subtype \(attributeSubtype != nil ? String(describing: attributeSubtype!) : "<nil>") replaced with \(subtype) on inappropriate protocol event \(event)"
+        )
     }
 
     try await _handleRegistrar(context: context)
