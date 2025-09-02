@@ -953,7 +953,9 @@ Sendable, Hashable, Equatable,
     eventSource: EventSource,
     replacingAttributeSubtype subtype: AttributeSubtype? = nil
   ) async throws {
-    if let subtype, event == .rNew || event == .rJoinIn || event == .rJoinMt {
+    if let subtype,
+       event == .New || event == .Join || event == .rNew || event == .rJoinIn || event == .rJoinMt
+    {
       // fast path for MSRP pre-applicant event handler: silently replace attribute
       // subtypes as if the Listener declaration had been withdrawn and
       // replaced by the updated Listener declaration (35.2.6)
