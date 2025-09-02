@@ -959,6 +959,12 @@ Sendable, Hashable, Equatable,
       // fast path for MSRP pre-applicant event handler: silently replace attribute
       // subtypes as if the Listener declaration had been withdrawn and
       // replaced by the updated Listener declaration (35.2.6)
+      if let participant {
+        participant._logger
+          .trace(
+            "\(participant): force updating attribute subtype \(attributeSubtype != nil ? String(describing: attributeSubtype!) : "<nil>") -> \(subtype)"
+          )
+      }
       attributeSubtype = subtype
     }
 
