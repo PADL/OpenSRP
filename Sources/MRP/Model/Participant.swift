@@ -244,13 +244,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     eventSource: EventSource
   ) async throws {
     try await _apply { attributeValue in
-      try await attributeValue.handleRegistrar(
-        protocolEvent: event,
-        eventSource: eventSource
-      )
-    }
-    try await _apply { attributeValue in
-      try await attributeValue.handleApplicant(
+      try await attributeValue.handle(
         protocolEvent: event,
         eventSource: eventSource
       )
@@ -921,20 +915,6 @@ Sendable, Hashable, Equatable,
       applicant: applicant,
       registrar: registrar
     )
-  }
-
-  func handleApplicant(
-    protocolEvent event: ProtocolEvent,
-    eventSource: EventSource
-  ) async throws {
-    try await _handleApplicant(context: _getEventContext(for: event, eventSource: eventSource))
-  }
-
-  func handleRegistrar(
-    protocolEvent event: ProtocolEvent,
-    eventSource: EventSource
-  ) async throws {
-    try await _handleRegistrar(context: _getEventContext(for: event, eventSource: eventSource))
   }
 
   func handle(
