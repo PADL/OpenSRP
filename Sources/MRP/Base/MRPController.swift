@@ -110,12 +110,6 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
   private let _rxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)>
   private let _portExclusions: Set<String>
 
-  var leaveAllTime: Duration {
-    let defaultLeaveAllTime: Double = timerConfiguration.leaveAllTime / .seconds(1)
-    let leaveAllTime = Double.random(in: defaultLeaveAllTime..<(1.5 * defaultLeaveAllTime))
-    return Duration.seconds(leaveAllTime)
-  }
-
   public init(
     bridge: some Bridge<P>,
     logger: Logger,

@@ -35,7 +35,8 @@ final class LeaveAll: Sendable, CustomStringConvertible {
     _leaveAllTime = leaveAllTime
     _leaveAllTimer = Timer(label: "leaveAllTimer", onExpiry: onLeaveAllTimerExpired)
     if _leaveAllTime != Duration.zero {
-      _leaveAllTimer.start(interval: leaveAllTime)
+      let randomizedInterval = _randomizeLeaveAllTime(leaveAllTime)
+      _leaveAllTimer.start(interval: randomizedInterval)
     }
   }
 
@@ -48,7 +49,14 @@ final class LeaveAll: Sendable, CustomStringConvertible {
   var state: State { _state.withLock { $0 } }
 
   func startLeaveAllTimer() {
-    _leaveAllTimer.start(interval: _leaveAllTime)
+    let randomizedInterval = _randomizeLeaveAllTime(_leaveAllTime)
+    _leaveAllTimer.start(interval: randomizedInterval)
+  }
+
+  private func _randomizeLeaveAllTime(_ baseTime: Duration) -> Duration {
+    let baseSeconds = baseTime / .seconds(1)
+    let randomizedSeconds = Double.random(in: baseSeconds..<(1.5 * baseSeconds))
+    return Duration.seconds(randomizedSeconds)
   }
 
   func stopLeaveAllTimer() {
