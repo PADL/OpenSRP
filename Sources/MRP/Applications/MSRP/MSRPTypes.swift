@@ -101,6 +101,19 @@ public enum MSRPDeclarationType: Sendable {
   }
 }
 
+extension MSRPTalkerValue {
+  var declarationType: MSRPDeclarationType? {
+    switch self {
+    case is MSRPTalkerAdvertiseValue:
+      .talkerAdvertise
+    case is MSRPTalkerFailedValue:
+      .talkerFailed
+    default:
+      nil
+    }
+  }
+}
+
 typealias MSRPPortLatency = Int
 
 public struct MSRPStreamID: Sendable, ExpressibleByIntegerLiteral, CustomStringConvertible,

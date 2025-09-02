@@ -786,8 +786,7 @@ extension MSRPApplication {
     isNew: Bool,
     eventSource: EventSource
   ) async throws {
-    let declarationType: MSRPDeclarationType = talkerValue is MSRPTalkerAdvertiseValue ?
-      .talkerAdvertise : .talkerFailed
+    let declarationType = talkerValue.declarationType!
 
     _logger
       .info(
@@ -1378,25 +1377,34 @@ extension MSRPApplication {
     guard let talkerParticipant = try? findParticipant(port: port) else { return }
 
     try await apply { participant in
-      guard let listenerAttribute = await participant.findAttribute(
+      guard participant.port != port else { return } // don't propagate to source port
+
+      // If this participant has active listeners, propagate a leave back to the talker
+      if let listenerAttribute = await participant.findAttribute(
         attributeType: MSRPAttributeType.listener.rawValue,
         matching: .matchEqual(MSRPListenerValue(streamID: streamID))
-      ) else {
-        return
-      }
-      try await talkerParticipant.leave(
-        attributeType: MSRPAttributeType.listener.rawValue,
-        attributeSubtype: listenerAttribute.0,
-        attributeValue: listenerAttribute.1,
-        eventSource: .map
-      )
+      ) {
+        try await talkerParticipant.leave(
+          attributeType: MSRPAttributeType.listener.rawValue,
+          attributeSubtype: listenerAttribute.0,
+          attributeValue: listenerAttribute.1,
+          eventSource: .map
+        )
 
-      // Update port parameters for each listener port to clean up CBS queues and FDB entries
-      try await _updatePortParameters(
-        port: participant.port,
-        streamID: streamID,
-        mergedDeclarationType: nil,
-        talkerRegistration: (talkerParticipant, talkerValue)
+        try await _updatePortParameters(
+          port: participant.port,
+          streamID: streamID,
+          mergedDeclarationType: nil,
+          talkerRegistration: (talkerParticipant, talkerValue)
+        )
+      }
+
+      // Propagate talker deregistration to other ports
+      try await participant.leave(
+        attributeType: talkerValue.declarationType!.attributeType.rawValue,
+        attributeSubtype: nil,
+        attributeValue: talkerValue,
+        eventSource: .map
       )
     }
   }
