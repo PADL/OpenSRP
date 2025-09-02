@@ -932,7 +932,7 @@ Sendable, Hashable, Equatable,
     let context = try await _getEventContext(for: event, eventSource: eventSource)
     precondition(!(unwrappedValue is AnyValue))
     participant._logger.trace("\(participant): handling applicant \(context)")
-    try await _handleApplicant(context: context) // attribute subtype can be adjusted by hook
+    try await _handleApplicant(context: context)
   }
 
   func handleRegistrar(
