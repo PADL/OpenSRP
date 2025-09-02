@@ -220,7 +220,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
 
   @Sendable
   private func _onLeaveAllTimerExpired() async throws {
-    try await _handleLeaveAll(event: .leavealltimer, eventSource: .leaveAllTimer)
+    try await _handleLeaveAll(protocolEvent: .leavealltimer, eventSource: .leaveAllTimer)
     // Table 10.5: Request opportunity to transmit on entry to the Active state
     try await _requestTxOpportunity(eventSource: .leaveAll)
   }
@@ -240,18 +240,18 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   }
 
   private func _apply(
-    event: ProtocolEvent,
+    protocolEvent event: ProtocolEvent,
     eventSource: EventSource
   ) async throws {
     try await _apply { attributeValue in
       try await attributeValue.handleApplicant(
-        event: event,
+        protocolEvent: event,
         eventSource: eventSource
       )
     }
     try await _apply { attributeValue in
       try await attributeValue.handleRegistrar(
-        event: event,
+        protocolEvent: event,
         eventSource: eventSource
       )
     }
@@ -277,11 +277,11 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     switch _leaveAll.state {
     case .Active:
       // encode attributes first with current registrar states, then process LeaveAll
-      try await _apply(event: .txLA, eventSource: eventSource)
+      try await _apply(protocolEvent: .txLA, eventSource: eventSource)
       // sets LeaveAll to passive and emits sLA action
-      try await _handleLeaveAll(event: .tx, eventSource: eventSource)
+      try await _handleLeaveAll(protocolEvent: .tx, eventSource: eventSource)
     case .Passive:
-      try await _apply(event: .tx, eventSource: eventSource)
+      try await _apply(protocolEvent: .tx, eventSource: eventSource)
     }
     try await _tx()
   }
@@ -427,7 +427,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       }
 
       try await attributeValue.handle(
-        event: isLeaveAll ? .rLA : .rLv,
+        protocolEvent: isLeaveAll ? .rLA : .rLv,
         eventSource: eventSource
       )
     }
@@ -557,7 +557,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
 
   // handle an event in the LeaveAll state machine (10.5)
   private func _handleLeaveAll(
-    event: ProtocolEvent,
+    protocolEvent event: ProtocolEvent,
     eventSource: EventSource
   ) async throws {
     switch _leaveAll.action(for: event) {
@@ -568,7 +568,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       // Applicant or Registrar state machine performs the sLA action
       // (10.7.6.6); or a MRPDU is received with a LeaveAll
       _logger.debug("\(self): sending leave all events, source \(eventSource)")
-      try await _apply(event: .rLA, eventSource: eventSource)
+      try await _apply(protocolEvent: .rLA, eventSource: eventSource)
       try _txEnqueueLeaveAllEvents()
     default:
       break
@@ -618,7 +618,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
         ) else { continue }
 
         try await attribute.handle(
-          event: attributeEvent.protocolEvent,
+          protocolEvent: attributeEvent.protocolEvent,
           eventSource: eventSource,
           replacingAttributeSubtype: attributeSubtype
         )
@@ -715,8 +715,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   // generated when the Port Role changes from either Root Port or Alternate
   // Port to Designated Port.
   func flush() async throws {
-    try await _apply(event: .Flush, eventSource: .internal)
-    try await _handleLeaveAll(event: .Flush, eventSource: .internal)
+    try await _apply(protocolEvent: .Flush, eventSource: .internal)
+    try await _handleLeaveAll(protocolEvent: .Flush, eventSource: .internal)
   }
 
   // A Re-declare! event signals to the Applicant and Registrar state machines
@@ -729,7 +729,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   // instance, this event is generated when the Port Role changes from
   // Designated Port to either Root Port or Alternate Port.
   func redeclare() async throws {
-    try await _apply(event: .ReDeclare, eventSource: .internal)
+    try await _apply(protocolEvent: .ReDeclare, eventSource: .internal)
   }
 
   func join(
@@ -747,7 +747,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     )
 
     try await attribute.handle(
-      event: isNew ? .New : .Join,
+      protocolEvent: isNew ? .New : .Join,
       eventSource: eventSource,
       replacingAttributeSubtype: attributeSubtype
     )
@@ -767,7 +767,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     )
 
     try await attribute.handle(
-      event: .Lv,
+      protocolEvent: .Lv,
       eventSource: eventSource,
       replacingAttributeSubtype: attributeSubtype
     )
@@ -866,7 +866,7 @@ Sendable, Hashable, Equatable,
   @Sendable
   private func _onLeaveTimerExpired() async throws {
     try await handle(
-      event: .leavetimer,
+      protocolEvent: .leavetimer,
       eventSource: .leaveTimer
     )
   }
@@ -903,7 +903,7 @@ Sendable, Hashable, Equatable,
   }
 
   func handleApplicant(
-    event: ProtocolEvent,
+    protocolEvent event: ProtocolEvent,
     eventSource: EventSource
   ) async throws {
     guard let participant else { throw MRPError.internalError }
@@ -926,7 +926,7 @@ Sendable, Hashable, Equatable,
   }
 
   func handleRegistrar(
-    event: ProtocolEvent,
+    protocolEvent event: ProtocolEvent,
     eventSource: EventSource
   ) async throws {
     guard let participant else { throw MRPError.internalError }
@@ -949,7 +949,7 @@ Sendable, Hashable, Equatable,
   }
 
   func handle(
-    event: ProtocolEvent,
+    protocolEvent event: ProtocolEvent,
     eventSource: EventSource,
     replacingAttributeSubtype subtype: AttributeSubtype? = nil
   ) async throws {
@@ -960,8 +960,8 @@ Sendable, Hashable, Equatable,
       attributeSubtype = subtype
     }
 
-    try await handleApplicant(event: event, eventSource: eventSource)
-    try await handleRegistrar(event: event, eventSource: eventSource)
+    try await handleApplicant(protocolEvent: event, eventSource: eventSource)
+    try await handleRegistrar(protocolEvent: event, eventSource: eventSource)
   }
 
   private func _handleApplicant(context: EventContext<A>) async throws {
