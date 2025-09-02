@@ -1009,9 +1009,7 @@ extension MSRPApplication {
     isJoin: Bool
   ) async throws -> MSRPDeclarationType? {
     var mergedDeclarationType: MSRPDeclarationType? = if isJoin {
-      if declarationType == .listenerAskingFailed ||
-        talkerRegistration.1 is MSRPTalkerFailedValue
-      {
+      if talkerRegistration.1 is MSRPTalkerFailedValue {
         .listenerAskingFailed
       } else {
         declarationType
