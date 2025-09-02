@@ -244,13 +244,13 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     eventSource: EventSource
   ) async throws {
     try await _apply { attributeValue in
-      try await attributeValue.handleApplicant(
+      try await attributeValue.handleRegistrar(
         protocolEvent: event,
         eventSource: eventSource
       )
     }
     try await _apply { attributeValue in
-      try await attributeValue.handleRegistrar(
+      try await attributeValue.handleApplicant(
         protocolEvent: event,
         eventSource: eventSource
       )
@@ -964,8 +964,8 @@ Sendable, Hashable, Equatable,
         .error("\(context.participant): attribute subtype \(attributeSubtype != nil ? String(describing: attributeSubtype!) : "<nil>") replaced with \(subtype) on inappropriate protocol event \(event)")
     }
 
-    try await _handleApplicant(context: context)
     try await _handleRegistrar(context: context)
+    try await _handleApplicant(context: context)
   }
 
   private func _handleApplicant(context: EventContext<A>) async throws {
