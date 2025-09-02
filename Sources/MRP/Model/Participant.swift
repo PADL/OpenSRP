@@ -812,7 +812,7 @@ Sendable, Hashable, Equatable,
   var participant: P? { _participant.object }
   var unwrappedValue: any Value { value.value }
 
-  var attributeSubtype: AttributeSubtype? {
+  private(set) var attributeSubtype: AttributeSubtype? {
     get {
       _attributeSubtype.withLock { $0 }
     }
