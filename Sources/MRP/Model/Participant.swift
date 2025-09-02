@@ -902,24 +902,34 @@ Sendable, Hashable, Equatable,
     }
   }
 
-  func handleApplicant(
-    protocolEvent event: ProtocolEvent,
+  private func _getEventContext(
+    for event: ProtocolEvent,
     eventSource: EventSource
-  ) async throws {
+  ) async throws -> EventContext<A> {
     guard let participant else { throw MRPError.internalError }
 
-    let context = try await EventContext(
+    let smFlags = try await participant._getSmFlags(for: attributeType)
+
+    return EventContext(
       participant: participant,
       event: event,
       eventSource: eventSource,
       attributeType: attributeType,
       attributeSubtype: attributeSubtype,
       attributeValue: unwrappedValue,
-      smFlags: participant._getSmFlags(for: attributeType),
+      smFlags: smFlags,
       applicant: applicant,
       registrar: registrar
     )
+  }
 
+  func handleApplicant(
+    protocolEvent event: ProtocolEvent,
+    eventSource: EventSource
+  ) async throws {
+    guard let participant else { throw MRPError.internalError }
+
+    let context = try await _getEventContext(for: event, eventSource: eventSource)
     precondition(!(unwrappedValue is AnyValue))
     participant._logger.trace("\(participant): handling applicant \(context)")
     try await _handleApplicant(context: context) // attribute subtype can be adjusted by hook
@@ -931,18 +941,7 @@ Sendable, Hashable, Equatable,
   ) async throws {
     guard let participant else { throw MRPError.internalError }
 
-    let context = try await EventContext(
-      participant: participant,
-      event: event,
-      eventSource: eventSource,
-      attributeType: attributeType,
-      attributeSubtype: attributeSubtype,
-      attributeValue: unwrappedValue,
-      smFlags: participant._getSmFlags(for: attributeType),
-      applicant: applicant,
-      registrar: registrar
-    )
-
+    let context = try await _getEventContext(for: event, eventSource: eventSource)
     precondition(!(unwrappedValue is AnyValue))
     participant._logger.trace("\(participant): handling registrar \(context)")
     try await _handleRegistrar(context: context)
