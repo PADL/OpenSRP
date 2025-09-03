@@ -198,7 +198,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     // All Period Timer is set to a random value, T, in the range LeaveAllTime
     // < T < 1.5 × LeaveAllTime when it is started. LeaveAllTime is defined in
     // Table 10-7.
-    _leaveAll = await LeaveAll(
+    _leaveAll = LeaveAll(
       interval: controller!.timerConfiguration.leaveAllTime,
       onLeaveAllTimerExpired: _onLeaveAllTimerExpired
     )
