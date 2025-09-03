@@ -57,6 +57,29 @@ final class Applicant: Sendable, CustomStringConvertible {
     case AP // Anxious Passive
     case QP // Quiet Passive
     case LO // Leaving Observer
+
+    var isDeclared: Bool {
+      switch self {
+      case .VP:
+        fallthrough
+      case .VN:
+        fallthrough
+      case .AN:
+        fallthrough
+      case .AA:
+        fallthrough
+      case .QA:
+        fallthrough
+      case .LA:
+        fallthrough
+      case .AP:
+        fallthrough
+      case .QP:
+        true
+      default:
+        false
+      }
+    }
   }
 
   enum Action: Sendable {

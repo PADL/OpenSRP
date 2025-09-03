@@ -18,6 +18,9 @@ import AsyncExtensions
 import IEEE802
 import Logging
 import Synchronization
+#if canImport(FlyingFox)
+import FlyingFox
+#endif
 
 public let MSRPEtherType: UInt16 = 0x22EA
 
@@ -91,6 +94,18 @@ struct MSRPPortState<P: AVBPort>: Sendable {
     return time - epoch
   }
 
+  func getDomain(for srClassID: SRclassID, defaultSRPVid: VLAN) -> MSRPDomainValue? {
+    if let srClassPriority = srClassPriorityMap[srClassID] {
+      MSRPDomainValue(
+        srClassID: srClassID,
+        srClassPriority: srClassPriority,
+        srClassVID: (srpClassVID[srClassID] ?? defaultSRPVid).vid
+      )
+    } else {
+      nil
+    }
+  }
+
   init(msrp: MSRPApplication<P>, port: P) throws {
     let isAvbCapable = port.isAvbCapable || msrp._forceAvbCapable
     msrpPortEnabledStatus = isAvbCapable
@@ -136,17 +151,17 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
   let _latencyMaxFrameSize: UInt16
   let _queues: [SRclassID: UInt]
 
+  let _srPVid: VLAN
+  let _deltaBandwidths: [SRclassID: Int]
   let _maxTalkerAttributes: Int
   let _ignoreAsCapable: Bool
 
   fileprivate let _talkerPruning: Bool
   fileprivate let _maxFanInPorts: Int
-  fileprivate let _srPVid: VLAN
   fileprivate let _maxSRClass: SRclassID
   fileprivate let _portStates = Mutex<[P.ID: MSRPPortState<P>]>([:])
   fileprivate let _mmrp: MMRPApplication<P>?
   fileprivate var _priorityMapNotificationTask: Task<(), Error>?
-  fileprivate let _deltaBandwidths: [SRclassID: Int]
   fileprivate let _forceAvbCapable: Bool
   fileprivate let _configureQueues: Bool
 
@@ -196,7 +211,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
   }
 
   @discardableResult
-  fileprivate func withPortState<T>(
+  func withPortState<T>(
     port: P,
     body: (_: inout MSRPPortState<P>) throws -> T
   ) rethrows -> T {
@@ -648,6 +663,22 @@ extension MSRPApplication {
   }
 
   func _calculateBandwidthUsed(
+    portState: MSRPPortState<P>,
+    talker: MSRPTalkerAdvertiseValue
+  ) throws -> Int {
+    guard let srClassID = portState
+      .reverseMapSrClassPriority(priority: talker.priorityAndRank.dataFramePriority)
+    else {
+      return 0
+    }
+    let classMeasurementInterval = try srClassID
+      .classMeasurementInterval // number of intervals in usec
+    let maxFrameRate = Int(talker.tSpec.maxIntervalFrames) *
+      (1_000_000 / classMeasurementInterval) // number of frames per second
+    return maxFrameRate * Int(talker.tSpec.maxFrameSize) * 8 / 1000 // bandwidth used in kbps
+  }
+
+  func _calculateBandwidthUsed(
     participant: Participant<MSRPApplication>,
     portState: MSRPPortState<P>,
     provisionalTalker: MSRPTalkerAdvertiseValue? = nil
@@ -667,11 +698,7 @@ extension MSRPApplication {
       else {
         continue
       }
-      let classMeasurementInterval = try srClassID
-        .classMeasurementInterval // number of intervals in usec
-      let maxFrameRate = Int(talker.tSpec.maxIntervalFrames) *
-        (1_000_000 / classMeasurementInterval) // number of frames per second
-      let bw = maxFrameRate * Int(talker.tSpec.maxFrameSize) * 8 / 1000 // bandwidth used in kbps
+      let bw = try _calculateBandwidthUsed(portState: portState, talker: talker)
       if let index = bandwidthUsed.index(forKey: srClassID) {
         bandwidthUsed.values[index] += bw
       } else {
@@ -1569,14 +1596,8 @@ extension MSRPApplication {
   ) async throws {
     var domain: MSRPDomainValue?
 
-    withPortState(port: participant.port) { portState in
-      if let srClassPriority = portState.srClassPriorityMap[srClassID] {
-        domain = MSRPDomainValue(
-          srClassID: srClassID,
-          srClassPriority: srClassPriority,
-          srClassVID: (portState.srpClassVID[srClassID] ?? _srPVid).vid
-        )
-      }
+    domain = withPortState(port: participant.port) { portState in
+      portState.getDomain(for: srClassID, defaultSRPVid: _srPVid)
     }
 
     if let domain {
@@ -1633,3 +1654,14 @@ extension MSRPApplication {
     }
   }
 }
+
+#if canImport(FlyingFox)
+extension MSRPApplication: RestApiApplication {
+  func registerRestApiHandlers(for httpServer: HTTPServer) async throws {
+    let msrpHandler = MSRPHandler(application: self)
+
+    await httpServer.appendRoute("GET /api/avb/msrp", to: msrpHandler)
+    await httpServer.appendRoute("GET /api/avb/msrp/*", to: msrpHandler)
+  }
+}
+#endif

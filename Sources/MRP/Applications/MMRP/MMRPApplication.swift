@@ -17,6 +17,9 @@
 import IEEE802
 import Logging
 import Synchronization
+#if canImport(FlyingFox)
+import FlyingFox
+#endif
 
 public let MMRPEtherType: UInt16 = 0x88F6
 
@@ -227,3 +230,9 @@ extension MMRPApplication {
     }
   }
 }
+
+#if canImport(FlyingFox)
+extension MMRPApplication: RestApiApplication {
+  func registerRestApiHandlers(for httpServer: HTTPServer) async throws {}
+}
+#endif

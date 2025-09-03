@@ -400,6 +400,24 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   }
 
   func findAllAttributes(
+    matching filter: AttributeValueFilter
+  ) -> [AttributeValue] {
+    var attributeValues = [AttributeValue]()
+
+    for attributeValue in _attributes.values.flatMap({ $0 }) {
+      attributeValues.append(AttributeValue(
+        attributeType: attributeValue.attributeType,
+        attributeSubtype: attributeValue.attributeSubtype,
+        attributeValue: attributeValue.unwrappedValue,
+        applicantState: attributeValue.applicantState,
+        registrarState: attributeValue.registrarState
+      ))
+    }
+
+    return attributeValues
+  }
+
+  func findAllAttributes(
     attributeType: AttributeType,
     matching filter: AttributeValueFilter
   ) -> [AttributeValue] {

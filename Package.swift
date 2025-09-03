@@ -114,6 +114,7 @@ let CommonPackageDependencies: [Package.Dependency] = [
   .package(url: "https://github.com/swift-server/swift-service-lifecycle", from: "2.3.0"),
   .package(url: "https://github.com/swhitty/FlyingFox", from: "0.25.0"),
   .package(url: "https://github.com/swhitty/FlyingFoxMacros", from: "0.2.0"),
+  .package(url: "https://github.com/Flight-School/AnyCodable", from: "0.6.7"),
 ]
 
 let CommonProducts: [Product] = [
@@ -150,11 +151,15 @@ let CommonTargets: [Target] = [
       "AsyncExtensions",
       "SocketAddress",
       "PMC",
+      "AnyCodable",
       .product(name: "Algorithms", package: "swift-algorithms"),
       .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
       .product(name: "Logging", package: "swift-log"),
       .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
       .product(name: "SystemPackage", package: "swift-system"),
+      .product(name: "FlyingFox", package: "FlyingFox"),
+      .product(name: "FlyingFoxMacros", package: "FlyingFoxMacros"),
+
     ] + PlatformTargetDependencies,
     cSettings: PlatformCSettings,
     swiftSettings: PlatformSwiftSettings,

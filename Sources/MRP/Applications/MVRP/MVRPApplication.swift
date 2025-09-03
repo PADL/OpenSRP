@@ -17,6 +17,9 @@
 import IEEE802
 import Logging
 import Synchronization
+#if canImport(FlyingFox)
+import FlyingFox
+#endif
 
 public let MVRPEtherType: UInt16 = 0x88F5
 
@@ -236,3 +239,14 @@ extension MVRPApplication {
     }
   }
 }
+
+#if canImport(FlyingFox)
+extension MVRPApplication: RestApiApplication {
+  func registerRestApiHandlers(for httpServer: HTTPServer) async throws {
+    let mvrpHandler = MVRPHandler(application: self)
+
+    await httpServer.appendRoute("GET /api/avb/mvrp", to: mvrpHandler)
+    await httpServer.appendRoute("GET /api/avb/mvrp/*", to: mvrpHandler)
+  }
+}
+#endif

@@ -27,12 +27,12 @@ public struct MRPTimerConfiguration: Sendable {
   // AVNU periodictimer is 900-1500ms, but allow it to be disabled by setting to zero
   private static let ValidPeriodicTimes: ClosedRange<Duration> = Duration.seconds(0.9)...Duration
     .seconds(1.5)
-  
+
   public let joinTime: Duration
   public let leaveTime: Duration
   public let leaveAllTime: Duration
   public let periodicTime: Duration
-  
+
   public init(
     joinTime: Duration? = nil,
     leaveTime: Duration? = nil,
@@ -47,7 +47,7 @@ public struct MRPTimerConfiguration: Sendable {
       self.joinTime = joinTime! < Self.ValidJoinTimes.lowerBound ? Self.ValidJoinTimes
         .lowerBound : Self.ValidJoinTimes.upperBound
     }
-    
+
     if leaveTime == nil {
       self.leaveTime = LeaveTime
     } else if Self.ValidLeaveTimes.contains(leaveTime!) {
@@ -56,7 +56,7 @@ public struct MRPTimerConfiguration: Sendable {
       self.leaveTime = leaveTime! < Self.ValidLeaveTimes.lowerBound ? Self.ValidLeaveTimes
         .lowerBound : Self.ValidLeaveTimes.upperBound
     }
-    
+
     if leaveAllTime == .zero {
       self.leaveAllTime = .zero
     } else if leaveAllTime == nil {
@@ -67,7 +67,7 @@ public struct MRPTimerConfiguration: Sendable {
       self.leaveAllTime = leaveAllTime! < Self.ValidLeaveAllTimes.lowerBound ? Self
         .ValidLeaveAllTimes.lowerBound : Self.ValidLeaveAllTimes.upperBound
     }
-    
+
     if periodicTime == .zero {
       self.periodicTime = .zero
     } else if periodicTime == nil {
@@ -80,4 +80,3 @@ public struct MRPTimerConfiguration: Sendable {
     }
   }
 }
-

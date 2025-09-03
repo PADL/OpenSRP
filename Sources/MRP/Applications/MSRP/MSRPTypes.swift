@@ -116,7 +116,8 @@ extension MSRPTalkerValue {
 
 typealias MSRPPortLatency = Int
 
-public struct MSRPStreamID: Sendable, ExpressibleByIntegerLiteral, CustomStringConvertible,
+public struct MSRPStreamID: Sendable, ExpressibleByIntegerLiteral, ExpressibleByStringLiteral,
+  CustomStringConvertible,
   Value, Hashable
 {
   public typealias IntegerLiteralType = UInt64
@@ -129,8 +130,17 @@ public struct MSRPStreamID: Sendable, ExpressibleByIntegerLiteral, CustomStringC
     self.id = id
   }
 
+  public init(stringLiteral streamIDString: String) {
+    let id = UInt64(streamIDString, radix: 16)
+    self.init(integerLiteral: id ?? 0)
+  }
+
+  var streamIDString: String {
+    _formatHex(id, padToWidth: 16)
+  }
+
   public var description: String {
-    "0x" + _formatHex(id, padToWidth: 16)
+    "0x" + streamIDString
   }
 
   public func serialize(into serializationContext: inout SerializationContext) throws {

@@ -124,6 +124,9 @@ private final class MRPDaemon: AsyncParsableCommand {
   @Option(name: .long, help: "MRP Periodic TX time interval")
   var periodicTime: Duration = .seconds(1)
 
+  @Option(name: .shortAndLong, help: "REST HTTP server port")
+  var restServerPort: UInt16 = 80
+
   enum CodingKeys: String, CodingKey {
     case bridgeInterface
     case nfGroup
@@ -149,6 +152,7 @@ private final class MRPDaemon: AsyncParsableCommand {
     case leaveTime
     case leaveAllTime
     case periodicTime
+    case restServerPort
   }
 
   var logger: Logger!
@@ -181,7 +185,8 @@ private final class MRPDaemon: AsyncParsableCommand {
       bridge: bridge,
       logger: logger,
       timerConfiguration: timerConfiguration,
-      portExclusions: Set(excludeIface)
+      portExclusions: Set(excludeIface),
+      restServerPort: restServerPort
     )
     if enableSRP {
       enableMMRP = false

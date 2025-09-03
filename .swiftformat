@@ -11,4 +11,5 @@
 --typeattributes prev-line
 --varattributes prev-line
 --disable andOperator
+--disable typeSugar
 --swiftversion 5.10

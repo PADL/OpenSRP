@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2024 PADL Software Pty Ltd
+// Copyright (c) 2024-2025 PADL Software Pty Ltd
 //
 // Licensed under the Apache License, Version 2.0 (the License);
 // you may not use this file except in compliance with the License.
@@ -23,11 +23,14 @@
 // primarily on the exchange of idempotent protocol state rather than commands.
 
 import AsyncExtensions
+#if canImport(FlyingFox)
+import FlyingFox
+#endif
 import IEEE802
 import Logging
 import ServiceLifecycle
 
-public actor MRPController<P: Port>: Service, CustomStringConvertible {
+public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable {
   typealias MAPContextDictionary = [MAPContextIdentifier: MAPContext<P>]
 
   let bridge: any Bridge<P>
@@ -42,12 +45,16 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
   private var _taskGroup: ThrowingTaskGroup<(), Error>?
   private let _rxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)>
   private let _portExclusions: Set<String>
+  #if canImport(FlyingFox)
+  private var _httpServer: HTTPServer?
+  #endif
 
   public init(
     bridge: some Bridge<P>,
     logger: Logger,
     timerConfiguration: MRPTimerConfiguration = .init(),
-    portExclusions: Set<String> = []
+    portExclusions: Set<String> = [],
+    restServerPort: UInt16? = nil
   ) async throws {
     logger
       .debug(
@@ -58,6 +65,15 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
     self.timerConfiguration = timerConfiguration
     _rxPackets = try bridge.rxPackets
     _portExclusions = portExclusions
+    #if canImport(FlyingFox)
+    if let restServerPort {
+      let httpServer = HTTPServer(port: restServerPort)
+      await registerDefaultRestApiHandlers(for: httpServer)
+      _httpServer = httpServer
+    } else {
+      _httpServer = nil
+    }
+    #endif
   }
 
   public nonisolated var description: String {
@@ -72,10 +88,15 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
         _taskGroup = group
         group.addTask { @Sendable in try await self._handleBridgeNotifications() }
         group.addTask { @Sendable [self] in
-          try await bridge
-            .run(controller: self) // will block until starting set of ports is initialized
+          // will block until starting set of ports is initialized
+          try await bridge.run(controller: self)
           try await _handleRxPackets()
         }
+        #if canImport(FlyingFox)
+        if let _httpServer {
+          group.addTask { @Sendable in try await _httpServer.run() }
+        }
+        #endif
         for try await _ in group {}
       }
     } catch {
@@ -87,6 +108,9 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
     logger.info("stopping MRP for bridge \(bridge)")
     // FIXME: there appears to be a crash here
     _taskGroup?.cancelAll()
+    #if canImport(FlyingFox)
+    await _httpServer?.stop()
+    #endif
     try? await bridge.shutdown(controller: self)
     for port in ports {
       try? _didRemove(port: port)
@@ -335,6 +359,11 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
       controller: self
     )
     _applications[application.etherType] = application
+    #if canImport(FlyingFox)
+    if let application = application as? any RestApiApplication, let _httpServer {
+      try await application.registerRestApiHandlers(for: _httpServer)
+    }
+    #endif
     logger.info("registered application \(application.name)")
   }
 
@@ -408,3 +437,16 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible {
     _ports.count < 2
   }
 }
+
+#if canImport(FlyingFox)
+fileprivate extension MRPController {
+  func registerDefaultRestApiHandlers(for httpServer: HTTPServer) async {
+    let deviceHandler = DeviceHandler(controller: self)
+    await httpServer.appendRoute("GET /api/*", to: deviceHandler)
+
+    let mrpHandler = MRPHandler(controller: self)
+    await httpServer.appendRoute("GET /api/avb/mrp", to: mrpHandler)
+    await httpServer.appendRoute("GET /api/avb/mrp/*", to: mrpHandler)
+  }
+}
+#endif

@@ -25,6 +25,8 @@ final class Registrar: Sendable, CustomStringConvertible {
     case IN // Registered
     case LV // Previously registered, but now being timed out
     case MT // Not registered
+
+    var isRegistered: Bool { self != .MT }
   }
 
   enum Action: Sendable {
