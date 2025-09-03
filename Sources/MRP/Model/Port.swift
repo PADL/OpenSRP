@@ -17,7 +17,7 @@
 import AsyncExtensions
 import IEEE802
 
-public protocol Port: Hashable, Sendable, Identifiable where ID: Hashable & Sendable {
+public protocol Port: Hashable, Sendable, Identifiable where ID: Hashable & Sendable & Codable {
   static func timeSinceEpoch() throws -> UInt32
 
   var id: ID { get }
