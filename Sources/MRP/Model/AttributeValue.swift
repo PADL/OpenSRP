@@ -26,3 +26,12 @@ public enum AttributeValueFilter: Sendable {
   // match value which matches exactly, relative to provided index
   case matchRelative((any Value, UInt64))
 }
+
+// used by REST API only, returns unregistered attributes as well
+struct AttributeValue {
+  let attributeType: AttributeType
+  let attributeSubtype: AttributeSubtype?
+  let attributeValue: any Value
+  let applicantState: Applicant.State
+  let registrarState: Registrar.State?
+}

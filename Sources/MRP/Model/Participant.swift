@@ -399,6 +399,28 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     return attributeValues
   }
 
+  func findAllAttributes(
+    attributeType: AttributeType,
+    matching filter: AttributeValueFilter
+  ) -> [AttributeValue] {
+    var attributeValues = [AttributeValue]()
+
+    for attributeValue in _attributes[attributeType] ?? [] {
+      guard attributeValue.matches(attributeType: attributeType, matching: filter) else {
+        continue
+      }
+      attributeValues.append(AttributeValue(
+        attributeType: attributeType,
+        attributeSubtype: attributeValue.attributeSubtype,
+        attributeValue: attributeValue.unwrappedValue,
+        applicantState: attributeValue.applicantState,
+        registrarState: attributeValue.registrarState
+      ))
+    }
+
+    return attributeValues
+  }
+
   public func leaveNow(
     _ isIncluded: @Sendable (AttributeType, AttributeSubtype?, any Value)
       -> Bool
@@ -814,6 +836,10 @@ Sendable, Hashable, Equatable,
     set {
       _attributeSubtype.withLock { $0 = newValue }
     }
+  }
+
+  var applicantState: Applicant.State {
+    applicant.state
   }
 
   var registrarState: Registrar.State? {

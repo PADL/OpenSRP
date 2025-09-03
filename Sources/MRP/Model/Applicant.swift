@@ -79,7 +79,7 @@ final class Applicant: Sendable, CustomStringConvertible {
     _state.withLock { $0.action(for: event, flags: flags) }
   }
 
-  private var state: State {
+  var state: State {
     _state.withLock { $0 }
   }
 
