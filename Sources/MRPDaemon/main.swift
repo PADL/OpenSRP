@@ -47,7 +47,7 @@ private final class MRPDaemon: AsyncParsableCommand {
   typealias P = LinuxPort
   typealias B = LinuxBridge
 
-  private(set) static var configuration = CommandConfiguration(commandName: "mrpd")
+  static let configuration = CommandConfiguration(commandName: "mrpd")
 
   // TODO: exclude interfaces
   // TODO: do not apply
