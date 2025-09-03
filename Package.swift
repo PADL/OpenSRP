@@ -112,6 +112,8 @@ let CommonPackageDependencies: [Package.Dependency] = [
   .package(url: "https://github.com/PADL/SocketAddress", from: "0.0.1"),
   .package(url: "https://github.com/lhoward/AsyncExtensions", from: "0.9.2"),
   .package(url: "https://github.com/swift-server/swift-service-lifecycle", from: "2.3.0"),
+  .package(url: "https://github.com/swhitty/FlyingFox", from: "0.25.0"),
+  .package(url: "https://github.com/swhitty/FlyingFoxMacros", from: "0.2.0"),
 ]
 
 let CommonProducts: [Product] = [
