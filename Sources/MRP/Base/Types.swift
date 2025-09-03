@@ -98,6 +98,20 @@ package let LeaveTime = Duration.seconds(5)
 // 10-15 seconds
 package let LeaveAllTime = Duration.seconds(10.0)
 
+extension Duration {
+  var milliseconds: Int64 {
+    components.seconds * 1000 + components.attoseconds / 1_000_000_000_000_000
+  }
+
+  var microseconds: Int64 {
+    components.seconds * 1_000_000 + components.attoseconds / 1_000_000_000_000
+  }
+
+  var nanoseconds: Int64 {
+    components.seconds * 1_000_000_000 + components.attoseconds / 1_000_000_000
+  }
+}
+
 struct MRPFlag: OptionSet, Sendable {
   typealias RawValue = UInt8
 

@@ -1077,9 +1077,3 @@ private extension AttributeValueFilter {
     }
   }
 }
-
-private extension Duration {
-  var nanoseconds: Int64 {
-    components.seconds * 1_000_000_000 + components.attoseconds / 1_000_000_000
-  }
-}
