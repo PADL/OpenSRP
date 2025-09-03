@@ -277,7 +277,12 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
     do {
       _linkSettings = try _getEthLinkSettings(fileHandle: fileHandle, name: _rtnl.name)
     } catch {
-      _linkSettings = try _getEthLinkSettingsCompat(fileHandle: fileHandle, name: _rtnl.name)
+      do {
+        _linkSettings = try _getEthLinkSettingsCompat(fileHandle: fileHandle, name: _rtnl.name)
+      } catch {
+        debugPrint("LinuxBridge: failed to get link settings for \(_rtnl.name): \(error), ignoring")
+        _linkSettings = (ethtool_link_settings(), [0, 0, 0])
+      }
     }
 
     // we allow this to fail, port won't be AVB capable but that is OK
