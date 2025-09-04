@@ -166,6 +166,7 @@ struct MSRPHandler<P: AVBPort>: Sendable {
       let portName: String
       let connected: Bool
       let type: String
+      let streamAge: UInt32
 
       fileprivate init(participant: Participant<Application>, attributeValue: AttributeValue) {
         portNumber = participant.port.id
@@ -186,6 +187,14 @@ struct MSRPHandler<P: AVBPort>: Sendable {
         case .readyFailed: "ready_failed"
         case .askingFailed: "asking_failed"
         default: ""
+        }
+
+        let streamID = (attributeValue.attributeValue as! MSRPListenerValue).streamID
+
+        streamAge = if let application = participant.application {
+          application.withPortState(port: participant.port) { $0.getStreamAge(for: streamID) }
+        } else {
+          0
         }
       }
     }

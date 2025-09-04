@@ -144,8 +144,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   fileprivate let _logger: Logger
   fileprivate let _type: ParticipantType
   fileprivate nonisolated var controller: MRPController<A.P>? { _controller.object }
-  fileprivate nonisolated var application: A? { _application.object }
 
+  nonisolated var application: A? { _application.object }
   nonisolated let port: A.P
   nonisolated let contextIdentifier: MAPContextIdentifier
 
