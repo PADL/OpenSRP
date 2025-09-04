@@ -136,6 +136,8 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
   let _latencyMaxFrameSize: UInt16
   let _queues: [SRclassID: UInt]
 
+  let _maxTalkerAttributes: Int
+
   fileprivate let _talkerPruning: Bool
   fileprivate let _maxFanInPorts: Int
   fileprivate let _srPVid: VLAN
@@ -157,7 +159,8 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     queues: [SRclassID: UInt] = [.A: 4, .B: 3],
     deltaBandwidths: [SRclassID: Int]? = nil,
     forceAvbCapable: Bool = false,
-    configureQueues: Bool = false // this will become a default after further testing
+    configureQueues: Bool = false, // this will become a default after further testing
+    maxTalkerAttributes: Int = 150
   ) async throws {
     _controller = Weak(controller)
     _logger = controller.logger
@@ -170,6 +173,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     _deltaBandwidths = deltaBandwidths ?? DefaultDeltaBandwidths
     _forceAvbCapable = forceAvbCapable
     _configureQueues = configureQueues
+    _maxTalkerAttributes = maxTalkerAttributes
     _mmrp = try? await controller.application(for: MMRPEtherType)
     try await controller.register(application: self)
     _priorityMapNotificationTask = Task {
@@ -787,6 +791,14 @@ extension MSRPApplication {
     eventSource: EventSource
   ) async throws {
     let declarationType = talkerValue.declarationType!
+
+    guard await !_isMaxTalkerAttributesRegistered else {
+      _logger
+        .info(
+          "MSRP: ignoring register stream indication from port \(port) streamID \(talkerValue.streamID) declarationType \(declarationType) as max talker attributes registered"
+        )
+      return
+    }
 
     _logger
       .info(
@@ -1563,6 +1575,33 @@ extension MSRPApplication {
     let participant = try findParticipant(port: port)
     for srClassID in _allSRClassIDs {
       try await _declareDomain(srClassID: srClassID, on: participant)
+    }
+  }
+
+  private var _numberOfRegisteredTalkerAttributes: Int {
+    get async {
+      var numberOfTalkerAttributes = 0
+
+      await apply { participant in
+        numberOfTalkerAttributes += await participant.findAttributes(
+          attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
+          matching: .matchAny
+        ).count
+
+        numberOfTalkerAttributes += await participant.findAttributes(
+          attributeType: MSRPAttributeType.talkerFailed.rawValue,
+          matching: .matchAny
+        ).count
+      }
+
+      return numberOfTalkerAttributes
+    }
+  }
+
+  private var _isMaxTalkerAttributesRegistered: Bool {
+    get async {
+      guard _maxTalkerAttributes > 0 else { return false }
+      return await _numberOfRegisteredTalkerAttributes >= _maxTalkerAttributes
     }
   }
 }
