@@ -137,6 +137,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
   let _queues: [SRclassID: UInt]
 
   let _maxTalkerAttributes: Int
+  let _ignoreAsCapable: Bool
 
   fileprivate let _talkerPruning: Bool
   fileprivate let _maxFanInPorts: Int
@@ -160,6 +161,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     deltaBandwidths: [SRclassID: Int]? = nil,
     forceAvbCapable: Bool = false,
     configureQueues: Bool = false, // this will become a default after further testing
+    ignoreAsCapable: Bool = true,
     maxTalkerAttributes: Int = 150
   ) async throws {
     _controller = Weak(controller)
@@ -173,6 +175,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     _deltaBandwidths = deltaBandwidths ?? DefaultDeltaBandwidths
     _forceAvbCapable = forceAvbCapable
     _configureQueues = configureQueues
+    _ignoreAsCapable = ignoreAsCapable
     _maxTalkerAttributes = maxTalkerAttributes
     _mmrp = try? await controller.application(for: MMRPEtherType)
     try await controller.register(application: self)
@@ -1306,6 +1309,16 @@ extension MSRPApplication {
         )
       // don't recursively invoke MAP
       throw MRPError.doNotPropagateAttribute
+    }
+
+    if !_ignoreAsCapable {
+      guard await (try? port.isAsCapable) ?? false else {
+        _logger
+          .trace(
+            "MSRP: ignoring join indication for attribute \(attributeType) as port is not asCapable"
+          )
+        throw MRPError.doNotPropagateAttribute
+      }
     }
 
     switch attributeType {
