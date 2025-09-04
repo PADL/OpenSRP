@@ -1,8 +1,8 @@
-# SwiftMRP
+# OpenSRP
 
-SwiftMRP is an implementation of the 802.1Q SRP suite of protocols: MMRP, MVRP and MSRP. They are used in AVB/TSN networks to coordinate stream reservations amongst Ethernet bridges.
+OpenSRP is an implementation of the 802.1Q SRP suite of protocols: MMRP, MVRP and MSRP. They are used in AVB/TSN networks to coordinate stream reservations amongst Ethernet bridges.
 
-SwiftMRP's distinguishing features have less to do with being written in Swift (although that did facilitate its rapid development), but rather in being designed to support bridging, and doing so with the standard Linux kernel interfaces. The other open source SRP implementations (that the author has been able to find) typically support end-stations only, or use proprietary kernel interfaces.
+OpenSRP is supports bridging with the standard Linux kernel interfaces for forwarding entries and traffic control queueing. It also has a builtin REST server for mangement.
 
 ## Architecture
 
@@ -14,9 +14,9 @@ SwiftMRP's distinguishing features have less to do with being written in Swift (
 
 MMRP, MVRP, and MSRP are "applications" of the generalized MRP protocol and state machine. Aplications are responsible for responding to MRP registrations (e.g. by adding a FDB entry) and also propagating MRP declarations to other bridge ports.
 
-Note that whilst SwiftMRP does have a platform abstraction layer, the initial platform is Linux, and we would prefer to push switch-specific functionality into the kernel rather than separate platform backends.
+Note that whilst OpenSRP does have a platform abstraction layer, the initial platform is Linux, and we would prefer to push switch-specific functionality into the kernel rather than separate platform backends.
 
-Note: as Linux has an in-kernel MVRP applicant, `mrpd` does not automatically advertise statically configured VLANs. If you wish to do so, you should create a VLAN interface and set the `mvrp` flag to `on` using `ip link set dev` . (If you wish to send AVTP packets you should also read [this](https://tsn.readthedocs.io/vlan.html) document on configuring `egress-qos-map`. But bear in mind that SwiftMRP end-station support is incomplete at the time of writing.)
+Note: as Linux has an in-kernel MVRP applicant, `mrpd` does not automatically advertise statically configured VLANs. If you wish to do so, you should create a VLAN interface and set the `mvrp` flag to `on` using `ip link set dev` . (If you wish to send AVTP packets you should also read [this](https://tsn.readthedocs.io/vlan.html) document on configuring `egress-qos-map`. But bear in mind that OpenSRP end-station support is incomplete at the time of writing.)
 
 ## Configuring
 
@@ -55,7 +55,7 @@ OPTIONS:
   -n, --nf-group <nf-group>
                           NetFilter group (default: 10)
   -q, --q-disc-handle <q-disc-handle>
-                          QDisc handle (default: 36864)
+                          Qdisc handle (default: 36864)
   --force-avb-capable     Force ports to advertise as AVB capable
   --enable-talker-pruning Enable MSRP talker pruning
   --max-fan-in-ports <max-fan-in-ports>
@@ -68,6 +68,7 @@ OPTIONS:
                           MSRP SR class A delta bandwidth percentage
   --class-b-delta-bandwidth <class-b-delta-bandwidth>
                           MSRP SR class B delta bandwidth percentage
+  --configure-queues      Automatically configure MQPRIO queues
   --sr-p-vid <sr-p-vid>   Default MSRP SR PVID (default: 2)
   --exclude-iface <exclude-iface>
                           Exclude physical interface (may be specified multiple times)
@@ -80,6 +81,15 @@ OPTIONS:
   --enable-msrp           Enable MSRP
   --pmc-uds-path <pmc-uds-path>
                           PTP management client domain socket path
+  --join-time <join-time> MRP Join time interval (default: 0.2 seconds)
+  --leave-time <leave-time>
+                          MRP Leave time interval (default: 5.0 seconds)
+  --leave-all-time <leave-all-time>
+                          MRP LeaveAll time interval (default: 10.0 seconds)
+  --periodic-time <periodic-time>
+                          MRP Periodic TX time interval (default: 1.0 seconds)
+  -r, --rest-server-port <rest-server-port>
+                          REST HTTP server port (default: 80)
   -h, --help              Show help information.
 ```
 
@@ -105,14 +115,14 @@ Endpoints we are testing include:
 
 * MOTU Ultralite AVB (tested with i210 and MochaBIN)
 * MOTU M64 (tested with MochaBIN)
-* MOTU 16A (2025) (TBA)
+* MOTU 16A (2025) (tested with XEBRA)
 * macOS AVB stack (tested with i210)
-* XMOS lib\_tsn (TBA)
+* XMOS lib\_tsn (tested with XEBRA)
 * JOYNED lib\_joyned (TBA)
 
 Bridges we are testing transitively:
 
 * Luminex Gigacore 10i (tested)
-* Extreme x460-48p (TBA)
+* Extreme x460-48p (testing in progress)
 
 Please reach out to myself (lukeh `at` lukktone `dot` com) for further information.
