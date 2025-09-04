@@ -647,32 +647,21 @@ extension MSRPApplication {
       Double(100)
   }
 
-  private func _checkAvailableBandwidth(
+  func _calculateBandwidthUsed(
     participant: Participant<MSRPApplication>,
     portState: MSRPPortState<P>,
-    streamID: MSRPStreamID,
-    dataFrameParameters: MSRPDataFrameParameters,
-    tSpec: MSRPTSpec,
-    priorityAndRank: MSRPPriorityAndRank
-  ) async throws -> Bool {
+    provisionalTalker: MSRPTalkerAdvertiseValue? = nil
+  ) async throws -> [SRclassID: Int] {
     var bandwidthUsed = [SRclassID: Int]()
-
-    let port = participant.port
-    let provisionalTalker = MSRPTalkerAdvertiseValue(
-      streamID: streamID,
-      dataFrameParameters: dataFrameParameters,
-      tSpec: tSpec,
-      priorityAndRank: priorityAndRank,
-      accumulatedLatency: 0 // or this
-    )
-
-    let talkers = await participant.findAttributes(
+    var talkers = await participant.findAttributes(
       attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
       matching: .matchAny
-    ).filter {
-      ($0.1 as! MSRPTalkerAdvertiseValue).streamID != streamID
-    }
-    for talker in [provisionalTalker] + talkers.map({ $0.1 as! MSRPTalkerAdvertiseValue }) {
+    )
+    .map { $0.1 as! MSRPTalkerAdvertiseValue }
+    .filter { $0.streamID != provisionalTalker?.streamID }
+    if let provisionalTalker { talkers.append(provisionalTalker) }
+
+    for talker in talkers {
       guard let srClassID = portState
         .reverseMapSrClassPriority(priority: talker.priorityAndRank.dataFramePriority)
       else {
@@ -682,13 +671,39 @@ extension MSRPApplication {
         .classMeasurementInterval // number of intervals in usec
       let maxFrameRate = Int(talker.tSpec.maxIntervalFrames) *
         (1_000_000 / classMeasurementInterval) // number of frames per second
-      let bw = maxFrameRate * Int(tSpec.maxFrameSize) * 8 / 1000 // bandwidth used in kbps
+      let bw = maxFrameRate * Int(talker.tSpec.maxFrameSize) * 8 / 1000 // bandwidth used in kbps
       if let index = bandwidthUsed.index(forKey: srClassID) {
         bandwidthUsed.values[index] += bw
       } else {
         bandwidthUsed[srClassID] = bw
       }
     }
+
+    return bandwidthUsed
+  }
+
+  private func _checkAvailableBandwidth(
+    participant: Participant<MSRPApplication>,
+    portState: MSRPPortState<P>,
+    streamID: MSRPStreamID,
+    dataFrameParameters: MSRPDataFrameParameters,
+    tSpec: MSRPTSpec,
+    priorityAndRank: MSRPPriorityAndRank
+  ) async throws -> Bool {
+    let port = participant.port
+    let provisionalTalker = MSRPTalkerAdvertiseValue(
+      streamID: streamID,
+      dataFrameParameters: dataFrameParameters,
+      tSpec: tSpec,
+      priorityAndRank: priorityAndRank,
+      accumulatedLatency: 0 // or this
+    )
+
+    let bandwidthUsed = try await _calculateBandwidthUsed(
+      participant: participant,
+      portState: portState,
+      provisionalTalker: provisionalTalker
+    )
 
     for srClassID in SRclassID.allCases {
       guard _checkAvailableBandwidth(
