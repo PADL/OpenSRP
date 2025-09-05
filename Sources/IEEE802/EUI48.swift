@@ -90,3 +90,23 @@ public func _macAddressToString(_ macAddress: EUI48) -> String {
     _hexFormat(macAddress.4) +
     _hexFormat(macAddress.5, colonSuffix: false)
 }
+
+public func _stringToMacAddress(_ macString: String) -> EUI48? {
+  let components = macString.split(separator: ":")
+
+  // Only support colon-separated format: "01:02:03:04:05:06" (6 components)
+  guard components.count == 6 else {
+    return nil
+  }
+
+  let bytes = components.compactMap { component -> UInt8? in
+    guard component.count == 2 else { return nil }
+    return UInt8(component, radix: 16)
+  }
+
+  guard bytes.count == 6 else {
+    return nil
+  }
+
+  return (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5])
+}

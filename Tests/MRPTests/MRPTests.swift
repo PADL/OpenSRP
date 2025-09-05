@@ -114,6 +114,92 @@ final class MRPTests: XCTestCase {
     XCTAssertTrue(try! _isEqualMacAddress(eui48, UInt64(0x1FF).asEUI48()))
   }
 
+  func testStringToMacAddress() {
+    // Test valid colon-separated formats
+    let mac1 = _stringToMacAddress("01:02:03:04:05:06")
+    XCTAssertNotNil(mac1)
+    if let mac1 {
+      XCTAssertEqual(_macAddressToString(mac1), "01:02:03:04:05:06")
+    }
+
+    // Test lowercase hex
+    let mac2 = _stringToMacAddress("aa:bb:cc:dd:ee:ff")
+    XCTAssertNotNil(mac2)
+    if let mac2 {
+      XCTAssertEqual(_macAddressToString(mac2), "aa:bb:cc:dd:ee:ff")
+    }
+
+    // Test uppercase hex
+    let mac3 = _stringToMacAddress("AA:BB:CC:DD:EE:FF")
+    XCTAssertNotNil(mac3)
+    if let mac3 {
+      XCTAssertEqual(_macAddressToString(mac3), "aa:bb:cc:dd:ee:ff")
+    }
+
+    // Test mixed case
+    let mac4 = _stringToMacAddress("aA:bB:cC:dD:eE:fF")
+    XCTAssertNotNil(mac4)
+    if let mac4 {
+      XCTAssertEqual(_macAddressToString(mac4), "aa:bb:cc:dd:ee:ff")
+    }
+
+    // Test broadcast address
+    let mac5 = _stringToMacAddress("ff:ff:ff:ff:ff:ff")
+    XCTAssertNotNil(mac5)
+    if let mac5 {
+      XCTAssertEqual(_macAddressToString(mac5), "ff:ff:ff:ff:ff:ff")
+    }
+
+    // Test zero address
+    let mac6 = _stringToMacAddress("00:00:00:00:00:00")
+    XCTAssertNotNil(mac6)
+    if let mac6 {
+      XCTAssertEqual(_macAddressToString(mac6), "00:00:00:00:00:00")
+    }
+
+    // Test invalid formats - should all return nil
+
+    // No colons (not supported)
+    XCTAssertNil(_stringToMacAddress("010203040506"))
+
+    // Too short
+    XCTAssertNil(_stringToMacAddress("01:02:03:04:05"))
+
+    // Too long
+    XCTAssertNil(_stringToMacAddress("01:02:03:04:05:06:07"))
+
+    // Invalid hex characters
+    XCTAssertNil(_stringToMacAddress("zz:zz:zz:zz:zz:zz"))
+
+    // Single hex digit components
+    XCTAssertNil(_stringToMacAddress("1:2:3:4:5:6"))
+
+    // Three hex digit components
+    XCTAssertNil(_stringToMacAddress("001:002:003:004:005:006"))
+
+    // Empty string
+    XCTAssertNil(_stringToMacAddress(""))
+
+    // Only colons
+    XCTAssertNil(_stringToMacAddress(":::::"))
+
+    // Wrong number of colons
+    XCTAssertNil(_stringToMacAddress("01:02:03:04"))
+    XCTAssertNil(_stringToMacAddress("01:02:03:04:05:06:07:08"))
+
+    // Test round-trip conversion
+    if let original = _stringToMacAddress("01:23:45:67:89:ab") {
+      let converted = _macAddressToString(original)
+      if let roundTrip = _stringToMacAddress(converted) {
+        XCTAssertEqual(_macAddressToString(roundTrip), converted)
+      } else {
+        XCTFail("Failed to convert back from string")
+      }
+    } else {
+      XCTFail("Failed initial conversion")
+    }
+  }
+
   func testBasic() async throws {
     let logger = Logger(label: "com.padl.MRPTests")
     let bridge = MockBridge()

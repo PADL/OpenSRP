@@ -22,6 +22,7 @@ import FoundationEssentials
 import Foundation
 #endif
 import FlyingFox
+import IEEE802
 
 extension MRPController {
   // port IDs are opaque, identifiable, encodable types, so we cannot
@@ -49,12 +50,26 @@ extension MRPController {
     }?.0 // Only return the VLAN, not the residual URL
   }
 
+  func getMacAddress(_ url: URL) -> MMRPMACValue? {
+    url.extractParameter(after: "mac", as: MMRPMACValue.self) { macString in
+      guard let macAddress = _stringToMacAddress(macString) else { return nil }
+      return MMRPMACValue(macAddress: macAddress)
+    }?.0 // Only return the MAC, not the residual URL
+  }
+
   // Chain operations more cleanly
   func getPortAndVlan(_ request: HTTPRequest) -> (P, VLAN)? {
     guard let url = URL(string: request.path),
           let (port, residual) = getPort(url),
           let vlan = getVlan(residual) else { return nil }
     return (port, vlan)
+  }
+
+  func getPortAndMacAddress(_ request: HTTPRequest) -> (P, MMRPMACValue)? {
+    guard let url = URL(string: request.path),
+          let (port, residual) = getPort(url),
+          let mac = getMacAddress(residual) else { return nil }
+    return (port, mac)
   }
 
   // New: Generic multi-parameter extraction for streams
@@ -102,6 +117,15 @@ extension RestApiHandler {
       throw HTTPUnhandledError()
     }
     return portAndVlan
+  }
+
+  /// Validates and extracts port and MAC from request
+  func getPortAndMacAddress(from request: HTTPRequest) async throws -> (P, MMRPMACValue) {
+    let controller = try requireController()
+    guard let portAndMAC = await controller.getPortAndMacAddress(request) else {
+      throw HTTPUnhandledError()
+    }
+    return portAndMAC
   }
 
   /// Validates and extracts port and stream from request

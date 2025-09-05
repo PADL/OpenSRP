@@ -233,6 +233,11 @@ extension MMRPApplication {
 
 #if canImport(FlyingFox)
 extension MMRPApplication: RestApiApplication {
-  func registerRestApiHandlers(for httpServer: HTTPServer) async throws {}
+  func registerRestApiHandlers(for httpServer: HTTPServer) async throws {
+    let handler = MMRPHandler(application: self)
+
+    await httpServer.appendRoute("GET /api/avb/mmrp", to: handler)
+    await httpServer.appendRoute("GET /api/avb/mmrp/*", to: handler)
+  }
 }
 #endif
