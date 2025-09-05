@@ -211,15 +211,18 @@ private final class MRPDaemon: AsyncParsableCommand {
         deltaBandwidths[.B] = classBDeltaBandwidth
       }
       let queues: [SRclassID: UInt] = [.A: classAQdiscHandle, .B: classBQdiscHandle]
+      var flags: MSRPApplicationFlags = .defaultFlags
+      if enableTalkerPruning { flags.insert(.talkerPruning) }
+      if forceAvbCapable { flags.insert(.forceAvbCapable) }
+      if configureQueues { flags.insert(.configureQueues) }
+
       _ = try await MSRPApplication(
         controller: controller,
-        talkerPruning: enableTalkerPruning,
+        flags: flags,
         maxFanInPorts: maxFanInPorts,
         srPVid: VLAN(id: srPVid),
         queues: queues,
-        deltaBandwidths: deltaBandwidths.isEmpty ? nil : deltaBandwidths,
-        forceAvbCapable: forceAvbCapable,
-        configureQueues: configureQueues
+        deltaBandwidths: deltaBandwidths.isEmpty ? nil : deltaBandwidths
       )
     }
 

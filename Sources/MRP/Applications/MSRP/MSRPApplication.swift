@@ -24,6 +24,21 @@ import FlyingFox
 
 public let MSRPEtherType: UInt16 = 0x22EA
 
+public struct MSRPApplicationFlags: OptionSet, Sendable {
+  public typealias RawValue = UInt8
+
+  public let rawValue: RawValue
+
+  public init(rawValue: RawValue) { self.rawValue = rawValue }
+
+  public static let forceAvbCapable = Self(rawValue: 1 << 0)
+  public static let configureQueues = Self(rawValue: 1 << 1)
+  public static let ignoreAsCapable = Self(rawValue: 1 << 2)
+  public static let talkerPruning = Self(rawValue: 1 << 3)
+
+  public static let defaultFlags = Self([.ignoreAsCapable])
+}
+
 protocol MSRPAwareBridge<P>: Bridge where P: AVBPort {
   func configureQueues(
     port: P,
@@ -154,43 +169,40 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
   let _srPVid: VLAN
   let _deltaBandwidths: [SRclassID: Int]
   let _maxTalkerAttributes: Int
-  let _ignoreAsCapable: Bool
+  let _flags: MSRPApplicationFlags
 
-  fileprivate let _talkerPruning: Bool
   fileprivate let _maxFanInPorts: Int
   fileprivate let _maxSRClass: SRclassID
   fileprivate let _portStates = Mutex<[P.ID: MSRPPortState<P>]>([:])
   fileprivate let _mmrp: MMRPApplication<P>?
   fileprivate var _priorityMapNotificationTask: Task<(), Error>?
-  fileprivate let _forceAvbCapable: Bool
-  fileprivate let _configureQueues: Bool
+
+  // Convenience accessors for flags
+  fileprivate var _forceAvbCapable: Bool { _flags.contains(.forceAvbCapable) }
+  fileprivate var _configureQueues: Bool { _flags.contains(.configureQueues) }
+  var _ignoreAsCapable: Bool { _flags.contains(.ignoreAsCapable) }
+  fileprivate var _talkerPruning: Bool { _flags.contains(.talkerPruning) }
 
   public init(
     controller: MRPController<P>,
-    talkerPruning: Bool = false,
+    flags: MSRPApplicationFlags = .defaultFlags,
     maxFanInPorts: Int = 0,
     latencyMaxFrameSize: UInt16 = 2000,
     srPVid: VLAN = SR_PVID,
     maxSRClass: SRclassID = .B,
     queues: [SRclassID: UInt] = [.A: 4, .B: 3],
     deltaBandwidths: [SRclassID: Int]? = nil,
-    forceAvbCapable: Bool = false,
-    configureQueues: Bool = false, // this will become a default after further testing
-    ignoreAsCapable: Bool = true,
     maxTalkerAttributes: Int = 150
   ) async throws {
     _controller = Weak(controller)
     _logger = controller.logger
-    _talkerPruning = talkerPruning
+    _flags = flags
     _maxFanInPorts = maxFanInPorts
     _latencyMaxFrameSize = latencyMaxFrameSize
     _srPVid = srPVid
     _maxSRClass = maxSRClass
     _queues = queues
     _deltaBandwidths = deltaBandwidths ?? DefaultDeltaBandwidths
-    _forceAvbCapable = forceAvbCapable
-    _configureQueues = configureQueues
-    _ignoreAsCapable = ignoreAsCapable
     _maxTalkerAttributes = maxTalkerAttributes
     _mmrp = try? await controller.application(for: MMRPEtherType)
     try await controller.register(application: self)
