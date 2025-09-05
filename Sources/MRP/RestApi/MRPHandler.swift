@@ -26,10 +26,10 @@ import FlyingFox
 import FlyingFoxMacros
 
 @HTTPHandler
-struct MRPHandler<P: Port>: Sendable {
+struct MRPHandler<P: Port>: Sendable, RestApiHandler {
   private nonisolated let _controller: Weak<MRPController<P>>
 
-  private var controller: MRPController<P>? {
+  var controller: MRPController<P>? {
     _controller.object
   }
 
@@ -61,17 +61,15 @@ struct MRPHandler<P: Port>: Sendable {
 
   @JSONRoute("GET /api/avb/mrp/port", encoder: _getSnakeCaseJSONEncoder())
   func getPorts() async throws -> Array<Port> {
-    guard let controller else { throw HTTPUnhandledError() }
+    let controller = try requireController()
     return await controller.ports.asyncMap { Port(controller: controller, port: $0) }
   }
 
   @JSONRoute("GET /api/avb/mrp/port/:port", encoder: _getSnakeCaseJSONEncoder())
   func getPort(_ request: HTTPRequest) async throws -> Port {
-    guard let controller, let port = await controller.getPort(request) else {
-      throw HTTPUnhandledError()
-    }
-
-    return Port(controller: controller, port: port.0)
+    let controller = try requireController()
+    let (port, _) = try await getPort(from: request)
+    return Port(controller: controller, port: port)
   }
 
   @JSONRoute("GET /api/avb/mrp/port/:port/leave_time")

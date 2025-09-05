@@ -26,17 +26,17 @@ import FlyingFox
 import FlyingFoxMacros
 
 @HTTPHandler
-struct MVRPHandler<P: Port>: Sendable {
+struct MVRPHandler<P: Port>: Sendable, RestApiApplicationHandler {
   typealias Controller = MRPController<P>
   typealias Application = MVRPApplication<P>
 
   private nonisolated let _application: Weak<Application>
 
-  private var application: Application? {
+  var application: Application? {
     _application.object
   }
 
-  private var controller: Controller? {
+  var controller: Controller? {
     application?.controller
   }
 
@@ -82,7 +82,7 @@ struct MVRPHandler<P: Port>: Sendable {
 
   @JSONRoute("GET /api/avb/mvrp/port", encoder: _getSnakeCaseJSONEncoder())
   func getPorts() async throws -> Array<Port> {
-    guard let application else { throw HTTPUnhandledError() }
+    let application = try requireApplication()
     return await application.apply { participant in
       await Port(participant: participant)
     }
@@ -90,11 +90,8 @@ struct MVRPHandler<P: Port>: Sendable {
 
   @JSONRoute("GET /api/avb/mvrp/port/:port_number", encoder: _getSnakeCaseJSONEncoder())
   func getPort(_ request: HTTPRequest) async throws -> Port {
-    guard let application, let port = await controller?.getPort(request) else {
-      throw HTTPUnhandledError()
-    }
-
-    return try await Port(participant: application.findParticipant(port: port.0))
+    let (_, _, participant) = try await getApplicationPortAndParticipant(from: request)
+    return await Port(participant: participant)
   }
 
   @JSONRoute("GET /api/avb/mvrp/port/:port_number/vlan/:vid", encoder: _getSnakeCaseJSONEncoder())

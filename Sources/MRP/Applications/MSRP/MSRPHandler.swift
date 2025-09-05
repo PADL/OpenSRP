@@ -27,17 +27,17 @@ import FlyingFoxMacros
 import IEEE802
 
 @HTTPHandler
-struct MSRPHandler<P: AVBPort>: Sendable {
+struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
   typealias Controller = MRPController<P>
   typealias Application = MSRPApplication<P>
 
   private nonisolated let _application: Weak<Application>
 
-  private var application: Application? {
+  var application: Application? {
     _application.object
   }
 
-  private var controller: Controller? {
+  var controller: Controller? {
     application?.controller
   }
 
@@ -287,38 +287,32 @@ struct MSRPHandler<P: AVBPort>: Sendable {
 
   @JSONRoute("GET /api/avb/msrp", encoder: _getSnakeCaseJSONEncoder())
   func get() async throws -> Status {
-    guard let application else { throw HTTPUnhandledError() }
+    let application = try requireApplication()
     return try await Status(application: application)
   }
 
   @JSONRoute("GET /api/avb/msrp/ignore_as_capable", encoder: _getSnakeCaseJSONEncoder())
   func getIgnoreAsCapable() async throws -> Bool {
-    guard let application else { throw HTTPUnhandledError() }
+    let application = try requireApplication()
     return application._ignoreAsCapable
   }
 
   @JSONRoute("GET /api/avb/msrp/max_talker_attributes", encoder: _getSnakeCaseJSONEncoder())
   func getMaxTalkerAttributes() async throws -> Int {
-    guard let application else { throw HTTPUnhandledError() }
+    let application = try requireApplication()
     return application._maxTalkerAttributes
   }
 
   @JSONRoute("GET /api/avb/msrp/port", encoder: _getSnakeCaseJSONEncoder())
   func getPorts() async throws -> Array<Port> {
-    guard let application else { throw HTTPUnhandledError() }
+    let application = try requireApplication()
     return await application._getPorts()
   }
 
   @JSONRoute("GET /api/avb/msrp/port/:port_number", encoder: _getSnakeCaseJSONEncoder())
   func getPort(_ request: HTTPRequest) async throws -> Port {
-    guard let application, let port = await controller?.getPort(request) else {
-      throw HTTPUnhandledError()
-    }
-
-    return try await Port(
-      application: application,
-      participant: application.findParticipant(port: port.0)
-    )
+    let (application, _, participant) = try await getApplicationPortAndParticipant(from: request)
+    return await Port(application: application, participant: participant)
   }
 
   @JSONRoute("GET /api/avb/msrp/port/:port_number/as_capable", encoder: _getSnakeCaseJSONEncoder())
@@ -343,13 +337,7 @@ struct MSRPHandler<P: AVBPort>: Sendable {
 
   @JSONRoute("GET /api/avb/msrp/port/:port_number/listener", encoder: _getSnakeCaseJSONEncoder())
   func getListener(_ request: HTTPRequest) async throws -> Array<Listener> {
-    guard let application,
-          let port = await controller?.getPort(request),
-          let participant = try? application.findParticipant(port: port.0)
-    else {
-      throw HTTPUnhandledError()
-    }
-
+    let (_, _, participant) = try await getApplicationPortAndParticipant(from: request)
     return await participant._getListeners()
   }
 

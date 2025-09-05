@@ -25,8 +25,12 @@ import FlyingFox
 import FlyingFoxMacros
 
 @HTTPHandler
-struct DeviceHandler<P: Port>: Sendable {
+struct DeviceHandler<P: Port>: Sendable, RestApiHandler {
   private nonisolated let _controller: Weak<MRPController<P>>
+
+  var controller: MRPController<P>? {
+    _controller.object
+  }
 
   init(controller: MRPController<P>) {
     _controller = Weak(controller)
