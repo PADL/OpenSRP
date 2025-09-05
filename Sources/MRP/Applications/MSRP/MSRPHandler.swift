@@ -951,34 +951,35 @@ fileprivate extension MSRPApplication {
   // /api/avb/msrp/port/:port_number/{listener|talker|talker_failed}/:stream_id/... -> portID, streamID
   func _getPortAndStream(_ request: HTTPRequest) async -> (P, MSRPStreamID)? {
     guard let (port, residual) = await controller?.getPort(request) else { return nil }
-    guard residual.pathComponents.count > 1 else { return nil }
-    let streamIDString: String
 
-    switch residual.pathComponents[0] {
-    case "listener":
-      fallthrough
-    case "talker":
-      fallthrough
-    case "talker_failed":
-      streamIDString = residual.pathComponents[1]
+    // Remove only the first "/" component if present
+    var components = residual.pathComponents
+    if components.first == "/" {
+      components.removeFirst()
+    }
+    guard components.count > 1 else { return nil }
+
+    // Check if path goes through listener/talker/talker_failed
+    switch components[0] {
+    case "listener", "talker", "talker_failed":
+      let streamIDString = components[1]
+      let streamID = MSRPStreamID(stringLiteral: streamIDString)
+      guard streamID != 0 else { return nil }
+      return (port, streamID)
     default:
       return nil
     }
-
-    let streamID = MSRPStreamID(stringLiteral: streamIDString)
-    guard streamID != 0 else { return nil }
-    return (port, streamID)
   }
 
   // /api/avb/msrp/stream/:stream_id/.../port/:port_number/... -> streamID, portID
   func _getStreamAndPort(_ request: HTTPRequest) async -> (MSRPStreamID, P)? {
-    guard let controller else { return nil }
-    guard let url = URL(string: request.path) else { return nil }
-    guard let (streamIDString, residual) = url.getComponentPrecededBy("stream") else { return nil }
-    let streamID = MSRPStreamID(stringLiteral: streamIDString)
-    guard streamID != 0 else { return nil }
-    guard let (portString, _) = residual.getComponentPrecededBy("port") else { return nil }
-    guard let port = await controller._getPortByStringID(portString) else { return nil }
+    guard let url = URL(string: request.path),
+          let (streamID, residual) = url
+          .extractParameter(after: "stream", as: MSRPStreamID.self, validator: { streamString in
+            let id = MSRPStreamID(stringLiteral: streamString)
+            return id != 0 ? id : nil
+          }),
+          let (port, _) = await controller?.getPort(residual) else { return nil }
     return (streamID, port)
   }
 }

@@ -33,20 +33,30 @@ func _getSnakeCaseJSONEncoder() -> JSONEncoder {
 }
 
 extension URL {
-  func getComponentPrecededBy(_ string: String) -> (String, URL)? {
+  /// Generic path parameter extractor with validation
+  func extractParameter<T>(
+    after keyword: String,
+    as type: T.Type,
+    validator: (String) -> T?
+  ) -> (T, URL)? {
     let components = pathComponents
-    for i in 0..<components.count - 1 {
-      if components[i] == string {
-        let matchedComponent = components[i + 1]
-        let residualComponents = Array(components[(i + 2)...])
-        let residualPath = "/" + residualComponents.joined(separator: "/")
-        guard let residualURL = URL(string: residualPath) else {
-          return nil
-        }
-        return (matchedComponent, residualURL)
-      }
-    }
-    return nil
+    guard let keywordIndex = components.firstIndex(of: keyword),
+          keywordIndex + 1 < components.count else { return nil }
+
+    let parameterString = components[keywordIndex + 1]
+    guard let parameter = validator(parameterString) else { return nil }
+
+    // Build residual URL more efficiently
+    let residualComponents = Array(components.dropFirst(keywordIndex + 2))
+    let residualPath = "/" + residualComponents.joined(separator: "/")
+    guard let residualURL = URL(string: residualPath) else { return nil }
+
+    return (parameter, residualURL)
+  }
+
+  /// Optimized path component extraction
+  func getComponentPrecededBy(_ string: String) -> (String, URL)? {
+    extractParameter(after: string, as: String.self) { $0 }
   }
 }
 
@@ -56,13 +66,12 @@ extension MRPController {
   // for one whose string encoding matches.
 
   func _getPortByStringID(_ id: String) -> P? {
-    ports.first(where: { String(describing: $0.id) == id || $0.name == id })
+    ports.first { String(describing: $0.id) == id || $0.name == id }
   }
 
+  // Simplified with new URL extension
   func getPort(_ url: URL) -> (P, URL)? {
-    guard let (portString, residual) = url.getComponentPrecededBy("port") else { return nil }
-    guard let port = _getPortByStringID(portString) else { return nil }
-    return (port, residual)
+    url.extractParameter(after: "port", as: P.self) { _getPortByStringID($0) }
   }
 
   func getPort(_ request: HTTPRequest) -> (P, URL)? {
@@ -71,15 +80,33 @@ extension MRPController {
   }
 
   func getVlan(_ url: URL) -> VLAN? {
-    guard let (vlan, _) = url.getComponentPrecededBy("vlan") else { return nil }
-    guard let vlan = Int(vlan), let vlan = UInt16(exactly: vlan) else { return nil }
-    return VLAN(id: vlan)
+    url.extractParameter(after: "vlan", as: VLAN.self) { vlanString in
+      guard let vid = UInt16(vlanString) else { return nil }
+      return VLAN(id: vid)
+    }?.0 // Only return the VLAN, not the residual URL
   }
 
+  // Chain operations more cleanly
   func getPortAndVlan(_ request: HTTPRequest) -> (P, VLAN)? {
-    guard let (port, residual) = getPort(request) else { return nil }
-    guard let vlan = getVlan(residual) else { return nil }
+    guard let url = URL(string: request.path),
+          let (port, residual) = getPort(url),
+          let vlan = getVlan(residual) else { return nil }
     return (port, vlan)
+  }
+
+  // New: Generic multi-parameter extraction for streams
+  func getPortAndStream(_ request: HTTPRequest) -> (P, MSRPStreamID)? {
+    guard let url = URL(string: request.path),
+          let (port, residual) = getPort(url) else { return nil }
+
+    return residual.extractParameter(
+      after: "stream",
+      as: MSRPStreamID.self,
+      validator: { streamString in
+        let streamID = MSRPStreamID(stringLiteral: streamString)
+        return streamID != 0 ? streamID : nil
+      }
+    ).map { (port, $0.0) }
   }
 }
 
