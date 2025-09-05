@@ -381,62 +381,39 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     attributeType: AttributeType,
     matching filter: AttributeValueFilter
   ) -> [(AttributeSubtype?, any Value)] {
-    var attributeValues = [(AttributeSubtype?, any Value)]()
-
-    for attributeValue in _attributes[attributeType] ?? [] {
-      guard attributeValue.matches(attributeType: attributeType, matching: filter) else {
-        continue
+    (_attributes[attributeType] ?? [])
+      .filter {
+        $0.matches(attributeType: attributeType, matching: filter) && $0.registrarState != .MT
       }
-      guard attributeValue.registrarState != .MT else {
-        continue
-      }
-      attributeValues.append((
-        attributeValue.attributeSubtype,
-        attributeValue.unwrappedValue
-      ))
-    }
-
-    return attributeValues
+      .map { ($0.attributeSubtype, $0.unwrappedValue) }
   }
 
   func findAllAttributes(
     matching filter: AttributeValueFilter
   ) -> [AttributeValue] {
-    var attributeValues = [AttributeValue]()
-
-    for attributeValue in _attributes.values.flatMap({ $0 }) {
-      attributeValues.append(AttributeValue(
-        attributeType: attributeValue.attributeType,
-        attributeSubtype: attributeValue.attributeSubtype,
-        attributeValue: attributeValue.unwrappedValue,
-        applicantState: attributeValue.applicantState,
-        registrarState: attributeValue.registrarState
-      ))
-    }
-
-    return attributeValues
+    _attributes.values.flatMap { $0 }
+      .map { AttributeValue(
+        attributeType: $0.attributeType,
+        attributeSubtype: $0.attributeSubtype,
+        attributeValue: $0.unwrappedValue,
+        applicantState: $0.applicantState,
+        registrarState: $0.registrarState
+      ) }
   }
 
   func findAllAttributes(
     attributeType: AttributeType,
     matching filter: AttributeValueFilter
   ) -> [AttributeValue] {
-    var attributeValues = [AttributeValue]()
-
-    for attributeValue in _attributes[attributeType] ?? [] {
-      guard attributeValue.matches(attributeType: attributeType, matching: filter) else {
-        continue
-      }
-      attributeValues.append(AttributeValue(
+    (_attributes[attributeType] ?? [])
+      .filter { $0.matches(attributeType: attributeType, matching: filter) }
+      .map { AttributeValue(
         attributeType: attributeType,
-        attributeSubtype: attributeValue.attributeSubtype,
-        attributeValue: attributeValue.unwrappedValue,
-        applicantState: attributeValue.applicantState,
-        registrarState: attributeValue.registrarState
-      ))
-    }
-
-    return attributeValues
+        attributeSubtype: $0.attributeSubtype,
+        attributeValue: $0.unwrappedValue,
+        applicantState: $0.applicantState,
+        registrarState: $0.registrarState
+      ) }
   }
 
   public func leaveNow(
