@@ -22,6 +22,12 @@ import FoundationEssentials
 #else
 import Foundation
 #endif
+#if canImport(Darwin)
+import Darwin
+#endif
+#if canImport(Glibc)
+import Glibc
+#endif
 import FlyingFox
 import FlyingFoxMacros
 import IEEE802
@@ -120,7 +126,7 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
     let vid: UInt16
     let srClassID: UInt8
     let priority: UInt8
-    // let operIdleSlope: Int
+    let operIdleSlope: Int
 
     fileprivate init?(
       application: Application,
@@ -139,7 +145,30 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
       self.priority = priority
       let streams = streams.filter { $0.priority == priority }
       present = !streams.isEmpty
-      // operIdleSlope = 0 // FIXME: implement, will need list of streams
+
+      // Calculate operIdleSlope based on CBSParams.swift logic
+      operIdleSlope = Self._calculateOperIdleSlope(
+        application: application,
+        port: participant.port,
+        srClassID: srClassID,
+        streams: streams
+      )
+    }
+
+    private static func _calculateOperIdleSlope(
+      application: Application,
+      port: P,
+      srClassID: SRclassID,
+      streams: [Stream]
+    ) -> Int {
+      var idleslope = 0
+
+      for stream in streams {
+        idleslope += stream.bandwidth
+      }
+
+      // Convert from bits/sec to bits/ms for idle slope calculation
+      return Int(ceil(Double(idleslope) / 1000.0))
     }
   }
 
