@@ -175,7 +175,7 @@ let CommonTargets: [Target] = [
 ]
 
 let package = Package(
-  name: "SwiftMRP",
+  name: "OpenSRP",
   platforms: [
     .macOS(.v15),
   ],
