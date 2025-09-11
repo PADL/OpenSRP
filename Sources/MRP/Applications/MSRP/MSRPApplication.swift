@@ -539,7 +539,8 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     try await apply { participant in
       if let port, port != participant.port { return }
       try await join(
-        attributeType: declarationType.attributeType.rawValue,
+        attributeType: MSRPAttributeType.listener.rawValue,
+        attributeSubtype: declarationType.attributeSubtype?.rawValue,
         attributeValue: MSRPListenerValue(streamID: streamID),
         isNew: true,
         for: MAPBaseSpanningTreeContext
@@ -558,18 +559,16 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
   ) async throws {
     try await apply { participant in
       if let port, port != participant.port { return }
-      guard let listenerAttribute = await participant.findAttribute(
-        attributeType: MSRPAttributeType.listener.rawValue,
-        matching: .matchAny
-      ),
-        let declarationType = try MSRPDeclarationType(attributeSubtype: listenerAttribute.0)
-      else {
-        return
-      }
+
+      guard let listenerRegistration = await _findListenerRegistration(
+        for: streamID,
+        participant: participant
+      ) else { return }
 
       try await leave(
-        attributeType: declarationType.attributeType.rawValue,
-        attributeValue: MSRPListenerValue(streamID: streamID),
+        attributeType: MSRPAttributeType.listener.rawValue,
+        attributeSubtype: listenerRegistration.1.rawValue,
+        attributeValue: listenerRegistration.0,
         for: MAPBaseSpanningTreeContext
       )
     }
@@ -785,9 +784,7 @@ extension MSRPApplication {
       if let existingTalkerRegistration = await _findTalkerRegistration(
         for: streamID,
         participant: participant
-      )?.1,
-        existingTalkerRegistration.dataFrameParameters != dataFrameParameters
-      {
+      ), existingTalkerRegistration.dataFrameParameters != dataFrameParameters {
         _logger
           .error(
             "MSRP: stream \(streamID) is already registered on port \(port) with \(dataFrameParameters)"
@@ -1015,11 +1012,17 @@ extension MSRPApplication {
 
     // however, after processing existing listener registrations for a talker
     // that didn't exist previously, we do need to update port parameters on
-    // each of our _talker_ ports
+    // each talker port that matches the listener stream ID
     await apply(for: contextIdentifier) { participant in
+      guard let listenerRegistration = await _findListenerRegistration(
+        for: talkerValue.streamID,
+        participant: participant
+      ) else {
+        return
+      }
       try? await _updatePortParameters(
         port: participant.port,
-        streamID: talkerValue.streamID,
+        streamID: listenerRegistration.0.streamID,
         mergedDeclarationType: mergedDeclarationType,
         talkerRegistration: (talkerParticipant, talkerValue)
       )
@@ -1074,20 +1077,39 @@ extension MSRPApplication {
     return mergedDeclarationType
   }
 
+  private func _findListenerRegistration(
+    for streamID: MSRPStreamID,
+    participant: Participant<MSRPApplication>
+  ) async -> (MSRPListenerValue, MSRPAttributeSubtype)? {
+    guard let listenerAttribute = await participant.findAttribute(
+      attributeType: MSRPAttributeType.listener.rawValue,
+      matching: .matchAnyIndex(streamID.index)
+    ) else { return nil }
+
+    guard let listenerValue = listenerAttribute.1 as? MSRPListenerValue,
+          let attributeSubtype = listenerAttribute.0,
+          let listenerDeclarationType = MSRPAttributeSubtype(rawValue: attributeSubtype)
+    else {
+      return nil
+    }
+
+    return (listenerValue, listenerDeclarationType)
+  }
+
   private func _findTalkerRegistration(
     for streamID: MSRPStreamID,
     participant: Participant<MSRPApplication>
-  ) async -> TalkerRegistration? {
+  ) async -> (any MSRPTalkerValue)? {
     if let value = await participant.findAttribute(
       attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
       matching: .matchAnyIndex(streamID.index)
     ) {
-      (participant, value.1 as! (any MSRPTalkerValue))
+      value.1 as? (any MSRPTalkerValue)
     } else if let value = await participant.findAttribute(
       attributeType: MSRPAttributeType.talkerFailed.rawValue,
       matching: .matchAnyIndex(streamID.index)
     ) {
-      (participant, value.1 as! (any MSRPTalkerValue))
+      value.1 as? (any MSRPTalkerValue)
     } else {
       nil
     }
@@ -1099,14 +1121,14 @@ extension MSRPApplication {
     var talkerRegistration: TalkerRegistration?
 
     await apply { participant in
-      guard let participantTalkerRegistration = await _findTalkerRegistration(
+      guard let participantTalker = await _findTalkerRegistration(
         for: streamID,
         participant: participant
       ) else {
         return
       }
       if talkerRegistration == nil {
-        talkerRegistration = participantTalkerRegistration
+        talkerRegistration = (participant, participantTalker)
       }
     }
 
@@ -1520,14 +1542,14 @@ extension MSRPApplication {
       guard participant.port != port else { return } // don't propagate to source port
 
       // If this participant has active listeners, propagate a leave back to the talker
-      if let listenerAttribute = await participant.findAttribute(
-        attributeType: MSRPAttributeType.listener.rawValue,
-        matching: .matchEqual(MSRPListenerValue(streamID: streamID))
+      if let listenerRegistration = await _findListenerRegistration(
+        for: streamID,
+        participant: participant
       ) {
         try await talkerParticipant.leave(
           attributeType: MSRPAttributeType.listener.rawValue,
-          attributeSubtype: listenerAttribute.0,
-          attributeValue: listenerAttribute.1,
+          attributeSubtype: listenerRegistration.1.rawValue,
+          attributeValue: listenerRegistration.0,
           eventSource: .map
         )
 
