@@ -943,29 +943,12 @@ Sendable, Hashable, Equatable,
     eventSource: EventSource,
     replacingAttributeSubtype subtype: AttributeSubtype? = nil
   ) async throws {
-    if let subtype,
-       event == .New || event == .Join || event == .rNew || event == .rJoinIn || event == .rJoinMt
-    {
-      // fast path for MSRP pre-applicant event handler: silently replace attribute
-      // subtypes as if the Listener declaration had been withdrawn and
-      // replaced by the updated Listener declaration (35.2.6)
-      if let participant {
-        participant._logger
-          .trace(
-            "\(participant): force updating attribute subtype \(attributeSubtype != nil ? String(describing: attributeSubtype!) : "<nil>") -> \(subtype)"
-          )
-      }
-      attributeSubtype = subtype
-    }
+    // fast path for MSRP pre-applicant event handler: silently replace attribute
+    // subtypes as if the Listener declaration had been withdrawn and
+    // replaced by the updated Listener declaration (35.2.6)
+    if let subtype { attributeSubtype = subtype }
 
     let context = try await _getEventContext(for: event, eventSource: eventSource)
-
-    if let subtype, attributeSubtype != subtype {
-      context.participant._logger
-        .error(
-          "\(context.participant): attribute subtype \(attributeSubtype != nil ? String(describing: attributeSubtype!) : "<nil>") replaced with \(subtype) on inappropriate protocol event \(event)"
-        )
-    }
 
     try await _handleRegistrar(context: context)
     try await _handleApplicant(context: context)
