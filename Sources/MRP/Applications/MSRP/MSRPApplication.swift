@@ -979,6 +979,48 @@ extension MSRPApplication {
         )
       }
     }
+
+    // Accommodate the race condition where a listener is registered before a
+    // talker, by updating existing listener port parameters.
+    if isNew {
+      await _updateExistingListenersForNewTalker(
+        contextIdentifier: contextIdentifier,
+        talkerPort: port,
+        talkerValue: talkerValue,
+        eventSource: eventSource
+      )
+    }
+  }
+
+  private func _updateExistingListenersForNewTalker(
+    contextIdentifier: MAPContextIdentifier,
+    talkerPort port: P,
+    talkerValue: any MSRPTalkerValue,
+    eventSource: EventSource
+  ) async {
+    guard let talkerParticipant = try? findParticipant(port: port) else { return }
+
+    await apply(for: contextIdentifier) { participant in
+      // Find all existing listener registrations for this stream
+      let listeners = await participant.findAttributes(
+        attributeType: MSRPAttributeType.listener.rawValue,
+        matching: .matchEqual(MSRPListenerValue(streamID: talkerValue.streamID))
+      )
+
+      for (attributeSubtype, _) in listeners {
+        guard let declarationType = try? MSRPDeclarationType(attributeSubtype: attributeSubtype)
+        else { continue }
+
+        try? await _propagateListenerDeclarationToTalker(
+          contextIdentifier: contextIdentifier,
+          listenerPort: participant.port,
+          declarationType: declarationType,
+          isNew: false,
+          eventSource: eventSource,
+          talkerRegistration: (talkerParticipant, talkerValue)
+        )
+      }
+    }
   }
 
   private func _mergeListener(
@@ -1071,11 +1113,12 @@ extension MSRPApplication {
   private func _mergeListenerDeclarations(
     contextIdentifier: MAPContextIdentifier,
     port: P,
-    streamID: MSRPStreamID,
     declarationType: MSRPDeclarationType,
     talkerRegistration: TalkerRegistration,
     isJoin: Bool
   ) async throws -> MSRPDeclarationType? {
+    let streamID = talkerRegistration.1.streamID
+
     var mergedDeclarationType: MSRPDeclarationType? = if isJoin {
       if talkerRegistration.1 is MSRPTalkerFailedValue {
         .listenerAskingFailed
@@ -1275,6 +1318,62 @@ extension MSRPApplication {
     }
   }
 
+  private func _propagateListenerDeclarationToTalker(
+    contextIdentifier: MAPContextIdentifier,
+    listenerPort port: P,
+    declarationType: MSRPDeclarationType,
+    isNew: Bool,
+    eventSource: EventSource,
+    talkerRegistration: TalkerRegistration
+  ) async throws {
+    // point-to-point talker registrations should not come from the same port as the listener
+    if port.isPointToPoint, talkerRegistration.0.port == port {
+      _logger
+        .error(
+          "MSRP: talker registration \(talkerRegistration) found on listener port \(port), ignoring"
+        )
+      return
+    }
+
+    if talkerRegistration.1 is MSRPTalkerFailedValue {
+      _logger
+        .trace(
+          "MSRP: talker registration \(talkerRegistration) is talker failed, will not propagate listener ready"
+        )
+    }
+
+    // TL;DR: propagate merged Listener declarations to _talker_ port
+    let mergedDeclarationType = try await _mergeListenerDeclarations(
+      contextIdentifier: contextIdentifier,
+      port: port,
+      declarationType: declarationType,
+      talkerRegistration: talkerRegistration,
+      isJoin: true
+    )
+    precondition(mergedDeclarationType != nil) // should be non-nil because isJoin
+
+    let streamID = talkerRegistration.1.streamID
+
+    _logger
+      .info(
+        "MSRP: propagating listener declaration from port \(port) streamID \(streamID) declarationType \(declarationType) -> \(mergedDeclarationType != nil ? String(describing: mergedDeclarationType!) : "<nil>") to participant \(talkerRegistration.0)"
+      )
+
+    try await talkerRegistration.0.join(
+      attributeType: MSRPAttributeType.listener.rawValue,
+      attributeSubtype: mergedDeclarationType!.attributeSubtype!.rawValue,
+      attributeValue: MSRPListenerValue(streamID: streamID),
+      isNew: isNew,
+      eventSource: .map
+    )
+    try await _updatePortParameters(
+      port: port,
+      streamID: streamID,
+      mergedDeclarationType: mergedDeclarationType,
+      talkerRegistration: talkerRegistration
+    )
+  }
+
   // On receipt of a MAD_Join.indication service primitive (10.2, 10.3) with an
   // attribute_type of Listener (35.2.2.4), the MSRP application shall issue a
   // REGISTER_ATTACH.indication to the Talker application entity. The
@@ -1296,49 +1395,12 @@ extension MSRPApplication {
       return
     }
 
-    // point-to-point talker registrations should not come from the same port as the listener
-    if port.isPointToPoint, talkerRegistration.0.port == port {
-      _logger
-        .error(
-          "MSRP: talker registration \(talkerRegistration) found on listener port \(port), ignoring"
-        )
-      return
-    }
-
-    if talkerRegistration.1 is MSRPTalkerFailedValue {
-      _logger
-        .trace(
-          "MSRP: talker registration \(talkerRegistration) is talker failed, will not propagate listener ready"
-        )
-    }
-
-    // TL;DR: propagate merged Listener declarations to _talker_ port
-    let mergedDeclarationType = try await _mergeListenerDeclarations(
+    try await _propagateListenerDeclarationToTalker(
       contextIdentifier: contextIdentifier,
-      port: port,
-      streamID: streamID,
+      listenerPort: port,
       declarationType: declarationType,
-      talkerRegistration: talkerRegistration,
-      isJoin: true
-    )
-    precondition(mergedDeclarationType != nil) // should be non-nil because isJoin
-
-    _logger
-      .info(
-        "MSRP: register attach indication from port \(port) streamID \(streamID) declarationType \(declarationType) -> \(mergedDeclarationType != nil ? String(describing: mergedDeclarationType!) : "<nil>") to participant \(talkerRegistration.0)"
-      )
-
-    try await talkerRegistration.0.join(
-      attributeType: MSRPAttributeType.listener.rawValue,
-      attributeSubtype: mergedDeclarationType!.attributeSubtype!.rawValue,
-      attributeValue: MSRPListenerValue(streamID: streamID),
       isNew: isNew,
-      eventSource: .map
-    )
-    try await _updatePortParameters(
-      port: port,
-      streamID: streamID,
-      mergedDeclarationType: mergedDeclarationType,
+      eventSource: eventSource,
       talkerRegistration: talkerRegistration
     )
   }
@@ -1512,7 +1574,6 @@ extension MSRPApplication {
     let mergedDeclarationType = try await _mergeListenerDeclarations(
       contextIdentifier: contextIdentifier,
       port: port,
-      streamID: streamID,
       declarationType: declarationType,
       talkerRegistration: talkerRegistration,
       isJoin: false
