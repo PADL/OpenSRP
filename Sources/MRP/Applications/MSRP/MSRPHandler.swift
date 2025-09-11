@@ -209,7 +209,7 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
           nil
         }
 
-        connected = subtype == .ready && (attributeValue.registrarState?.isRegistered ?? false)
+        connected = subtype == .ready
 
         type = switch subtype {
         case .ready: "ready"
@@ -948,7 +948,9 @@ fileprivate extension Participant where A.P: AVBPort {
     findAllAttributes(
       attributeType: MSRPAttributeType.listener.rawValue,
       matching: .matchIndex(streamID)
-    ).map { MSRPHandler<A.P>.Stream.Listener(
+    )
+    .filter { $0.registrarState?.isRegistered == true }
+    .map { MSRPHandler<A.P>.Stream.Listener(
       participant: self as! Participant<MSRPApplication<A.P>>,
       attributeValue: $0
     ) }.first
