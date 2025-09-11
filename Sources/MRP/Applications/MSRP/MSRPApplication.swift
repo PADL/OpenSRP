@@ -1016,9 +1016,9 @@ extension MSRPApplication {
     // however, after processing existing listener registrations for a talker
     // that didn't exist previously, we do need to update port parameters on
     // each of our _talker_ ports
-    await apply(for: contextIdentifier) { _ in
+    await apply(for: contextIdentifier) { participant in
       try? await _updatePortParameters(
-        port: port,
+        port: participant.port,
         streamID: talkerValue.streamID,
         mergedDeclarationType: mergedDeclarationType,
         talkerRegistration: (talkerParticipant, talkerValue)
