@@ -1244,12 +1244,13 @@ extension MSRPApplication {
       matching: .matchAny
     ).map { $0.1 as! MSRPTalkerAdvertiseValue })
 
-    // Remove the specific talker stream if no listeners or listener asking failed
+    // Remove the specific talker stream that is the subject of this
+    // registration or deregistration; we will add it back conditionally
     if let index = talkers.firstIndex(where: { $0.streamID == talkerRegistration.streamID }) {
       talkers.remove(at: index)
     }
 
-    // Only add it back if there are active listeners
+    // Only add it back if there are active listeners for this talker
     if let talkerRegistration = talkerRegistration as? MSRPTalkerAdvertiseValue,
        declarationType == .listenerReady || declarationType == .listenerReadyFailed
     {
