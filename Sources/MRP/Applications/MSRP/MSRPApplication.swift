@@ -1361,31 +1361,30 @@ extension MSRPApplication {
     }
 
     // TL;DR: propagate merged Listener declarations to _talker_ port
-    let mergedDeclarationType = try await _mergeListenerDeclarations(
+    guard let mergedDeclarationType = try await _mergeListenerDeclarations(
       contextIdentifier: contextIdentifier,
       port: port,
       declarationType: declarationType,
       talkerRegistration: talkerRegistration,
       isJoin: true
-    )
-    precondition(mergedDeclarationType != nil) // should be non-nil because isJoin
+    ) else { return nil }
 
     let streamID = talkerRegistration.1.streamID
 
     _logger
       .info(
-        "MSRP: propagating listener declaration streamID \(streamID) declarationType \(declarationType != nil ? String(describing: declarationType!) : "<nil>") -> \(mergedDeclarationType != nil ? String(describing: mergedDeclarationType!) : "<nil>") to participant \(talkerRegistration.0)"
+        "MSRP: propagating listener declaration streamID \(streamID) declarationType \(declarationType != nil ? String(describing: declarationType!) : "<nil>") -> \(mergedDeclarationType) to participant \(talkerRegistration.0)"
       )
 
     try await talkerRegistration.0.join(
       attributeType: MSRPAttributeType.listener.rawValue,
-      attributeSubtype: mergedDeclarationType!.attributeSubtype!.rawValue,
+      attributeSubtype: mergedDeclarationType.attributeSubtype!.rawValue,
       attributeValue: MSRPListenerValue(streamID: streamID),
       isNew: isNew,
       eventSource: .map
     )
 
-    return mergedDeclarationType!
+    return mergedDeclarationType
   }
 
   // On receipt of a MAD_Join.indication service primitive (10.2, 10.3) with an
