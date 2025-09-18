@@ -71,22 +71,22 @@ public protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
     from deserializationContext: inout DeserializationContext
   ) throws -> any Value
 
-  func joinIndicated<V: Value>(
+  func joinIndicated(
     contextIdentifier: MAPContextIdentifier,
     port: P,
     attributeType: AttributeType,
     attributeSubtype: AttributeSubtype?,
-    attributeValue: V,
+    attributeValue: some Value,
     isNew: Bool,
     eventSource: EventSource
   ) async throws
 
-  func leaveIndicated<V: Value>(
+  func leaveIndicated(
     contextIdentifier: MAPContextIdentifier,
     port: P,
     attributeType: AttributeType,
     attributeSubtype: AttributeSubtype?,
-    attributeValue: V,
+    attributeValue: some Value,
     eventSource: EventSource
   ) async throws
 }
