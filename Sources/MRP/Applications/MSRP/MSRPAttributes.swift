@@ -112,11 +112,11 @@ struct MSRPTalkerAdvertiseValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equ
     self.accumulatedLatency = accumulatedLatency
   }
 
-  public func serialize(into serializationContext: inout SerializationContext) throws {
+  func serialize(into serializationContext: inout SerializationContext) throws {
     try _serialize(into: &serializationContext)
   }
 
-  public init(deserializationContext: inout DeserializationContext) throws {
+  init(deserializationContext: inout DeserializationContext) throws {
     streamID = try MSRPStreamID(deserializationContext: &deserializationContext)
     dataFrameParameters =
       try MSRPDataFrameParameters(deserializationContext: &deserializationContext)
@@ -135,7 +135,7 @@ struct MSRPTalkerAdvertiseValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equ
     )
   }
 
-  public func makeValue(relativeTo index: UInt64) throws -> Self {
+  func makeValue(relativeTo index: UInt64) throws -> Self {
     try Self(
       streamID: streamID.makeValue(relativeTo: index),
       dataFrameParameters: dataFrameParameters.makeValue(relativeTo: index),
@@ -181,13 +181,13 @@ struct MSRPTalkerFailedValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equata
     self.failureCode = failureCode
   }
 
-  public func serialize(into serializationContext: inout SerializationContext) throws {
+  func serialize(into serializationContext: inout SerializationContext) throws {
     try _serialize(into: &serializationContext)
     serializationContext.serialize(uint64: systemID)
     try failureCode.serialize(into: &serializationContext)
   }
 
-  public init(deserializationContext: inout DeserializationContext) throws {
+  init(deserializationContext: inout DeserializationContext) throws {
     streamID = try MSRPStreamID(deserializationContext: &deserializationContext)
     dataFrameParameters =
       try MSRPDataFrameParameters(deserializationContext: &deserializationContext)
@@ -210,7 +210,7 @@ struct MSRPTalkerFailedValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equata
     )
   }
 
-  public func makeValue(relativeTo index: UInt64) throws -> Self {
+  func makeValue(relativeTo index: UInt64) throws -> Self {
     try Self(
       streamID: streamID.makeValue(relativeTo: index),
       dataFrameParameters: dataFrameParameters.makeValue(relativeTo: index),
@@ -234,19 +234,19 @@ struct MSRPListenerValue: Value, Equatable {
     self.streamID = streamID
   }
 
-  public func serialize(into serializationContext: inout SerializationContext) throws {
+  func serialize(into serializationContext: inout SerializationContext) throws {
     try streamID.serialize(into: &serializationContext)
   }
 
-  public init(deserializationContext: inout DeserializationContext) throws {
+  init(deserializationContext: inout DeserializationContext) throws {
     streamID = try MSRPStreamID(deserializationContext: &deserializationContext)
   }
 
-  public init() {
+  init() {
     self.init(streamID: 0)
   }
 
-  public func makeValue(relativeTo index: UInt64) throws -> Self {
+  func makeValue(relativeTo index: UInt64) throws -> Self {
     try Self(streamID: streamID.makeValue(relativeTo: index))
   }
 }
@@ -297,7 +297,7 @@ struct MSRPDomainValue: Value, Equatable {
     self.init(srClassID: .B, srClassPriority: .EE, srClassVID: SR_PVID.vid)
   }
 
-  public func makeValue(relativeTo index: UInt64) throws -> Self {
+  func makeValue(relativeTo index: UInt64) throws -> Self {
     let srClassID = UInt64(srClassID.rawValue) + index
     guard srClassID <= SRclassID.A.rawValue else {
       throw MRPError.invalidSRclassID
