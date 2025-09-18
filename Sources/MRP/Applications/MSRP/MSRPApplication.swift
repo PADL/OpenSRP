@@ -979,17 +979,15 @@ extension MSRPApplication {
 
     // Accommodate the race condition where a listener is registered before a
     // talker, by updating existing listener port parameters.
-    if isNew {
-      await _updateExistingListenersForNewTalker(
-        contextIdentifier: contextIdentifier,
-        talkerPort: port,
-        talkerValue: talkerValue,
-        eventSource: eventSource
-      )
-    }
+    await _updateExistingListeners(
+      contextIdentifier: contextIdentifier,
+      talkerPort: port,
+      talkerValue: talkerValue,
+      eventSource: eventSource
+    )
   }
 
-  private func _updateExistingListenersForNewTalker(
+  private func _updateExistingListeners(
     contextIdentifier: MAPContextIdentifier,
     talkerPort port: P,
     talkerValue: any MSRPTalkerValue,
