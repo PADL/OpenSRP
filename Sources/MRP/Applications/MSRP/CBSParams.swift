@@ -89,19 +89,19 @@ extension MSRPAwareBridge {
     streams: [SRclassID: [MSRPTSpec]],
     srClassID: SRclassID
   ) throws -> (Int, Int) {
-    var idleslope = 0
+    var idleslope: Double = 0.0
     var maxFrameSize = 0
 
     for stream in streams[srClassID] ?? [] {
       let frameSize = min(calcFrameSize(stream), application._latencyMaxFrameSize)
       let classMeasurementInterval = try srClassID.classMeasurementInterval
 
-      let maxFrameRate = Int(stream.maxIntervalFrames) * (1_000_000 / classMeasurementInterval)
-      idleslope += maxFrameRate * Int(frameSize) * 8 / 1000
+      let maxFrameRate = Double(stream.maxIntervalFrames) * (1_000_000.0 / Double(classMeasurementInterval))
+      idleslope += maxFrameRate * Double(frameSize) * 8.0 / 1000.0
       maxFrameSize = max(maxFrameSize, Int(frameSize))
     }
 
-    return (maxFrameSize, Int(ceil(Double(idleslope))))
+    return (maxFrameSize, Int(ceil(idleslope)))
   }
 
   func adjustCreditBasedShaper(
