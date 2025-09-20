@@ -682,11 +682,14 @@ extension MSRPApplication {
     else {
       return 0
     }
-    let classMeasurementInterval = try srClassID
-      .classMeasurementInterval // number of intervals in usec
-    let maxFrameRate = Int(talker.tSpec.maxIntervalFrames) *
-      (1_000_000 / classMeasurementInterval) // number of frames per second
-    return maxFrameRate * Int(talker.tSpec.maxFrameSize) * 8 / 1000 // bandwidth used in kbps
+
+    let (_, bandwidthUsed) = try calculateBandwidthUsed(
+      srClassID: srClassID,
+      tSpec: talker.tSpec,
+      maxFrameSize: _latencyMaxFrameSize
+    )
+
+    return bandwidthUsed
   }
 
   func _calculateBandwidthUsed(

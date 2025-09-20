@@ -49,7 +49,7 @@ extension MSRPAwareBridge {
     sendslopeA: Int,
     linkSpeed: Int,
     frameNonSr: Int,
-    maxFrameSizeA: Int
+    maxFrameSizeA: UInt16
   ) -> (Int, Int) {
     // According to 802.1Q-2014 spec, Annex L, hiCredit and
     // loCredit for SR class A are calculated following the
@@ -65,8 +65,8 @@ extension MSRPAwareBridge {
     sendslopeB: Int,
     linkSpeed: Int,
     frameNonSr: Int,
-    maxFrameSizeA: Int,
-    maxFrameSizeB: Int
+    maxFrameSizeA: UInt16,
+    maxFrameSizeB: UInt16
   ) -> (Int, Int) {
     let hicredit = Int(ceil(
       Double(idleslopeB) *
@@ -79,29 +79,26 @@ extension MSRPAwareBridge {
     return (hicredit, locredit)
   }
 
-  private func calcFrameSize(_ stream: MSRPTSpec) -> UInt16 {
-    stream.maxFrameSize + VLAN_OVERHEAD + L2_OVERHEAD + L1_OVERHEAD + 1
-  }
-
-  private func calcSrClassParams(
+  private static func calcSrClassParams(
     application: MSRPApplication<P>,
     portState: MSRPPortState<P>,
     streams: [SRclassID: [MSRPTSpec]],
     srClassID: SRclassID
-  ) throws -> (Int, Int) {
-    var idleslope: Double = 0.0
-    var maxFrameSize = 0
+  ) throws -> (UInt16, Int) {
+    var idleslope = 0
+    var maxFrameSize = UInt16(0)
 
     for stream in streams[srClassID] ?? [] {
-      let frameSize = min(calcFrameSize(stream), application._latencyMaxFrameSize)
-      let classMeasurementInterval = try srClassID.classMeasurementInterval
-
-      let maxFrameRate = Double(stream.maxIntervalFrames) * (1_000_000.0 / Double(classMeasurementInterval))
-      idleslope += maxFrameRate * Double(frameSize) * 8.0 / 1000.0
-      maxFrameSize = max(maxFrameSize, Int(frameSize))
+      let (frameSize, bandwidthUsed) = try calculateBandwidthUsed(
+        srClassID: srClassID,
+        tSpec: stream,
+        maxFrameSize: application._latencyMaxFrameSize
+      )
+      idleslope += bandwidthUsed
+      maxFrameSize = max(maxFrameSize, frameSize)
     }
 
-    return (maxFrameSize, Int(ceil(idleslope)))
+    return (maxFrameSize, idleslope)
   }
 
   func adjustCreditBasedShaper(
@@ -124,7 +121,7 @@ extension MSRPAwareBridge {
       }
       return
     }
-    let (maxFrameSizeA, idleslopeA) = try! calcSrClassParams(
+    let (maxFrameSizeA, idleslopeA) = try! Self.calcSrClassParams(
       application: application,
       portState: portState,
       streams: streams,
@@ -155,7 +152,7 @@ extension MSRPAwareBridge {
       )
     }
 
-    let (maxFrameSizeB, idleslopeB) = try! calcSrClassParams(
+    let (maxFrameSizeB, idleslopeB) = try! Self.calcSrClassParams(
       application: application,
       portState: portState,
       streams: streams,
@@ -188,4 +185,20 @@ extension MSRPAwareBridge {
       )
     }
   }
+}
+
+func calculateBandwidthUsed(
+  srClassID: SRclassID,
+  tSpec: MSRPTSpec,
+  maxFrameSize: UInt16
+) throws -> (UInt16, Int) {
+  var frameSize = tSpec.maxFrameSize + VLAN_OVERHEAD + L2_OVERHEAD + L1_OVERHEAD + 1
+  if frameSize > maxFrameSize { frameSize = maxFrameSize }
+  let classMeasurementInterval = try srClassID
+    .classMeasurementInterval // number of intervals in usec
+  let maxFrameRate = Double(tSpec.maxIntervalFrames) *
+    (1_000_000.0 / Double(classMeasurementInterval)) // number of frames per second
+  let bandwidthUsed = maxFrameRate * Double(frameSize) * 8.0 / 1000.0 // bandwidth used in kbps
+
+  return (frameSize, Int(ceil(bandwidthUsed)))
 }
