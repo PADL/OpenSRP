@@ -1038,6 +1038,33 @@ final class MRPTests: XCTestCase {
     XCTAssertEqual(applicant.description, "VP")
   }
 
+  func testCalculateBandwidthUsed8000PacketsPerSecond() throws {
+    // Test for a stream with 8000 packets per second and frame size of 224 bytes
+    let srClassID = SRclassID.A // Class A has 125 microsecond intervals (8000 Hz)
+    let tSpec = MSRPTSpec(maxFrameSize: 224, maxIntervalFrames: 1) // 1 frame per 125us = 8000 fps
+    let maxFrameSize: UInt16 = 1500
+
+    let (frameSize, bandwidthUsed) = try calculateBandwidthUsed(
+      srClassID: srClassID,
+      tSpec: tSpec,
+      maxFrameSize: maxFrameSize
+    )
+
+    // Calculate expected frame size with overhead
+    let expectedFrameSize: UInt16 = 224 + 4 + 18 + 20 + 1 // VLAN + L2 + L1 + 1 = 267
+    XCTAssertEqual(frameSize, expectedFrameSize)
+
+    // Calculate expected bandwidth
+    let classMeasurementInterval = 125 // microseconds for Class A
+    let maxFrameRate = Double(1) *
+      (1_000_000.0 / Double(classMeasurementInterval)) // 8000 frames per second
+    let expectedBandwidthUsed = maxFrameRate * Double(expectedFrameSize) * 8.0 / 1000.0 // kbps
+
+    XCTAssertEqual(maxFrameRate, 8000.0)
+    XCTAssertEqual(bandwidthUsed, Int(ceil(expectedBandwidthUsed)))
+    XCTAssertEqual(bandwidthUsed, 17088) // 8000 * 267 * 8 / 1000 = 17088 kbps
+  }
+
   func testStateMachineIntegration() {
     // Test a complete scenario with all three state machines
     var leaveTimerExpired = false
