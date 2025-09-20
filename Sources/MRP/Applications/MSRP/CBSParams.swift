@@ -187,12 +187,16 @@ extension MSRPAwareBridge {
   }
 }
 
+private func calcFrameSize(_ tSpec: MSRPTSpec) -> UInt16 {
+  tSpec.maxFrameSize + VLAN_OVERHEAD + L2_OVERHEAD + L1_OVERHEAD + 1
+}
+
 func calculateBandwidthUsed(
   srClassID: SRclassID,
   tSpec: MSRPTSpec,
   maxFrameSize: UInt16
 ) throws -> (UInt16, Int) {
-  var frameSize = tSpec.maxFrameSize + VLAN_OVERHEAD + L2_OVERHEAD + L1_OVERHEAD + 1
+  var frameSize = calcFrameSize(tSpec)
   if frameSize > maxFrameSize { frameSize = maxFrameSize }
   let classMeasurementInterval = try srClassID
     .classMeasurementInterval // number of intervals in usec
