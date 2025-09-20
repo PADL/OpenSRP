@@ -44,7 +44,7 @@ private let L2_OVERHEAD: UInt16 = 18 // Ethernet header + CRC
 private let L1_OVERHEAD: UInt16 = 20 // Preamble + frame delimiter + interpacket gap
 
 extension MSRPAwareBridge {
-  private func calcClassACredits(
+  static func calcClassACredits(
     idleslopeA: Int,
     sendslopeA: Int,
     linkSpeed: Int,
@@ -59,7 +59,7 @@ extension MSRPAwareBridge {
     return (hicredit, locredit)
   }
 
-  private func calcClassBCredits(
+  static func calcClassBCredits(
     idleslopeA: Int,
     idleslopeB: Int,
     sendslopeB: Int,
@@ -92,7 +92,8 @@ extension MSRPAwareBridge {
       let (frameSize, bandwidthUsed) = try calculateBandwidthUsed(
         srClassID: srClassID,
         tSpec: stream,
-        maxFrameSize: application._latencyMaxFrameSize
+        maxFrameSize: application._latencyMaxFrameSize,
+        nominalBandwidth: false
       )
       idleslope += bandwidthUsed
       maxFrameSize = max(maxFrameSize, frameSize)
@@ -128,7 +129,7 @@ extension MSRPAwareBridge {
       srClassID: .A
     )
     let sendslopeA = idleslopeA - Int(port.linkSpeed)
-    let (hicreditA, locreditA) = calcClassACredits(
+    let (hicreditA, locreditA) = Self.calcClassACredits(
       idleslopeA: idleslopeA,
       sendslopeA: sendslopeA,
       linkSpeed: Int(port.linkSpeed),
@@ -159,7 +160,7 @@ extension MSRPAwareBridge {
       srClassID: .B
     )
     let sendslopeB = idleslopeB - Int(port.linkSpeed)
-    let (hicreditB, locreditB) = calcClassBCredits(
+    let (hicreditB, locreditB) = Self.calcClassBCredits(
       idleslopeA: idleslopeA,
       idleslopeB: idleslopeB,
       sendslopeB: sendslopeB,
@@ -188,15 +189,17 @@ extension MSRPAwareBridge {
 }
 
 private func calcFrameSize(_ tSpec: MSRPTSpec) -> UInt16 {
-  tSpec.maxFrameSize + VLAN_OVERHEAD + L2_OVERHEAD + L1_OVERHEAD + 1
+  tSpec.maxFrameSize + VLAN_OVERHEAD + L2_OVERHEAD + L1_OVERHEAD
 }
 
 func calculateBandwidthUsed(
   srClassID: SRclassID,
   tSpec: MSRPTSpec,
-  maxFrameSize: UInt16
+  maxFrameSize: UInt16,
+  nominalBandwidth: Bool = true
 ) throws -> (UInt16, Int) {
   var frameSize = calcFrameSize(tSpec)
+  if !nominalBandwidth { frameSize += 1 }
   if frameSize > maxFrameSize { frameSize = maxFrameSize }
   let classMeasurementInterval = try srClassID
     .classMeasurementInterval // number of intervals in usec

@@ -107,6 +107,32 @@ struct MockBridge: MRP.Bridge, CustomStringConvertible {
   ) async throws {}
 }
 
+extension MockBridge: MSRPAwareBridge {
+  func configureQueues(
+    port: P,
+    srClassPriorityMap: SRClassPriorityMap,
+    queues: [SRclassID: UInt],
+    forceAvbCapable: Bool
+  ) async throws {}
+
+  func unconfigureQueues(port: P) async throws {}
+
+  func adjustCreditBasedShaper(
+    port: P,
+    queue: UInt,
+    idleSlope: Int,
+    sendSlope: Int,
+    hiCredit: Int,
+    loCredit: Int
+  ) async throws {}
+
+  func getSRClassPriorityMap(port: P) async throws -> SRClassPriorityMap? { nil }
+
+  var srClassPriorityMapNotifications: AnyAsyncSequence<SRClassPriorityMapNotification<P>> {
+    AsyncEmptySequence<SRClassPriorityMapNotification<P>>().eraseToAnyAsyncSequence()
+  }
+}
+
 final class MRPTests: XCTestCase {
   func testEUI48() async throws {
     let eui48: EUI48 = (0, 0, 0, 0, 0x1, 0xFF)
@@ -1051,7 +1077,7 @@ final class MRPTests: XCTestCase {
     )
 
     // Calculate expected frame size with overhead
-    let expectedFrameSize: UInt16 = 224 + 4 + 18 + 20 + 1 // VLAN + L2 + L1 + 1 = 267
+    let expectedFrameSize: UInt16 = 224 + 4 + 18 + 20 // VLAN + L2 + L1 = 266
     XCTAssertEqual(frameSize, expectedFrameSize)
 
     // Calculate expected bandwidth
@@ -1062,7 +1088,31 @@ final class MRPTests: XCTestCase {
 
     XCTAssertEqual(maxFrameRate, 8000.0)
     XCTAssertEqual(bandwidthUsed, Int(ceil(expectedBandwidthUsed)))
-    XCTAssertEqual(bandwidthUsed, 17088) // 8000 * 267 * 8 / 1000 = 17088 kbps
+    XCTAssertEqual(bandwidthUsed, 17024) // 8000 * 266 * 8 / 1000 = 17024 kbps
+  }
+
+  func testCBSParametersClassA() throws {
+    // Test CBS parameter calculations for Class A with specific values
+    // idleslope: 20 Mbps, transmission rate: 1 Gbps, max interfering frame: 1500 bytes
+    let idleslopeA = 20000 // kbps (20 Mbps)
+    let linkSpeed = 1_000_000 // kbps (1 Gbps)
+    let sendslopeA = idleslopeA - linkSpeed // -980000 kbps
+    let frameNonSr = 1500 // Maximum interfering frame size
+    let maxFrameSizeA = UInt16(1500) // Maximum frame size for the stream
+
+    let (hicredit, locredit) = MockBridge.calcClassACredits(
+      idleslopeA: idleslopeA,
+      sendslopeA: sendslopeA,
+      linkSpeed: linkSpeed,
+      frameNonSr: frameNonSr,
+      maxFrameSizeA: maxFrameSizeA
+    )
+
+    // Verify the calculated parameters match expected values
+    XCTAssertEqual(idleslopeA, 20000)
+    XCTAssertEqual(sendslopeA, -980_000)
+    XCTAssertEqual(hicredit, 30) // ceil(20000 * 1500 / 1000000) = ceil(30.0) = 30
+    XCTAssertEqual(locredit, -1470) // ceil(-980000 * 1500 / 1000000) = ceil(-1470.0) = -1470
   }
 
   func testStateMachineIntegration() {
