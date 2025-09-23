@@ -909,9 +909,10 @@ extension LinuxBridge: MSRPAwareBridge {
     let parent = UInt32(_nlQDiscHandle) << 16 | UInt32(queue)
 
     do {
-      if removeShaper {
-        try await port._rtnl.remove(handle: 0, parent: parent, socket: _nlLinkSocket)
-      } else {
+      // always try to remove the shaper first
+      try await port._rtnl.remove(handle: 0, parent: parent, socket: _nlLinkSocket)
+      if !removeShaper {
+        try await Task.sleep(for: .milliseconds(1))
         try await port._rtnl.add(
           handle: 0, // this allows the kernel to assign a handle
           parent: parent,
