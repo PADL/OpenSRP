@@ -145,30 +145,7 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
       self.priority = priority
       let streams = streams.filter { $0.priority == priority }
       present = !streams.isEmpty
-
-      // Calculate operIdleSlope based on CBSParams.swift logic
-      operIdleSlope = Self._calculateOperIdleSlope(
-        application: application,
-        port: participant.port,
-        srClassID: srClassID,
-        streams: streams
-      )
-    }
-
-    private static func _calculateOperIdleSlope(
-      application: Application,
-      port: P,
-      srClassID: SRclassID,
-      streams: [Stream]
-    ) -> Int {
-      var idleslope = 0
-
-      for stream in streams {
-        idleslope += stream.bandwidth
-      }
-
-      // Convert from bits/sec to bits/ms for idle slope calculation
-      return Int(ceil(Double(idleslope) / 1000.0))
+      operIdleSlope = streams.map(\.bandwidth).reduce(0, +)
     }
   }
 
