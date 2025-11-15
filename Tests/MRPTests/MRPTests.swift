@@ -338,7 +338,7 @@ final class MRPTests: XCTestCase {
   }
 
   func testLeaveAllOnlyVectorAttribute() {
-    let vectorAttribute = try VectorAttribute<AnyValue>(
+    let vectorAttribute = VectorAttribute<AnyValue>(
       leaveAllEvent: .LeaveAll,
       firstValue: AnyValue(MSRPTalkerAdvertiseValue()),
       attributeEvents: [],
@@ -529,7 +529,7 @@ final class MRPTests: XCTestCase {
     XCTAssertFalse(av1.matches(attributeType: 1, matching: .matchRelative((VLAN(vid: 90), 5))))
 
     // Test with subtype
-    let av2 = AttributeValue<MSRPApplication<MockPort>>(
+    _ = AttributeValue<MSRPApplication<MockPort>>(
       type: 1,
       subtype: 10,
       value: AnyValue(vlan1)
@@ -932,8 +932,7 @@ final class MRPTests: XCTestCase {
   }
 
   func testRegistrarStateMachine() {
-    var leaveTimerExpired = false
-    let registrar = Registrar(onLeaveTimerExpired: { leaveTimerExpired = true })
+    let registrar = Registrar(onLeaveTimerExpired: {})
     let normalFlags: StateMachineHandlerFlags = []
 
     // Test initial state
@@ -1019,8 +1018,7 @@ final class MRPTests: XCTestCase {
   }
 
   func testLeaveAllStateMachine() {
-    var timerExpired = false
-    let leaveAll = LeaveAll(interval: .milliseconds(100)) { timerExpired = true }
+    let leaveAll = LeaveAll(interval: .milliseconds(100)) {}
 
     // Test initial state
     XCTAssertEqual(leaveAll.state, .Passive)
@@ -1127,12 +1125,9 @@ final class MRPTests: XCTestCase {
 
   func testStateMachineIntegration() {
     // Test a complete scenario with all three state machines
-    var leaveTimerExpired = false
-    var leaveAllTimerExpired = false
-
     let applicant = Applicant()
-    let registrar = Registrar(onLeaveTimerExpired: { leaveTimerExpired = true })
-    let leaveAll = LeaveAll(interval: .milliseconds(100)) { leaveAllTimerExpired = true }
+    let registrar = Registrar(onLeaveTimerExpired: {})
+    let leaveAll = LeaveAll(interval: .milliseconds(100)) {}
 
     let normalFlags: StateMachineHandlerFlags = []
 
