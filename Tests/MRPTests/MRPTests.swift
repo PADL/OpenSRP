@@ -16,6 +16,7 @@
 
 @_spi(MRPTesting)
 @testable import MRP
+@testable import PMC
 import XCTest
 @preconcurrency
 import AsyncExtensions
@@ -1174,6 +1175,157 @@ final class MRPTests: XCTestCase {
     let leaveAllAction2 = leaveAll.action(for: .rLA)
     XCTAssertEqual(leaveAllAction2, .leavealltimer)
     XCTAssertEqual(leaveAll.state, .Passive)
+  }
+
+  // MARK: - PTP Tests
+
+  func testPTPTimestampSerialization() throws {
+    let timestamp = PTP.Timestamp(
+      secondsMsb: 0x0000,
+      secondsLsb: 0x1234_5678,
+      nanoseconds: 0x9ABC_DEF0
+    )
+
+    var serializationContext = SerializationContext()
+    try timestamp.serialize(into: &serializationContext)
+
+    // Timestamp is 48 bits seconds + 32 bits nanoseconds = 10 bytes
+    XCTAssertEqual(serializationContext.bytes.count, 10)
+    XCTAssertEqual(
+      serializationContext.bytes,
+      [0x00, 0x00, 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0]
+    )
+
+    let deserialized = try serializationContext.bytes.withParserSpan { input in
+      try PTP.Timestamp(parsing: &input)
+    }
+
+    XCTAssertEqual(deserialized.secondsMsb, 0x0000)
+    XCTAssertEqual(deserialized.secondsLsb, 0x1234_5678)
+    XCTAssertEqual(deserialized.nanoseconds, 0x9ABC_DEF0)
+  }
+
+  func testPTPClockIdentitySerialization() throws {
+    let clockId = PTP.ClockIdentity(id: (0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77))
+
+    var serializationContext = SerializationContext()
+    try clockId.serialize(into: &serializationContext)
+
+    // ClockIdentity is 8 bytes
+    XCTAssertEqual(serializationContext.bytes.count, 8)
+    XCTAssertEqual(
+      serializationContext.bytes,
+      [0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77]
+    )
+
+    let deserialized = try serializationContext.bytes.withParserSpan { input in
+      try PTP.ClockIdentity(parsing: &input)
+    }
+
+    XCTAssertEqual(deserialized, clockId)
+  }
+
+  func testPTPClockIdentityFromEUI48() throws {
+    let eui48: EUI48 = (0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF)
+    let clockId = PTP.ClockIdentity(eui48: eui48)
+
+    var serializationContext = SerializationContext()
+    try clockId.serialize(into: &serializationContext)
+
+    // ClockIdentity from EUI48 inserts 0xFF 0xFE in the middle
+    XCTAssertEqual(
+      serializationContext.bytes,
+      [0xAA, 0xBB, 0xCC, 0xFF, 0xFE, 0xDD, 0xEE, 0xFF]
+    )
+  }
+
+  func testPTPPortIdentitySerialization() throws {
+    let clockId = PTP.ClockIdentity(id: (0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77))
+    let portId = PTP.PortIdentity(clockIdentity: clockId, portNumber: 0x1234)
+
+    var serializationContext = SerializationContext()
+    try portId.serialize(into: &serializationContext)
+
+    // PortIdentity is 8 bytes ClockIdentity + 2 bytes port number = 10 bytes
+    XCTAssertEqual(serializationContext.bytes.count, 10)
+    XCTAssertEqual(
+      serializationContext.bytes,
+      [0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x12, 0x34]
+    )
+
+    let deserialized = try serializationContext.bytes.withParserSpan { input in
+      try PTP.PortIdentity(parsing: &input)
+    }
+
+    XCTAssertEqual(deserialized.clockIdentity, clockId)
+    XCTAssertEqual(deserialized.portNumber, 0x1234)
+  }
+
+  func testPTPClockQualitySerialization() throws {
+    let clockQuality = PTP.ClockQuality(
+      clockClass: 248,
+      clockAccuracy: 0x21,
+      offsetScaledLogVariance: 0x4321
+    )
+
+    var serializationContext = SerializationContext()
+    try clockQuality.serialize(into: &serializationContext)
+
+    // ClockQuality is 1 + 1 + 2 = 4 bytes
+    XCTAssertEqual(serializationContext.bytes.count, 4)
+    XCTAssertEqual(
+      serializationContext.bytes,
+      [248, 0x21, 0x43, 0x21]
+    )
+
+    let deserialized = try serializationContext.bytes.withParserSpan { input in
+      try PTP.ClockQuality(parsing: &input)
+    }
+
+    XCTAssertEqual(deserialized.clockClass, 248)
+    XCTAssertEqual(deserialized.clockAccuracy, 0x21)
+    XCTAssertEqual(deserialized.offsetScaledLogVariance, 0x4321)
+  }
+
+  func testPTPHeaderSerialization() throws {
+    let clockId = PTP.ClockIdentity(id: (0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77))
+    let portId = PTP.PortIdentity(clockIdentity: clockId, portNumber: 1)
+
+    // messageLength is checked against remaining bytes after parsing first 4 bytes
+    // So if total bytes is 54, and 4 bytes are consumed, messageLength should be 50
+    let totalBytes: UInt16 = 54
+    let messageLength: UInt16 = 50 // Remaining bytes after first 4 header bytes
+    let header = PTP.Header(
+      majorSdoId: .ieee8021AS,
+      messageType: .Management,
+      versionPTP: .v2,
+      messageLength: messageLength,
+      domainNumber: 0,
+      minorSdoId: 0,
+      sourcePortIdentity: portId,
+      sequenceId: 42
+    )
+
+    var serializationContext = SerializationContext()
+    try header.serialize(into: &serializationContext)
+
+    // PTP Header is 34 bytes
+    XCTAssertEqual(serializationContext.bytes.count, 34)
+    XCTAssertEqual(header.messageType, .Management)
+    XCTAssertEqual(header.versionPTP, .v2)
+    XCTAssertEqual(header.sequenceId, 42)
+
+    // Pad to match total bytes for deserialization test
+    serializationContext.serialize(Array(repeating: 0, count: Int(totalBytes) - 34))
+
+    let deserialized = try serializationContext.bytes.withParserSpan { input in
+      try PTP.Header(parsing: &input)
+    }
+
+    XCTAssertEqual(deserialized.messageType, .Management)
+    XCTAssertEqual(deserialized.versionPTP, .v2)
+    XCTAssertEqual(deserialized.messageLength, messageLength)
+    XCTAssertEqual(deserialized.sequenceId, 42)
   }
 }
 
