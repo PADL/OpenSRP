@@ -14,6 +14,7 @@
 // limitations under the License.
 //
 
+import BinaryParsing
 import IEEE802
 
 enum MSRPAttributeType: AttributeType, CaseIterable {
@@ -116,13 +117,12 @@ struct MSRPTalkerAdvertiseValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equ
     try _serialize(into: &serializationContext)
   }
 
-  init(deserializationContext: inout DeserializationContext) throws {
-    streamID = try MSRPStreamID(deserializationContext: &deserializationContext)
-    dataFrameParameters =
-      try MSRPDataFrameParameters(deserializationContext: &deserializationContext)
-    tSpec = try MSRPTSpec(deserializationContext: &deserializationContext)
-    priorityAndRank = try MSRPPriorityAndRank(deserializationContext: &deserializationContext)
-    accumulatedLatency = try deserializationContext.deserialize()
+  init(parsing input: inout ParserSpan) throws {
+    streamID = try MSRPStreamID(parsing: &input)
+    dataFrameParameters = try MSRPDataFrameParameters(parsing: &input)
+    tSpec = try MSRPTSpec(parsing: &input)
+    priorityAndRank = try MSRPPriorityAndRank(parsing: &input)
+    accumulatedLatency = try UInt32(parsing: &input, storedAsBigEndian: UInt32.self)
   }
 
   init() {
@@ -187,15 +187,14 @@ struct MSRPTalkerFailedValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equata
     try failureCode.serialize(into: &serializationContext)
   }
 
-  init(deserializationContext: inout DeserializationContext) throws {
-    streamID = try MSRPStreamID(deserializationContext: &deserializationContext)
-    dataFrameParameters =
-      try MSRPDataFrameParameters(deserializationContext: &deserializationContext)
-    tSpec = try MSRPTSpec(deserializationContext: &deserializationContext)
-    priorityAndRank = try MSRPPriorityAndRank(deserializationContext: &deserializationContext)
-    accumulatedLatency = try deserializationContext.deserialize()
-    systemID = try deserializationContext.deserialize()
-    failureCode = try TSNFailureCode(deserializationContext: &deserializationContext)
+  init(parsing input: inout ParserSpan) throws {
+    streamID = try MSRPStreamID(parsing: &input)
+    dataFrameParameters = try MSRPDataFrameParameters(parsing: &input)
+    tSpec = try MSRPTSpec(parsing: &input)
+    priorityAndRank = try MSRPPriorityAndRank(parsing: &input)
+    accumulatedLatency = try UInt32(parsing: &input, storedAsBigEndian: UInt32.self)
+    systemID = try UInt64(parsing: &input, storedAsBigEndian: UInt64.self)
+    failureCode = try TSNFailureCode(parsing: &input)
   }
 
   init() {
@@ -238,8 +237,8 @@ struct MSRPListenerValue: Value, Equatable {
     try streamID.serialize(into: &serializationContext)
   }
 
-  init(deserializationContext: inout DeserializationContext) throws {
-    streamID = try MSRPStreamID(deserializationContext: &deserializationContext)
+  init(parsing input: inout ParserSpan) throws {
+    streamID = try MSRPStreamID(parsing: &input)
   }
 
   init() {
@@ -276,17 +275,17 @@ struct MSRPDomainValue: Value, Equatable {
     serializationContext.serialize(uint16: srClassVID)
   }
 
-  init(deserializationContext: inout DeserializationContext) throws {
-    guard let srClassID = try SRclassID(rawValue: deserializationContext.deserialize()) else {
+  init(parsing input: inout ParserSpan) throws {
+    guard let srClassID = try SRclassID(rawValue: UInt8(parsing: &input)) else {
       throw MRPError.invalidSRclassID
     }
     self.srClassID = srClassID
-    guard let srClassPriority = try SRclassPriority(rawValue: deserializationContext.deserialize())
+    guard let srClassPriority = try SRclassPriority(rawValue: UInt8(parsing: &input))
     else {
       throw MRPError.invalidSRclassPriority
     }
     self.srClassPriority = srClassPriority
-    let srClassVID: UInt16 = try deserializationContext.deserialize()
+    let srClassVID: UInt16 = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
     guard srClassVID & 0xF000 == 0 else {
       throw MRPError.invalidSRclassVID
     }

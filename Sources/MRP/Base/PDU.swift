@@ -15,6 +15,7 @@
 //
 
 import Algorithms
+import BinaryParsing
 import IEEE802
 
 public typealias ProtocolVersion = UInt8
@@ -107,8 +108,8 @@ struct VectorHeader: Sendable, Equatable, Hashable, SerDes {
     self.numberOfValues = numberOfValues
   }
 
-  init(deserializationContext: inout DeserializationContext) throws {
-    let value: UInt16 = try deserializationContext.deserialize()
+  init(parsing input: inout ParserSpan) throws {
+    let value: UInt16 = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
     guard let leaveAllEvent = LeaveAllEvent(rawValue: UInt8(value >> 13)) else {
       throw MRPError.invalidLeaveAllEvent
     }
@@ -267,27 +268,26 @@ struct VectorAttribute<V: Value>: Sendable, Equatable {
   init(
     attributeType: AttributeType,
     attributeLength: AttributeLength,
-    deserializationContext: inout DeserializationContext,
+    parsing input: inout ParserSpan,
     application: some Application
   ) throws where V == AnyValue {
-    let vectorHeader = try VectorHeader(deserializationContext: &deserializationContext)
-    try deserializationContext.assertRemainingLength(isAtLeast: Int(attributeLength))
+    let vectorHeader = try VectorHeader(parsing: &input)
+    guard input.count >= Int(attributeLength) else {
+      throw MRPError.badPduLength
+    }
     let firstValue = try AnyValue(application.deserialize(
       attributeOfType: attributeType,
-      from: &deserializationContext
+      from: &input
     ))
 
     let numberOfValueOctets = Int.ceil(Int(vectorHeader.numberOfValues), 3)
-    let threePacketEvents = try Array(
-      deserializationContext
-        .deserialize(count: numberOfValueOctets)
-    )
+    let threePacketEvents = try Array(parsing: &input, byteCount: numberOfValueOctets)
 
     let fourPackedEvents: [UInt8]?
 
     if application.hasAttributeSubtype(for: attributeType) {
       let numberOfValueOctets = Int.ceil(Int(vectorHeader.numberOfValues), 4)
-      fourPackedEvents = try Array(deserializationContext.deserialize(count: numberOfValueOctets))
+      fourPackedEvents = try Array(parsing: &input, byteCount: numberOfValueOctets)
     } else {
       fourPackedEvents = nil
     }
@@ -327,47 +327,51 @@ struct Message {
   }
 
   init(
-    deserializationContext: inout DeserializationContext,
+    parsing input: inout ParserSpan,
     application: some Application
   ) throws {
-    attributeType = try deserializationContext.deserialize()
+    attributeType = try UInt8(parsing: &input)
 
     // attributeLength is the length, in octets, of an attribute's firstValue
-    let attributeLength: AttributeLength = try deserializationContext.deserialize()
+    let attributeLength: AttributeLength = try UInt8(parsing: &input)
 
     // attributeListLength is optional and is the length, in octets, of the entire attribute list
     // this can account for variable length attributes
     var attributeListLength: AttributeListLength?
-    var attributeListPosition = 0
+    var attributeListStartPosition = 0
 
     if application.hasAttributeListLength {
-      attributeListLength = try deserializationContext.deserialize()
-      guard attributeListLength! <= deserializationContext.bytesRemaining
+      attributeListLength = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
+      guard attributeListLength! <= input.count
       else { throw MRPError.badPduLength }
-      attributeListPosition = deserializationContext.position
+      // Calculate position from the start (total bytes parsed so far)
+      attributeListStartPosition = input.count
     }
 
     var attributeList = [VectorAttribute<V>]()
+    let startCount = input.count
 
     repeat {
       if let attributeListLength {
-        if deserializationContext
-          .position == attributeListPosition + Int(attributeListLength) - 2 { break }
+        let bytesProcessed = startCount - input.count
+        if bytesProcessed == Int(attributeListLength) - 2 { break }
       } else {
-        let mark: UInt16 = try deserializationContext.peek()
+        // Peek at next 2 bytes to check for EndMark
+        var peekSpan = ParserSpan(input.bytes)
+        let mark: UInt16 = try UInt16(parsing: &peekSpan, storedAsBigEndian: UInt16.self)
         if mark == EndMark { break }
       }
 
       let vectorAttribute = try VectorAttribute<V>(
         attributeType: attributeType,
         attributeLength: attributeLength,
-        deserializationContext: &deserializationContext,
+        parsing: &input,
         application: application
       )
       attributeList.append(vectorAttribute)
-    } while deserializationContext.position < deserializationContext.count
+    } while input.count > 0
 
-    let endMark: UInt16 = try deserializationContext.deserialize()
+    let endMark: UInt16 = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
     guard endMark == EndMark else {
       throw MRPError.badPduEndMark
     }
@@ -412,19 +416,21 @@ struct MRPDU {
   }
 
   init(
-    deserializationContext: inout DeserializationContext,
+    parsing input: inout ParserSpan,
     application: some Application
   ) throws {
-    protocolVersion = try deserializationContext.deserialize()
+    protocolVersion = try UInt8(parsing: &input)
     var messages = [Message]()
     repeat {
-      let mark: UInt16 = try deserializationContext.peek()
+      // Peek at next 2 bytes to check for EndMark
+      var peekSpan = ParserSpan(input.bytes)
+      let mark: UInt16 = try UInt16(parsing: &peekSpan, storedAsBigEndian: UInt16.self)
       if mark == EndMark {
         break
       }
       do {
         try messages.append(Message(
-          deserializationContext: &deserializationContext,
+          parsing: &input,
           application: application
         ))
       } catch let error as MRPError {
@@ -435,7 +441,7 @@ struct MRPDU {
           throw error
         }
       }
-    } while deserializationContext.position < deserializationContext.count
+    } while input.count > 0
     self.messages = messages
   }
 

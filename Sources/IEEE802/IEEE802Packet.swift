@@ -14,6 +14,8 @@
 // limitations under the License.
 //
 
+import BinaryParsing
+
 public struct IEEE802Packet: Sendable, CustomStringConvertible {
   public static let IEEE8021QTagged: UInt16 = 0x8100
 
@@ -125,24 +127,25 @@ extension IEEE802Packet: SerDes {
     hwHeader: [UInt8],
     payload: [UInt8]
   ) throws {
-    var deserializationContext = DeserializationContext(hwHeader + payload)
-    try self.init(deserializationContext: &deserializationContext)
+    self = try (hwHeader + payload).withParserSpan { span in
+      try Self(parsing: &span)
+    }
   }
 
   public init(
-    deserializationContext: inout DeserializationContext
+    parsing input: inout ParserSpan
   ) throws {
-    let destMacAddress: EUI48 = try deserializationContext.deserialize()
-    let sourceMacAddress: EUI48 = try deserializationContext.deserialize()
+    let destMacAddress: EUI48 = try _eui48(parsing: &input)
+    let sourceMacAddress: EUI48 = try _eui48(parsing: &input)
     let tci: TCI?
-    var etherType: UInt16 = try deserializationContext.deserialize()
+    var etherType: UInt16 = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
     if etherType == Self.IEEE8021QTagged {
-      tci = try TCI(deserializationContext: &deserializationContext)
-      etherType = try deserializationContext.deserialize()
+      tci = try TCI(parsing: &input)
+      etherType = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
     } else {
       tci = nil
     }
-    let payload = Array(deserializationContext.deserializeRemaining())
+    let payload = try Array(parsing: &input, byteCount: input.count)
     self.init(
       destMacAddress: destMacAddress,
       tci: tci,
@@ -170,7 +173,7 @@ extension IEEE802Packet.TCI: SerDes {
     serializationContext.serialize(uint16: tci)
   }
 
-  public init(deserializationContext: inout DeserializationContext) throws {
-    try self.init(deserializationContext.deserialize())
+  public init(parsing input: inout ParserSpan) throws {
+    try self.init(UInt16(parsing: &input, storedAsBigEndian: UInt16.self))
   }
 }

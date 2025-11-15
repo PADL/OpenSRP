@@ -59,7 +59,7 @@ func GET_PORT_PROPERTIES_NP(command: Command, pmc: PTPManagementClient, port: UI
 
 @main
 enum pmctool {
-  public static func main() async throws {
+  static func main() async throws {
     if CommandLine.arguments.count < 2 {
       usage()
     }

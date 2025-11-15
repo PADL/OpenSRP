@@ -14,6 +14,7 @@
 // limitations under the License.
 //
 
+import BinaryParsing
 import IEEE802
 import Logging
 import Synchronization
@@ -82,15 +83,15 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationEve
 
   public func deserialize(
     attributeOfType attributeType: AttributeType,
-    from deserializationContext: inout DeserializationContext
+    from input: inout ParserSpan
   ) throws -> any Value {
     guard let attributeType = MMRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }
     switch attributeType {
     case .mac:
-      return try MMRPMACValue(deserializationContext: &deserializationContext)
+      return try MMRPMACValue(parsing: &input)
     case .serviceRequirement:
-      return try MMRPServiceRequirementValue(deserializationContext: &deserializationContext)
+      return try MMRPServiceRequirementValue(parsing: &input)
     }
   }
 

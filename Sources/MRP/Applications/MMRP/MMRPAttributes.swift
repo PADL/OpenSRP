@@ -14,6 +14,7 @@
 // limitations under the License.
 //
 
+import BinaryParsing
 import IEEE802
 
 enum MMRPAttributeType: AttributeType, CaseIterable {
@@ -33,8 +34,8 @@ public enum MMRPServiceRequirementValue: UInt8, Value, Equatable, Hashable {
     serializationContext.serialize(uint8: rawValue)
   }
 
-  public init(deserializationContext: inout DeserializationContext) throws {
-    let value: UInt8 = try deserializationContext.deserialize()
+  public init(parsing input: inout ParserSpan) throws {
+    let value = try UInt8(parsing: &input)
 
     guard let value = Self(rawValue: value) else {
       throw MRPError.invalidAttributeValue
@@ -71,9 +72,9 @@ struct MMRPMACValue: Value, Equatable, Hashable {
     self._macAddress = _macAddress
   }
 
-  init(deserializationContext: inout DeserializationContext) throws {
-    let high: UInt32 = try deserializationContext.deserialize()
-    let low: UInt16 = try deserializationContext.deserialize()
+  init(parsing input: inout ParserSpan) throws {
+    let high = try UInt32(parsing: &input, storedAsBigEndian: UInt32.self)
+    let low = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
     _macAddress = UInt64(high) << 16 | UInt64(low)
     precondition((_macAddress & 0xFFFF_0000_0000_0000) == 0)
   }

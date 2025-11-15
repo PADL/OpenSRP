@@ -23,7 +23,7 @@ actor PortMonitor {
   typealias P = LinuxPort
   typealias B = LinuxBridge
 
-  public static func main() async throws {
+  static func main() async throws {
     let portmon = PortMonitor()
     do {
       try await portmon.run()

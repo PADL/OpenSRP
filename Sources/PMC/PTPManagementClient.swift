@@ -78,13 +78,15 @@ public actor PTPManagementClient {
 
   private func _rx(_ buffer: [UInt8]) async throws {
     do {
-      var deserializationContext = DeserializationContext(buffer)
-      let tlv = try PTP.ManagementMessage(deserializationContext: &deserializationContext)
+      let tlv = try buffer.withParserSpan { input in
+        try PTP.ManagementMessage(parsing: &input)
+      }
       _resume(sequenceId: tlv.header.sequenceId, with: .success(tlv))
     } catch {
       // FIXME: avoid decoding Header twice
-      var deserializationContext = DeserializationContext(buffer)
-      let header = try PTP.Header(deserializationContext: &deserializationContext)
+      let header = try buffer.withParserSpan { input in
+        try PTP.Header(parsing: &input)
+      }
       _resume(sequenceId: header.sequenceId, with: .failure(error))
     }
   }

@@ -14,6 +14,7 @@
 // limitations under the License.
 //
 
+import BinaryParsing
 import IEEE802
 
 enum MVRPAttributeType: AttributeType, CaseIterable {
@@ -31,8 +32,8 @@ extension VLAN: Value {
     serializationContext.serialize(uint16: vid)
   }
 
-  public init(deserializationContext: inout DeserializationContext) throws {
-    let newVid: UInt16 = try deserializationContext.deserialize()
+  public init(parsing input: inout ParserSpan) throws {
+    let newVid = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
     guard newVid <= 0xFFF else { throw MRPError.invalidAttributeValue }
     self.init(vid: newVid)
   }

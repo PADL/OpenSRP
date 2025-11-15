@@ -764,8 +764,9 @@ fileprivate final class FilterRegistration: Equatable, Hashable, Sendable, Custo
     ))
 
     return try await rxSocket.receiveMessages(count: Int(port._rtnl.mtu)).compactMap { message in
-      var deserializationContext = DeserializationContext(message.buffer)
-      return try? IEEE802Packet(deserializationContext: &deserializationContext)
+      try? message.buffer.withParserSpan { input in
+        try IEEE802Packet(parsing: &input)
+      }
     }.eraseToAnyAsyncSequence()
   }
 }

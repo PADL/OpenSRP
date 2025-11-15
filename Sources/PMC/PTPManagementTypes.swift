@@ -14,6 +14,7 @@
 // limitations under the License.
 //
 
+import BinaryParsing
 import IEEE802
 import SystemPackage
 
@@ -33,8 +34,8 @@ public enum PTPManagementError: UInt16, Error, SerDes, Sendable {
     serializationContext.serialize(uint16: rawValue)
   }
 
-  public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-    let rawValue: RawValue = try deserializationContext.deserialize()
+  public init(parsing input: inout ParserSpan) throws {
+    let rawValue = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
     guard let value = Self(rawValue: rawValue) else {
       throw PTP.Error.unknownEnumerationValue
     }
@@ -107,8 +108,8 @@ enum PTPManagementID: UInt16, SerDes, Sendable {
     serializationContext.serialize(uint16: rawValue)
   }
 
-  init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-    let rawValue: RawValue = try deserializationContext.deserialize()
+  init(parsing input: inout ParserSpan) throws {
+    let rawValue = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
     guard let value = Self(rawValue: rawValue) else {
       throw PTP.Error.unknownEnumerationValue
     }
@@ -129,6 +130,14 @@ struct PTPManagementTLV: SerDes, Sendable {
     self.dataField = dataField
   }
 
+  // Internal initializer for parsing with pre-parsed fields
+  init(_tlvType: PTP.TLVType, _managementId: PTPManagementID, _dataField: [UInt8]) {
+    tlvType = _tlvType
+    lengthField = UInt16(_dataField.count + 2)
+    managementId = _managementId
+    dataField = _dataField
+  }
+
   // for GET, COMMAND requests that do not have any associated data
   init(managementId: PTPManagementID) {
     self.init(tlvType: .management, managementId: managementId, dataField: [])
@@ -146,15 +155,15 @@ struct PTPManagementTLV: SerDes, Sendable {
     serializationContext.serialize(dataField)
   }
 
-  init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-    tlvType = try PTP.TLVType(deserializationContext: &deserializationContext)
-    let lengthField: UInt16 = try deserializationContext.deserialize()
+  init(parsing input: inout ParserSpan) throws {
+    tlvType = try PTP.TLVType(parsing: &input)
+    let lengthField = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
     guard lengthField >= 2 else {
       throw PTP.Error.invalidManagementTLVLength
     }
     self.lengthField = lengthField
-    managementId = try PTPManagementID(deserializationContext: &deserializationContext)
-    dataField = try Array(deserializationContext.deserialize(count: Int(lengthField - 2)))
+    managementId = try PTPManagementID(parsing: &input)
+    dataField = try Array(parsing: &input, byteCount: Int(lengthField - 2))
   }
 
   var size: Int {
@@ -163,28 +172,29 @@ struct PTPManagementTLV: SerDes, Sendable {
 
   var data: PTPManagementRepresentable {
     get throws {
-      var deserializationContext = DeserializationContext(dataField)
-      switch managementId {
-      case .NULL_PTP_MANAGEMENT:
-        return try Null(deserializationContext: &deserializationContext)
-      case .TIME:
-        return try Time(deserializationContext: &deserializationContext)
-      case .PRIORITY1:
-        return try Priority1(deserializationContext: &deserializationContext)
-      case .PRIORITY2:
-        return try Priority2(deserializationContext: &deserializationContext)
-      case .CLOCK_ACCURACY:
-        return try ClockAccuracy(deserializationContext: &deserializationContext)
-      case .DEFAULT_DATA_SET:
-        return try DefaultDataSet(deserializationContext: &deserializationContext)
-      case .PORT_DATA_SET:
-        return try PortDataSet(deserializationContext: &deserializationContext)
-      case .PORT_DATA_SET_NP:
-        return try PortDataSetNP(deserializationContext: &deserializationContext)
-      case .PORT_PROPERTIES_NP:
-        return try PortPropertiesNP(deserializationContext: &deserializationContext)
-      default:
-        throw PTP.Error.unsupportedManagementID
+      try dataField.withParserSpan { input in
+        switch managementId {
+        case .NULL_PTP_MANAGEMENT:
+          return try Null(parsing: &input)
+        case .TIME:
+          return try Time(parsing: &input)
+        case .PRIORITY1:
+          return try Priority1(parsing: &input)
+        case .PRIORITY2:
+          return try Priority2(parsing: &input)
+        case .CLOCK_ACCURACY:
+          return try ClockAccuracy(parsing: &input)
+        case .DEFAULT_DATA_SET:
+          return try DefaultDataSet(parsing: &input)
+        case .PORT_DATA_SET:
+          return try PortDataSet(parsing: &input)
+        case .PORT_DATA_SET_NP:
+          return try PortDataSetNP(parsing: &input)
+        case .PORT_PROPERTIES_NP:
+          return try PortPropertiesNP(parsing: &input)
+        default:
+          throw PTP.Error.unsupportedManagementID
+        }
       }
     }
   }
@@ -208,17 +218,17 @@ struct PTPManagementErrorStatusTLV: SerDes, Sendable {
     // TODO: padding
   }
 
-  init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-    tlvType = try PTP.TLVType(deserializationContext: &deserializationContext)
-    let lengthField: UInt16 = try deserializationContext.deserialize()
+  init(parsing input: inout ParserSpan) throws {
+    tlvType = try PTP.TLVType(parsing: &input)
+    let lengthField = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
     guard lengthField >= 8 else {
       throw PTP.Error.invalidManagementTLVLength
     }
     self.lengthField = lengthField
-    managementErrorId = try PTPManagementError(deserializationContext: &deserializationContext)
-    managementId = try PTPManagementID(deserializationContext: &deserializationContext)
-    reserved = try deserializationContext.deserialize()
-    displayData = try Array(deserializationContext.deserialize(count: Int(lengthField - 8)))
+    managementErrorId = try PTPManagementError(parsing: &input)
+    managementId = try PTPManagementID(parsing: &input)
+    reserved = try UInt32(parsing: &input, storedAsBigEndian: UInt32.self)
+    displayData = try Array(parsing: &input, byteCount: Int(lengthField - 8))
   }
 
   var size: Int {
@@ -237,7 +247,7 @@ public struct Null: PTPManagementRepresentable {
 
   public func serialize(into: inout IEEE802.SerializationContext) throws {}
 
-  public init(deserializationContext: inout IEEE802.DeserializationContext) throws {}
+  public init(parsing input: inout ParserSpan) throws {}
 }
 
 public struct DefaultDataSet: PTPManagementRepresentable {
@@ -254,8 +264,8 @@ public struct DefaultDataSet: PTPManagementRepresentable {
       serializationContext.serialize(uint8: rawValue)
     }
 
-    public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-      rawValue = try deserializationContext.deserialize()
+    public init(parsing input: inout ParserSpan) throws {
+      rawValue = try UInt8(parsing: &input)
     }
 
     public static let twoStepFlag = Flags(rawValue: 1 << 0)
@@ -284,16 +294,16 @@ public struct DefaultDataSet: PTPManagementRepresentable {
     serializationContext.serialize(uint8: reserved2)
   }
 
-  public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-    flags = try Flags(deserializationContext: &deserializationContext)
-    reserved1 = try deserializationContext.deserialize()
-    numberPorts = try deserializationContext.deserialize()
-    priority1 = try deserializationContext.deserialize()
-    clockQuality = try PTP.ClockQuality(deserializationContext: &deserializationContext)
-    priority2 = try deserializationContext.deserialize()
-    clockIdentity = try PTP.ClockIdentity(deserializationContext: &deserializationContext)
-    domainNumber = try deserializationContext.deserialize()
-    reserved2 = try deserializationContext.deserialize()
+  public init(parsing input: inout ParserSpan) throws {
+    flags = try Flags(parsing: &input)
+    reserved1 = try UInt8(parsing: &input)
+    numberPorts = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
+    priority1 = try UInt8(parsing: &input)
+    clockQuality = try PTP.ClockQuality(parsing: &input)
+    priority2 = try UInt8(parsing: &input)
+    clockIdentity = try PTP.ClockIdentity(parsing: &input)
+    domainNumber = try UInt8(parsing: &input)
+    reserved2 = try UInt8(parsing: &input)
   }
 }
 
@@ -308,8 +318,8 @@ public struct Time: PTPManagementRepresentable {
     try timestamp.serialize(into: &serializationContext)
   }
 
-  public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-    timestamp = try PTP.Timestamp(deserializationContext: &deserializationContext)
+  public init(parsing input: inout ParserSpan) throws {
+    timestamp = try PTP.Timestamp(parsing: &input)
   }
 }
 
@@ -329,9 +339,9 @@ public struct ClockAccuracy: PTPManagementRepresentable {
     serializationContext.serialize(uint8: reserved)
   }
 
-  public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-    clockAccuracy = try deserializationContext.deserialize()
-    reserved = try deserializationContext.deserialize()
+  public init(parsing input: inout ParserSpan) throws {
+    clockAccuracy = try UInt8(parsing: &input)
+    reserved = try UInt8(parsing: &input)
   }
 }
 
@@ -351,9 +361,9 @@ public struct Priority1: PTPManagementRepresentable {
     serializationContext.serialize(uint8: reserved)
   }
 
-  public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-    priority1 = try deserializationContext.deserialize()
-    reserved = try deserializationContext.deserialize()
+  public init(parsing input: inout ParserSpan) throws {
+    priority1 = try UInt8(parsing: &input)
+    reserved = try UInt8(parsing: &input)
   }
 }
 
@@ -373,9 +383,9 @@ public struct Priority2: PTPManagementRepresentable {
     serializationContext.serialize(uint8: reserved)
   }
 
-  public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-    priority2 = try deserializationContext.deserialize()
-    reserved = try deserializationContext.deserialize()
+  public init(parsing input: inout ParserSpan) throws {
+    priority2 = try UInt8(parsing: &input)
+    reserved = try UInt8(parsing: &input)
   }
 }
 
@@ -430,17 +440,17 @@ public struct PortDataSet: PTPManagementRepresentable {
     serializationContext.serialize(uint8: reserved_versionNumber)
   }
 
-  public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-    portIdentity = try PTP.PortIdentity(deserializationContext: &deserializationContext)
-    portState = try PTP.PortState(deserializationContext: &deserializationContext)
-    logMinDelayReqInterval = try deserializationContext.deserialize()
-    meanLinkDelay = try deserializationContext.deserialize()
-    logAnnounceInterval = try deserializationContext.deserialize()
-    announceReceiptTimeout = try deserializationContext.deserialize()
-    logSyncInterval = try deserializationContext.deserialize()
-    delayMechanism = try PTP.DelayMechanism(deserializationContext: &deserializationContext)
-    logMinPdelayReqInterval = try deserializationContext.deserialize()
-    reserved_versionNumber = try deserializationContext.deserialize()
+  public init(parsing input: inout ParserSpan) throws {
+    portIdentity = try PTP.PortIdentity(parsing: &input)
+    portState = try PTP.PortState(parsing: &input)
+    logMinDelayReqInterval = try Int8(parsing: &input)
+    meanLinkDelay = try Int64(parsing: &input, storedAsBigEndian: Int64.self)
+    logAnnounceInterval = try Int8(parsing: &input)
+    announceReceiptTimeout = try UInt8(parsing: &input)
+    logSyncInterval = try Int8(parsing: &input)
+    delayMechanism = try PTP.DelayMechanism(parsing: &input)
+    logMinPdelayReqInterval = try Int8(parsing: &input)
+    reserved_versionNumber = try UInt8(parsing: &input)
   }
 
   public var versionNumber: UInt8 {
@@ -462,8 +472,8 @@ public struct PortPropertiesNP: PTPManagementRepresentable {
       serializationContext.serialize(uint8: rawValue)
     }
 
-    public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-      let rawValue: RawValue = try deserializationContext.deserialize()
+    public init(parsing input: inout ParserSpan) throws {
+      let rawValue = try UInt8(parsing: &input)
       guard let value = Self(rawValue: rawValue) else {
         throw PTP.Error.unknownEnumerationValue
       }
@@ -483,11 +493,11 @@ public struct PortPropertiesNP: PTPManagementRepresentable {
     try interface.serialize(into: &serializationContext)
   }
 
-  public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-    portIdentity = try PTP.PortIdentity(deserializationContext: &deserializationContext)
-    portState = try PTP.PortState(deserializationContext: &deserializationContext)
-    timestamping = try Timestamping(deserializationContext: &deserializationContext)
-    interface = try PTP.PTPText(deserializationContext: &deserializationContext)
+  public init(parsing input: inout ParserSpan) throws {
+    portIdentity = try PTP.PortIdentity(parsing: &input)
+    portState = try PTP.PortState(parsing: &input)
+    timestamping = try Timestamping(parsing: &input)
+    interface = try PTP.PTPText(parsing: &input)
   }
 }
 
@@ -510,8 +520,8 @@ public struct PortDataSetNP: PTPManagementRepresentable {
     serializationContext.serialize(int32: asCapable)
   }
 
-  public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-    neighborPropDelayThresh = try deserializationContext.deserialize()
-    asCapable = try deserializationContext.deserialize()
+  public init(parsing input: inout ParserSpan) throws {
+    neighborPropDelayThresh = try UInt32(parsing: &input, storedAsBigEndian: UInt32.self)
+    asCapable = try Int32(parsing: &input, storedAsBigEndian: Int32.self)
   }
 }

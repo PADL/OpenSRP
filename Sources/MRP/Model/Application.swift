@@ -14,6 +14,7 @@
 // limitations under the License.
 //
 
+import BinaryParsing
 import IEEE802
 import Logging
 
@@ -68,7 +69,7 @@ public protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
   func makeNullValue(for attributeType: AttributeType) throws -> any Value
   func deserialize(
     attributeOfType attributeType: AttributeType,
-    from deserializationContext: inout DeserializationContext
+    from input: inout ParserSpan
   ) throws -> any Value
 
   func joinIndicated(
@@ -184,8 +185,9 @@ extension Application {
   }
 
   func rx(packet: IEEE802Packet, from port: P) async throws {
-    var deserializationContext = DeserializationContext(packet.payload)
-    let pdu = try MRPDU(deserializationContext: &deserializationContext, application: self)
+    let pdu = try packet.payload.withParserSpan { input in
+      try MRPDU(parsing: &input, application: self)
+    }
     try await rx(
       pdu: pdu,
       for: MAPContextIdentifier(packet: packet),

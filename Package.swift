@@ -1,4 +1,4 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.2
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
 import PackageDescription
@@ -115,6 +115,7 @@ let CommonPackageDependencies: [Package.Dependency] = [
   .package(url: "https://github.com/swhitty/FlyingFox", from: "0.25.0"),
   .package(url: "https://github.com/swhitty/FlyingFoxMacros", from: "0.2.0"),
   .package(url: "https://github.com/Flight-School/AnyCodable", from: "0.6.7"),
+  .package(url: "https://github.com/apple/swift-binary-parsing", from: "0.0.1"),
 ]
 
 let CommonProducts: [Product] = [
@@ -129,6 +130,7 @@ let CommonTargets: [Target] = [
     name: "IEEE802",
     dependencies: [
       .product(name: "SystemPackage", package: "swift-system"),
+      .product(name: "BinaryParsing", package: "swift-binary-parsing"),
     ]
   ),
   .target(
