@@ -14,6 +14,7 @@
 // limitations under the License.
 //
 
+import BinaryParsing
 import IEEE802
 
 enum MSRPPortMediaType {
@@ -147,8 +148,8 @@ public struct MSRPStreamID: Sendable, ExpressibleByIntegerLiteral, ExpressibleBy
     serializationContext.serialize(uint64: id)
   }
 
-  public init(deserializationContext: inout DeserializationContext) throws {
-    id = try deserializationContext.deserialize()
+  public init(parsing input: inout ParserSpan) throws {
+    id = try UInt64(parsing: &input, storedAsBigEndian: UInt64.self)
   }
 
   public func makeValue(relativeTo index: UInt64) throws -> Self {
@@ -193,8 +194,8 @@ public enum TSNFailureCode: UInt8, SerDes, Equatable {
     serializationContext.serialize(uint8: rawValue)
   }
 
-  public init(deserializationContext: inout DeserializationContext) throws {
-    guard let value = try Self(rawValue: deserializationContext.deserialize()) else {
+  public init(parsing input: inout ParserSpan) throws {
+    guard let value = try Self(rawValue: UInt8(parsing: &input)) else {
       throw MRPError.invalidFailureCode
     }
     self = value
@@ -229,10 +230,10 @@ public struct MSRPTSpec: SerDes, Equatable, Hashable {
     serializationContext.serialize(uint16: maxIntervalFrames)
   }
 
-  public init(deserializationContext: inout DeserializationContext) throws {
+  public init(parsing input: inout ParserSpan) throws {
     try self.init(
-      maxFrameSize: deserializationContext.deserialize(),
-      maxIntervalFrames: deserializationContext.deserialize()
+      maxFrameSize: UInt16(parsing: &input, storedAsBigEndian: UInt16.self),
+      maxIntervalFrames: UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
     )
   }
 }
@@ -280,14 +281,9 @@ public struct MSRPDataFrameParameters: Value, Equatable, Hashable, CustomStringC
     self.vlanIdentifier = vlanIdentifier
   }
 
-  public init(deserializationContext: inout DeserializationContext) throws {
-    destinationAddress.0 = try deserializationContext.deserialize()
-    destinationAddress.1 = try deserializationContext.deserialize()
-    destinationAddress.2 = try deserializationContext.deserialize()
-    destinationAddress.3 = try deserializationContext.deserialize()
-    destinationAddress.4 = try deserializationContext.deserialize()
-    destinationAddress.5 = try deserializationContext.deserialize()
-    vlanIdentifier = try VLAN(deserializationContext: &deserializationContext)
+  public init(parsing input: inout ParserSpan) throws {
+    destinationAddress = try _eui48(parsing: &input)
+    vlanIdentifier = try VLAN(parsing: &input)
   }
 
   private init(_ value: UInt64) throws {
@@ -322,8 +318,8 @@ public struct MSRPPriorityAndRank: SerDes, Equatable, Hashable, Comparable,
     value = dataFramePriority.rawValue << 5 | (rank ? 0x10 : 0x00)
   }
 
-  public init(deserializationContext: inout DeserializationContext) throws {
-    value = try deserializationContext.deserialize()
+  public init(parsing input: inout ParserSpan) throws {
+    value = try UInt8(parsing: &input)
   }
 
   public func serialize(into serializationContext: inout SerializationContext) throws {

@@ -15,6 +15,7 @@
 //
 
 import AsyncExtensions
+import BinaryParsing
 import IEEE802
 import Logging
 import Synchronization
@@ -355,19 +356,19 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
 
   public func deserialize(
     attributeOfType attributeType: AttributeType,
-    from deserializationContext: inout DeserializationContext
+    from input: inout ParserSpan
   ) throws -> any Value {
     guard let attributeType = MSRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }
     switch attributeType {
     case .talkerAdvertise:
-      return try MSRPTalkerAdvertiseValue(deserializationContext: &deserializationContext)
+      return try MSRPTalkerAdvertiseValue(parsing: &input)
     case .talkerFailed:
-      return try MSRPTalkerFailedValue(deserializationContext: &deserializationContext)
+      return try MSRPTalkerFailedValue(parsing: &input)
     case .listener:
-      return try MSRPListenerValue(deserializationContext: &deserializationContext)
+      return try MSRPListenerValue(parsing: &input)
     case .domain:
-      return try MSRPDomainValue(deserializationContext: &deserializationContext)
+      return try MSRPDomainValue(parsing: &input)
     }
   }
 

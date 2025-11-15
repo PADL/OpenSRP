@@ -14,6 +14,7 @@
 // limitations under the License.
 //
 
+import BinaryParsing
 import SystemPackage
 
 public protocol Serializable: Sendable {
@@ -28,8 +29,8 @@ public extension Serializable {
   }
 }
 
-public protocol Deserializble: Sendable {
-  init(deserializationContext: inout DeserializationContext) throws
+public protocol Deserializble: Sendable, ExpressibleByParsing {
+  init(parsing input: inout ParserSpan) throws
 }
 
 public protocol SerDes: Serializable, Deserializble {}
@@ -112,98 +113,17 @@ package func _bytesToHex(_ bytes: [UInt8], uppercase: Bool = false) -> String {
   bytes.map { _byteToHex($0) }.joined()
 }
 
-public struct DeserializationContext: CustomStringConvertible {
-  private let bytes: [UInt8]
-  public private(set) var position: Int
+// MARK: - Helper function for EUI48
 
-  public init(_ bytes: [UInt8]) {
-    self.bytes = bytes
-    position = 0
-  }
-
-  public var count: Int { bytes.count }
-
-  public var description: String {
-    "DeserializationContext(\(_bytesToHex(Array(bytes[position..<bytes.count]))))"
-  }
-
-  public var bytesRemaining: Int {
-    bytes.count - position
-  }
-
-  public func assertRemainingLength(isAtLeast count: Int) throws {
-    guard bytesRemaining >= count else {
-      throw Errno.outOfRange
-    }
-  }
-
-  public mutating func deserialize(count: Int) throws -> ArraySlice<UInt8> {
-    try assertRemainingLength(isAtLeast: count)
-    defer { position += count }
-    return bytes[position..<(position + count)]
-  }
-
-  public func peek(count: Int) throws -> ArraySlice<UInt8> {
-    try assertRemainingLength(isAtLeast: count)
-    return bytes[position..<(position + count)]
-  }
-
-  public mutating func deserialize() throws -> UInt8 {
-    try deserialize(count: 1).first!
-  }
-
-  public mutating func deserialize() throws -> UInt16 {
-    try UInt16(bigEndianBytes: deserialize(count: 2))
-  }
-
-  public mutating func deserialize() throws -> UInt32 {
-    try UInt32(bigEndianBytes: deserialize(count: 4))
-  }
-
-  public mutating func deserialize() throws -> UInt64 {
-    try UInt64(bigEndianBytes: deserialize(count: 8))
-  }
-
-  public mutating func deserialize() throws -> Int8 {
-    try Int8(bitPattern: deserialize(count: 1).first!)
-  }
-
-  public mutating func deserialize() throws -> Int16 {
-    try Int16(bigEndianBytes: deserialize(count: 2))
-  }
-
-  public mutating func deserialize() throws -> Int32 {
-    try Int32(bigEndianBytes: deserialize(count: 4))
-  }
-
-  public mutating func deserialize() throws -> Int64 {
-    try Int64(bigEndianBytes: deserialize(count: 8))
-  }
-
-  public mutating func deserialize() throws -> EUI48 {
-    let bytes = try Array(deserialize(count: 6))
-    return (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5])
-  }
-
-  public mutating func deserializeRemaining() -> ArraySlice<UInt8> {
-    bytes[position..<bytes.count]
-  }
-
-  public func peek() throws -> UInt8 {
-    try peek(count: 1).first!
-  }
-
-  public func peek() throws -> UInt16 {
-    try UInt16(bigEndianBytes: peek(count: 2))
-  }
-
-  public func peek() throws -> UInt32 {
-    try UInt32(bigEndianBytes: peek(count: 4))
-  }
-
-  public func peek() throws -> UInt64 {
-    try UInt64(bigEndianBytes: peek(count: 8))
-  }
+package func _eui48(parsing input: inout ParserSpan) throws -> EUI48 {
+  try (
+    UInt8(parsing: &input),
+    UInt8(parsing: &input),
+    UInt8(parsing: &input),
+    UInt8(parsing: &input),
+    UInt8(parsing: &input),
+    UInt8(parsing: &input)
+  )
 }
 
 extension FixedWidthInteger {

@@ -14,6 +14,7 @@
 // limitations under the License.
 //
 
+import BinaryParsing
 import IEEE802
 import SystemPackage
 
@@ -44,8 +45,8 @@ public enum PTP {
       serializationContext.serialize(uint8: rawValue)
     }
 
-    public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-      let rawValue: RawValue = try deserializationContext.deserialize()
+    public init(parsing input: inout ParserSpan) throws {
+      let rawValue = try UInt8(parsing: &input)
       guard let value = Self(rawValue: rawValue) else {
         throw Error.unknownEnumerationValue
       }
@@ -69,8 +70,8 @@ public enum PTP {
       serializationContext.serialize(uint8: rawValue)
     }
 
-    public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-      let rawValue: RawValue = try deserializationContext.deserialize()
+    public init(parsing input: inout ParserSpan) throws {
+      let rawValue = try UInt8(parsing: &input)
       guard let value = Self(rawValue: rawValue) else {
         throw Error.unknownEnumerationValue
       }
@@ -90,8 +91,8 @@ public enum PTP {
       serializationContext.serialize(uint8: rawValue)
     }
 
-    init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-      let rawValue: RawValue = try deserializationContext.deserialize()
+    init(parsing input: inout ParserSpan) throws {
+      let rawValue = try UInt8(parsing: &input)
       guard let value = Self(rawValue: rawValue) else {
         throw Error.unknownEnumerationValue
       }
@@ -110,8 +111,8 @@ public enum PTP {
       serializationContext.serialize(uint8: rawValue)
     }
 
-    public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-      let rawValue: RawValue = try deserializationContext.deserialize()
+    public init(parsing input: inout ParserSpan) throws {
+      let rawValue = try UInt8(parsing: &input)
       guard let value = Self(rawValue: rawValue) else {
         throw Error.unknownEnumerationValue
       }
@@ -141,8 +142,8 @@ public enum PTP {
       serializationContext.serialize(uint8: rawValue)
     }
 
-    public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-      rawValue = try deserializationContext.deserialize()
+    public init(parsing input: inout ParserSpan) throws {
+      rawValue = try UInt8(parsing: &input)
     }
 
     public static let altMaster = FlagField0(rawValue: 1 << 0)
@@ -169,8 +170,8 @@ public enum PTP {
       serializationContext.serialize(uint8: rawValue)
     }
 
-    public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-      rawValue = try deserializationContext.deserialize()
+    public init(parsing input: inout ParserSpan) throws {
+      rawValue = try UInt8(parsing: &input)
     }
   }
 
@@ -190,8 +191,8 @@ public enum PTP {
       serializationContext.serialize(uint8: rawValue)
     }
 
-    public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-      let rawValue: RawValue = try deserializationContext.deserialize()
+    public init(parsing input: inout ParserSpan) throws {
+      let rawValue = try UInt8(parsing: &input)
       guard let value = Self(rawValue: rawValue) else {
         throw Error.unknownEnumerationValue
       }
@@ -218,10 +219,10 @@ public enum PTP {
       serializationContext.serialize(uint16: fractionalNanoseconds)
     }
 
-    public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-      nanosecondsMsb = try deserializationContext.deserialize()
-      nanosecondsLsb = try deserializationContext.deserialize()
-      fractionalNanoseconds = try deserializationContext.deserialize()
+    public init(parsing input: inout ParserSpan) throws {
+      nanosecondsMsb = try Int16(parsing: &input, storedAsBigEndian: Int16.self)
+      nanosecondsLsb = try UInt64(parsing: &input, storedAsBigEndian: UInt64.self)
+      fractionalNanoseconds = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
     }
   }
 
@@ -246,10 +247,10 @@ public enum PTP {
       serializationContext.serialize(uint32: nanoseconds)
     }
 
-    public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-      secondsMsb = try deserializationContext.deserialize()
-      secondsLsb = try deserializationContext.deserialize()
-      nanoseconds = try deserializationContext.deserialize()
+    public init(parsing input: inout ParserSpan) throws {
+      secondsMsb = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
+      secondsLsb = try UInt32(parsing: &input, storedAsBigEndian: UInt32.self)
+      nanoseconds = try UInt32(parsing: &input, storedAsBigEndian: UInt32.self)
     }
   }
 
@@ -287,8 +288,8 @@ public enum PTP {
       serializationContext.serialize(bytes)
     }
 
-    public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-      let bytes = try Array(deserializationContext.deserialize(count: 8))
+    public init(parsing input: inout ParserSpan) throws {
+      let bytes = try Array(parsing: &input, byteCount: 8)
       id.0 = bytes[0]
       id.1 = bytes[1]
       id.2 = bytes[2]
@@ -338,9 +339,9 @@ public enum PTP {
       serializationContext.serialize(uint16: portNumber)
     }
 
-    public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-      clockIdentity = try ClockIdentity(deserializationContext: &deserializationContext)
-      portNumber = try deserializationContext.deserialize()
+    public init(parsing input: inout ParserSpan) throws {
+      clockIdentity = try ClockIdentity(parsing: &input)
+      portNumber = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
     }
 
     public var description: String {
@@ -362,10 +363,10 @@ public enum PTP {
       serializationContext.serialize(address)
     }
 
-    public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-      networkProtocol = try deserializationContext.deserialize()
-      let addressLength: UInt16 = try deserializationContext.deserialize()
-      address = try Array(deserializationContext.deserialize(count: Int(addressLength)))
+    public init(parsing input: inout ParserSpan) throws {
+      networkProtocol = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
+      let addressLength = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
+      address = try Array(parsing: &input, byteCount: Int(addressLength))
     }
   }
 
@@ -380,9 +381,9 @@ public enum PTP {
       serializationContext.serialize(address)
     }
 
-    public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-      let addressLength: UInt16 = try deserializationContext.deserialize()
-      address = try Array(deserializationContext.deserialize(count: Int(addressLength)))
+    public init(parsing input: inout ParserSpan) throws {
+      let addressLength = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
+      address = try Array(parsing: &input, byteCount: Int(addressLength))
     }
   }
 
@@ -403,10 +404,10 @@ public enum PTP {
       serializationContext.serialize(uint16: offsetScaledLogVariance)
     }
 
-    public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-      clockClass = try deserializationContext.deserialize()
-      clockAccuracy = try deserializationContext.deserialize()
-      offsetScaledLogVariance = try deserializationContext.deserialize()
+    public init(parsing input: inout ParserSpan) throws {
+      clockClass = try UInt8(parsing: &input)
+      clockAccuracy = try UInt8(parsing: &input)
+      offsetScaledLogVariance = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
     }
   }
 
@@ -437,8 +438,8 @@ public enum PTP {
       serializationContext.serialize(uint16: rawValue)
     }
 
-    init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-      let rawValue: RawValue = try deserializationContext.deserialize()
+    init(parsing input: inout ParserSpan) throws {
+      let rawValue = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
       guard let value = Self(rawValue: rawValue) else {
         throw Error.unknownEnumerationValue
       }
@@ -459,8 +460,8 @@ public enum PTP {
       serializationContext.serialize([id.0, id.1, id.2, subtype.0, subtype.1, subtype.2])
     }
 
-    init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-      let bytes = try Array(deserializationContext.deserialize(count: 6))
+    init(parsing input: inout ParserSpan) throws {
+      let bytes = try Array(parsing: &input, byteCount: 6)
       id = (bytes[0], bytes[1], bytes[3])
       subtype = (bytes[3], bytes[4], bytes[5])
     }
@@ -479,8 +480,8 @@ public enum PTP {
       serializationContext.serialize(uint16: rawValue)
     }
 
-    init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-      rawValue = try deserializationContext.deserialize()
+    init(parsing input: inout ParserSpan) throws {
+      rawValue = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
     }
 
     static let txCoherentIsRequired = L1SyncFlagField0(rawValue: 1 << 0)
@@ -502,8 +503,8 @@ public enum PTP {
       serializationContext.serialize(uint16: rawValue)
     }
 
-    init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-      rawValue = try deserializationContext.deserialize()
+    init(parsing input: inout ParserSpan) throws {
+      rawValue = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
     }
 
     static let isTxCoherent = L1SyncFlagField1(rawValue: 1 << 0)
@@ -534,9 +535,9 @@ public enum PTP {
       serializationContext.serialize(text)
     }
 
-    public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-      let length: UInt8 = try deserializationContext.deserialize()
-      text = try Array(deserializationContext.deserialize(count: Int(length))) + [0]
+    public init(parsing input: inout ParserSpan) throws {
+      let length = try UInt8(parsing: &input)
+      text = try Array(parsing: &input, byteCount: Int(length)) + [0]
     }
 
     public var description: String {
@@ -577,13 +578,13 @@ public enum PTP {
       try faultDescription.serialize(into: &serializationContext)
     }
 
-    init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-      faultRecordLength = try deserializationContext.deserialize()
-      try faultTime = Timestamp(deserializationContext: &deserializationContext)
-      severityCode = try deserializationContext.deserialize()
-      try faultName = PTPText(deserializationContext: &deserializationContext)
-      try faultValue = PTPText(deserializationContext: &deserializationContext)
-      try faultDescription = PTPText(deserializationContext: &deserializationContext)
+    init(parsing input: inout ParserSpan) throws {
+      faultRecordLength = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
+      faultTime = try Timestamp(parsing: &input)
+      severityCode = try UInt8(parsing: &input)
+      faultName = try PTPText(parsing: &input)
+      faultValue = try PTPText(parsing: &input)
+      faultDescription = try PTPText(parsing: &input)
     }
   }
 
@@ -601,8 +602,8 @@ public enum PTP {
       serializationContext.serialize(uint8: rawValue)
     }
 
-    public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-      let rawValue: RawValue = try deserializationContext.deserialize()
+    public init(parsing input: inout ParserSpan) throws {
+      let rawValue = try UInt8(parsing: &input)
       guard let value = Self(rawValue: rawValue) else {
         throw Error.unknownEnumerationValue
       }
@@ -759,27 +760,27 @@ public enum PTP {
       serializationContext.serialize(uint8: logMessageInterval)
     }
 
-    public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-      majorSdoId_messageType = try deserializationContext.deserialize()
+    public init(parsing input: inout ParserSpan) throws {
+      majorSdoId_messageType = try UInt8(parsing: &input)
       guard MessageType(rawValue: majorSdoId_messageType & Self.MessageTypeMask) != nil else {
         throw Error.unknownMessageType
       }
-      versionPTP = try PtpVersion(deserializationContext: &deserializationContext)
-      messageLength = try deserializationContext.deserialize()
-      guard messageLength <= deserializationContext.count else {
+      versionPTP = try PtpVersion(parsing: &input)
+      messageLength = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
+      guard messageLength <= input.count else {
         throw Error.messageTruncated
       }
-      domainNumber = try deserializationContext.deserialize()
-      minorSdoId = try deserializationContext.deserialize()
-      try flagField0 = FlagField0(deserializationContext: &deserializationContext)
-      try flagField1 = FlagField1(deserializationContext: &deserializationContext)
-      correctionField = try deserializationContext.deserialize()
-      let bytes = try Array(deserializationContext.deserialize(count: 4))
+      domainNumber = try UInt8(parsing: &input)
+      minorSdoId = try UInt8(parsing: &input)
+      flagField0 = try FlagField0(parsing: &input)
+      flagField1 = try FlagField1(parsing: &input)
+      correctionField = try Int64(parsing: &input, storedAsBigEndian: Int64.self)
+      let bytes = try Array(parsing: &input, byteCount: 4)
       messageTypeSpecific = (bytes[0], bytes[1], bytes[2], bytes[3])
-      sourcePortIdentity = try PortIdentity(deserializationContext: &deserializationContext)
-      sequenceId = try deserializationContext.deserialize()
-      controlField = try ControlField(deserializationContext: &deserializationContext)
-      logMessageInterval = try deserializationContext.deserialize()
+      sourcePortIdentity = try PortIdentity(parsing: &input)
+      sequenceId = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
+      controlField = try ControlField(parsing: &input)
+      logMessageInterval = try UInt8(parsing: &input)
     }
   }
 
@@ -805,8 +806,8 @@ public enum PTP {
       serializationContext.serialize(uint8: rawValue)
     }
 
-    public init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-      let rawValue: RawValue = try deserializationContext.deserialize()
+    public init(parsing input: inout ParserSpan) throws {
+      let rawValue = try UInt8(parsing: &input)
       guard let value = Self(rawValue: rawValue) else {
         throw Error.unknownEnumerationValue
       }
@@ -874,27 +875,46 @@ public enum PTP {
       try managementTLV.serialize(into: &serializationContext)
     }
 
-    init(deserializationContext: inout IEEE802.DeserializationContext) throws {
-      header = try Header(deserializationContext: &deserializationContext)
-      targetPortIdentity = try PortIdentity(deserializationContext: &deserializationContext)
-      startingBoundaryHops = try deserializationContext.deserialize()
-      boundaryHops = try deserializationContext.deserialize()
-      reserved_actionField = try deserializationContext.deserialize()
+    init(parsing input: inout ParserSpan) throws {
+      header = try Header(parsing: &input)
+      targetPortIdentity = try PortIdentity(parsing: &input)
+      startingBoundaryHops = try UInt8(parsing: &input)
+      boundaryHops = try UInt8(parsing: &input)
+      reserved_actionField = try UInt8(parsing: &input)
       guard ActionField(rawValue: reserved_actionField) != nil else {
         throw Error.invalidManagementActionField
       }
-      reserved = try deserializationContext.deserialize()
-      guard let tlvType = try TLVType(rawValue: deserializationContext.peek()) else {
+      reserved = try UInt8(parsing: &input)
+
+      // Parse TLV type to determine which TLV struct to use
+      let tlvTypeRaw = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
+      guard let tlvType = TLVType(rawValue: tlvTypeRaw) else {
         throw Error.unknownTLVType
       }
 
+      // Now parse the length field
+      let lengthField = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
+
       switch tlvType {
       case .management:
-        managementTLV = try PTPManagementTLV(deserializationContext: &deserializationContext)
+        // Parse management ID and data
+        guard lengthField >= 2 else {
+          throw Error.invalidManagementTLVLength
+        }
+        let managementId = try PTPManagementID(parsing: &input)
+        let dataField = try Array(parsing: &input, byteCount: Int(lengthField - 2))
+        managementTLV = PTPManagementTLV(
+          _tlvType: tlvType,
+          _managementId: managementId,
+          _dataField: dataField
+        )
       case .managementErrorStatus:
-        let managementErrorStatus =
-          try PTPManagementErrorStatusTLV(deserializationContext: &deserializationContext)
-        throw managementErrorStatus.managementErrorId
+        // Parse error status TLV and throw its error
+        guard lengthField >= 8 else {
+          throw Error.invalidManagementTLVLength
+        }
+        let managementErrorId = try PTPManagementError(parsing: &input)
+        throw managementErrorId
       default:
         throw Error.invalidManagementTLVType
       }

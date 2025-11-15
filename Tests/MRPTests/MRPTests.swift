@@ -19,6 +19,7 @@
 import XCTest
 @preconcurrency
 import AsyncExtensions
+import BinaryParsing
 import IEEE802
 import Logging
 import SystemPackage
@@ -295,12 +296,13 @@ final class MRPTests: XCTestCase {
       0x00,
     ]
 
-    var deserializationContext = DeserializationContext(bytes)
-    let packet = try IEEE802Packet(deserializationContext: &deserializationContext)
+    let packet = try bytes.withParserSpan { input in
+      try IEEE802Packet(parsing: &input)
+    }
 
-    var deserializationContext2 = DeserializationContext(packet.payload)
-
-    let pdu = try MRPDU(deserializationContext: &deserializationContext2, application: mvrp)
+    let pdu = try packet.payload.withParserSpan { input in
+      try MRPDU(parsing: &input, application: mvrp)
+    }
     XCTAssertEqual(pdu.protocolVersion, 0)
     XCTAssertEqual(pdu.messages.count, 1)
     if let message = pdu.messages.first {
@@ -359,9 +361,9 @@ final class MRPTests: XCTestCase {
     try serviceReqValue.serialize(into: &serializationContext)
     XCTAssertEqual(serializationContext.bytes, [0x00])
 
-    var deserializationContext = DeserializationContext([0x00])
-    let deserializedServiceReq =
-      try MMRPServiceRequirementValue(deserializationContext: &deserializationContext)
+    let deserializedServiceReq = try [0x00].withParserSpan { input in
+      try MMRPServiceRequirementValue(parsing: &input)
+    }
     XCTAssertEqual(deserializedServiceReq, .allGroups)
 
     // Test MAC value serialization
@@ -370,8 +372,9 @@ final class MRPTests: XCTestCase {
     try macValue.serialize(into: &serializationContext)
 
     // Test that we can deserialize what we just serialized
-    deserializationContext = DeserializationContext(serializationContext.bytes)
-    let deserializedMAC = try MMRPMACValue(deserializationContext: &deserializationContext)
+    let deserializedMAC = try serializationContext.bytes.withParserSpan { input in
+      try MMRPMACValue(parsing: &input)
+    }
 
     // Test round-trip serialization - with the fixed deserialization logic,
     // this should now properly preserve the data
@@ -665,9 +668,9 @@ final class MRPTests: XCTestCase {
     var serializationContext = SerializationContext()
     try talkerAdvertise.serialize(into: &serializationContext)
 
-    var deserializationContext = DeserializationContext(serializationContext.bytes)
-    let deserializedTalker =
-      try MSRPTalkerAdvertiseValue(deserializationContext: &deserializationContext)
+    let deserializedTalker = try serializationContext.bytes.withParserSpan { input in
+      try MSRPTalkerAdvertiseValue(parsing: &input)
+    }
 
     XCTAssertEqual(deserializedTalker.streamID, streamID)
     XCTAssertEqual(deserializedTalker.accumulatedLatency, 1000)
@@ -676,17 +679,18 @@ final class MRPTests: XCTestCase {
     serializationContext = SerializationContext()
     try listener.serialize(into: &serializationContext)
 
-    deserializationContext = DeserializationContext(serializationContext.bytes)
-    let deserializedListener =
-      try MSRPListenerValue(deserializationContext: &deserializationContext)
+    let deserializedListener = try serializationContext.bytes.withParserSpan { input in
+      try MSRPListenerValue(parsing: &input)
+    }
     XCTAssertEqual(deserializedListener.streamID, streamID)
 
     let domain = try MSRPDomainValue()
     serializationContext = SerializationContext()
     try domain.serialize(into: &serializationContext)
 
-    deserializationContext = DeserializationContext(serializationContext.bytes)
-    let deserializedDomain = try MSRPDomainValue(deserializationContext: &deserializationContext)
+    let deserializedDomain = try serializationContext.bytes.withParserSpan { input in
+      try MSRPDomainValue(parsing: &input)
+    }
     XCTAssertEqual(deserializedDomain.srClassID, domain.srClassID)
     XCTAssertEqual(deserializedDomain.srClassPriority, domain.srClassPriority)
     XCTAssertEqual(deserializedDomain.srClassVID, domain.srClassVID)
@@ -742,8 +746,9 @@ final class MRPTests: XCTestCase {
     let expectedBytes1: [UInt8] = [0x12, 0x34] // 0 << 13 | 0x1234 = 0x1234
     XCTAssertEqual(serializationContext.bytes, expectedBytes1)
 
-    var deserializationContext = DeserializationContext(expectedBytes1)
-    let deserializedHeader1 = try VectorHeader(deserializationContext: &deserializationContext)
+    let deserializedHeader1 = try expectedBytes1.withParserSpan { input in
+      try VectorHeader(parsing: &input)
+    }
 
     XCTAssertEqual(deserializedHeader1.leaveAllEvent, .NullLeaveAllEvent)
     XCTAssertEqual(deserializedHeader1.numberOfValues, 0x1234)
@@ -757,8 +762,9 @@ final class MRPTests: XCTestCase {
     let expectedBytes2: [UInt8] = [0x02, 0x34] // Actual result from test is [2, 52]
     XCTAssertEqual(serializationContext.bytes, expectedBytes2)
 
-    deserializationContext = DeserializationContext(expectedBytes2)
-    let deserializedHeader2 = try VectorHeader(deserializationContext: &deserializationContext)
+    let deserializedHeader2 = try expectedBytes2.withParserSpan { input in
+      try VectorHeader(parsing: &input)
+    }
 
     XCTAssertEqual(
       deserializedHeader2.leaveAllEvent,
@@ -786,15 +792,15 @@ final class MRPTests: XCTestCase {
       XCTAssertEqual(error as? MRPError, .invalidAttributeValue)
     }
 
-    var invalidContext = DeserializationContext([0xFF, 0xFF])
-    XCTAssertThrowsError(try VLAN(deserializationContext: &invalidContext)) { error in
+    XCTAssertThrowsError(try [0xFF, 0xFF].withParserSpan { input in
+      try VLAN(parsing: &input)
+    }) { error in
       XCTAssertEqual(error as? MRPError, .invalidAttributeValue)
     }
 
-    var shortContext = DeserializationContext([0x01])
-    XCTAssertThrowsError(try shortContext.deserialize() as UInt16) { error in
-      XCTAssertEqual(error as? Errno, .outOfRange)
-    }
+    XCTAssertThrowsError(try [0x01].withParserSpan { input in
+      try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
+    })
   }
 
   func testBigEndianIntegerSerialization() throws {
@@ -814,15 +820,17 @@ final class MRPTests: XCTestCase {
     serializationContext.serialize(uint64: uint64)
     XCTAssertEqual(serializationContext.bytes, [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0])
 
-    var deserializationContext = DeserializationContext([0x12, 0x34])
-    let deserializedUInt16: UInt16 = try deserializationContext.deserialize()
+    let deserializedUInt16 = try [0x12, 0x34].withParserSpan { input in
+      try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
+    }
     XCTAssertEqual(deserializedUInt16, 0x1234)
 
-    deserializationContext = DeserializationContext([0x12, 0x34, 0x56, 0x78])
-    let deserializedUInt32: UInt32 = try deserializationContext.deserialize()
+    let deserializedUInt32 = try [0x12, 0x34, 0x56, 0x78].withParserSpan { input in
+      try UInt32(parsing: &input, storedAsBigEndian: UInt32.self)
+    }
     XCTAssertEqual(deserializedUInt32, 0x1234_5678)
 
-    deserializationContext = DeserializationContext([
+    let deserializedUInt64 = try [
       0x12,
       0x34,
       0x56,
@@ -831,8 +839,9 @@ final class MRPTests: XCTestCase {
       0xBC,
       0xDE,
       0xF0,
-    ])
-    let deserializedUInt64: UInt64 = try deserializationContext.deserialize()
+    ].withParserSpan { input in
+      try UInt64(parsing: &input, storedAsBigEndian: UInt64.self)
+    }
     XCTAssertEqual(deserializedUInt64, 0x1234_5678_9ABC_DEF0)
   }
 
@@ -843,8 +852,9 @@ final class MRPTests: XCTestCase {
     serializationContext.serialize(eui48: eui48)
     XCTAssertEqual(serializationContext.bytes, [0x01, 0x80, 0xC2, 0x00, 0x00, 0x21])
 
-    var deserializationContext = DeserializationContext([0x01, 0x80, 0xC2, 0x00, 0x00, 0x21])
-    let deserializedEUI48: EUI48 = try deserializationContext.deserialize()
+    let deserializedEUI48 = try [0x01, 0x80, 0xC2, 0x00, 0x00, 0x21].withParserSpan { input in
+      try _eui48(parsing: &input)
+    }
     XCTAssertTrue(_isEqualMacAddress(deserializedEUI48, eui48))
   }
 

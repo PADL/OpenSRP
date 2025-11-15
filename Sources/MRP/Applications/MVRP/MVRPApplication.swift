@@ -14,6 +14,7 @@
 // limitations under the License.
 //
 
+import BinaryParsing
 import IEEE802
 import Logging
 import Synchronization
@@ -78,13 +79,13 @@ public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationEve
 
   public func deserialize(
     attributeOfType attributeType: AttributeType,
-    from deserializationContext: inout DeserializationContext
+    from input: inout ParserSpan
   ) throws -> any Value {
     guard let attributeType = MVRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }
     switch attributeType {
     case .vid:
-      return try VLAN(deserializationContext: &deserializationContext)
+      return try VLAN(parsing: &input)
     }
   }
 

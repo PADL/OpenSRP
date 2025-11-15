@@ -18,6 +18,7 @@
 // by the FirstValue and NumberOfValues includes the attribute value associated
 // with the state machine.
 
+import BinaryParsing
 import IEEE802
 
 public protocol Value: SerDes, Equatable {
@@ -68,7 +69,7 @@ struct AnyValue: Value, Equatable, CustomStringConvertible {
     return Self(value)
   }
 
-  init(deserializationContext _: inout DeserializationContext) throws {
+  init(parsing _: inout ParserSpan) throws {
     fatalError("cannot deserialize type-erased value")
   }
 
