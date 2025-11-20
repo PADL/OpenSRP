@@ -12,8 +12,6 @@ var PlatformSwiftSettings: [SwiftSetting] = []
 var PlatformLinkerSettings: [LinkerSetting] = []
 
 #if os(Linux)
-PlatformCSettings += [.unsafeFlags(["-I", "/usr/include/libnl3"])]
-
 PlatformPackageDependencies = [
   .package(
     url: "https://github.com/PADL/IORingSwift",
