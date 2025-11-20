@@ -1327,6 +1327,201 @@ final class MRPTests: XCTestCase {
     XCTAssertEqual(deserialized.messageLength, messageLength)
     XCTAssertEqual(deserialized.sequenceId, 42)
   }
+
+  // MARK: - PDU Attribute List Length Tests
+
+  func testMSRPAttributeListLengthParsing() async throws {
+    let logger = Logger(label: "com.padl.MRPTests.MSRP")
+    let bridge = MockBridge()
+    let controller = try await MRPController(bridge: bridge, logger: logger)
+    let msrp = try await MSRPApplication(controller: controller)
+
+    // Create a minimal MSRP PDU with attributeListLength
+    // This tests that bytesProcessed calculation works correctly
+    let streamID = MSRPStreamID(0x0001_F2FE_D2A4_0000)
+    let talkerAdvertise = MSRPTalkerAdvertiseValue(
+      streamID: streamID,
+      dataFrameParameters: MSRPDataFrameParameters(),
+      tSpec: MSRPTSpec(),
+      priorityAndRank: MSRPPriorityAndRank(),
+      accumulatedLatency: 1000
+    )
+
+    // Create a message with the talker advertise attribute
+    let vectorAttribute = VectorAttribute(
+      leaveAllEvent: .NullLeaveAllEvent,
+      firstValue: AnyValue(talkerAdvertise),
+      attributeEvents: [.JoinMt],
+      applicationEvents: nil
+    )
+
+    let message = Message(attributeType: 1, attributeList: [vectorAttribute])
+
+    // Serialize the message
+    var serializationContext = SerializationContext()
+    try message.serialize(into: &serializationContext, application: msrp)
+
+    // Parse it back
+    let parsedMessage = try serializationContext.bytes.withParserSpan { input in
+      try Message(parsing: &input, application: msrp)
+    }
+
+    XCTAssertEqual(parsedMessage.attributeType, 1)
+    XCTAssertEqual(parsedMessage.attributeList.count, 1)
+  }
+
+  func testMSRPAttributeListLengthWithMultipleAttributes() async throws {
+    let logger = Logger(label: "com.padl.MRPTests.MSRP")
+    let bridge = MockBridge()
+    let controller = try await MRPController(bridge: bridge, logger: logger)
+    let msrp = try await MSRPApplication(controller: controller)
+
+    // Create multiple attributes to test the bytesProcessed loop
+    let streamID1 = MSRPStreamID(0x0001_0000_0000_0001)
+    let streamID2 = MSRPStreamID(0x0001_0000_0000_0002)
+    let streamID3 = MSRPStreamID(0x0001_0000_0000_0003)
+
+    let talker1 = MSRPTalkerAdvertiseValue(
+      streamID: streamID1,
+      dataFrameParameters: MSRPDataFrameParameters(),
+      tSpec: MSRPTSpec(),
+      priorityAndRank: MSRPPriorityAndRank(),
+      accumulatedLatency: 1000
+    )
+
+    let talker2 = MSRPTalkerAdvertiseValue(
+      streamID: streamID2,
+      dataFrameParameters: MSRPDataFrameParameters(),
+      tSpec: MSRPTSpec(),
+      priorityAndRank: MSRPPriorityAndRank(),
+      accumulatedLatency: 2000
+    )
+
+    let talker3 = MSRPTalkerAdvertiseValue(
+      streamID: streamID3,
+      dataFrameParameters: MSRPDataFrameParameters(),
+      tSpec: MSRPTSpec(),
+      priorityAndRank: MSRPPriorityAndRank(),
+      accumulatedLatency: 3000
+    )
+
+    // Create vector attributes with consecutive stream IDs
+    let vectorAttribute1 = VectorAttribute(
+      leaveAllEvent: .NullLeaveAllEvent,
+      firstValue: AnyValue(talker1),
+      attributeEvents: [.JoinMt],
+      applicationEvents: nil
+    )
+
+    let vectorAttribute2 = VectorAttribute(
+      leaveAllEvent: .NullLeaveAllEvent,
+      firstValue: AnyValue(talker2),
+      attributeEvents: [.JoinMt],
+      applicationEvents: nil
+    )
+
+    let vectorAttribute3 = VectorAttribute(
+      leaveAllEvent: .NullLeaveAllEvent,
+      firstValue: AnyValue(talker3),
+      attributeEvents: [.JoinMt],
+      applicationEvents: nil
+    )
+
+    let message = Message(
+      attributeType: 1,
+      attributeList: [vectorAttribute1, vectorAttribute2, vectorAttribute3]
+    )
+
+    // Serialize the message
+    var serializationContext = SerializationContext()
+    try message.serialize(into: &serializationContext, application: msrp)
+
+    // Parse it back and verify bytesProcessed tracking works correctly
+    let parsedMessage = try serializationContext.bytes.withParserSpan { input in
+      try Message(parsing: &input, application: msrp)
+    }
+
+    XCTAssertEqual(parsedMessage.attributeType, 1)
+    XCTAssertEqual(parsedMessage.attributeList.count, 3)
+  }
+
+  func testMVRPWithoutAttributeListLength() async throws {
+    // This test verifies the EndMark-based parsing (without attributeListLength)
+    let logger = Logger(label: "com.padl.MRPTests.MVRP")
+    let bridge = MockBridge()
+    let controller = try await MRPController(bridge: bridge, logger: logger)
+    let mvrp = try await MVRPApplication(controller: controller)
+
+    // Verify that MVRP doesn't use attributeListLength
+    XCTAssertFalse(mvrp.hasAttributeListLength)
+
+    // Create a message with multiple VLANs
+    let vlan1 = VectorAttribute(
+      leaveAllEvent: .NullLeaveAllEvent,
+      firstValue: AnyValue(VLAN(vid: 100)),
+      attributeEvents: [.JoinMt, .JoinIn],
+      applicationEvents: nil
+    )
+
+    let vlan2 = VectorAttribute(
+      leaveAllEvent: .NullLeaveAllEvent,
+      firstValue: AnyValue(VLAN(vid: 200)),
+      attributeEvents: [.JoinMt],
+      applicationEvents: nil
+    )
+
+    let message = Message(attributeType: 1, attributeList: [vlan1, vlan2])
+
+    // Serialize the message
+    var serializationContext = SerializationContext()
+    try message.serialize(into: &serializationContext, application: mvrp)
+
+    // Parse it back and verify EndMark-based parsing works
+    let parsedMessage = try serializationContext.bytes.withParserSpan { input in
+      try Message(parsing: &input, application: mvrp)
+    }
+
+    XCTAssertEqual(parsedMessage.attributeType, 1)
+    XCTAssertEqual(parsedMessage.attributeList.count, 2)
+  }
+
+  func testAttributeListLengthBoundaryConditions() async throws {
+    let logger = Logger(label: "com.padl.MRPTests.MSRP")
+    let bridge = MockBridge()
+    let controller = try await MRPController(bridge: bridge, logger: logger)
+    let msrp = try await MSRPApplication(controller: controller)
+
+    // Create a single attribute to test exact boundary condition
+    // where bytesProcessed == attributeListLength - 2
+    let streamID = MSRPStreamID(0x0001_0000_0000_0001)
+    let talker = MSRPTalkerAdvertiseValue(
+      streamID: streamID,
+      dataFrameParameters: MSRPDataFrameParameters(),
+      tSpec: MSRPTSpec(),
+      priorityAndRank: MSRPPriorityAndRank(),
+      accumulatedLatency: 1000
+    )
+
+    let vectorAttribute = VectorAttribute(
+      leaveAllEvent: .NullLeaveAllEvent,
+      firstValue: AnyValue(talker),
+      attributeEvents: [.JoinMt],
+      applicationEvents: nil
+    )
+
+    let message = Message(attributeType: 1, attributeList: [vectorAttribute])
+
+    // Serialize and parse to verify boundary condition
+    var serializationContext = SerializationContext()
+    try message.serialize(into: &serializationContext, application: msrp)
+
+    let parsedMessage = try serializationContext.bytes.withParserSpan { input in
+      try Message(parsing: &input, application: msrp)
+    }
+
+    XCTAssertEqual(parsedMessage.attributeType, 1)
+    XCTAssertEqual(parsedMessage.attributeList.count, 1)
+  }
 }
 
 private final class AttributeValue<A: Application>: @unchecked Sendable, Equatable {

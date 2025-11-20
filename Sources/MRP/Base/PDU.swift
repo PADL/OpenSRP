@@ -338,14 +338,11 @@ struct Message {
     // attributeListLength is optional and is the length, in octets, of the entire attribute list
     // this can account for variable length attributes
     var attributeListLength: AttributeListLength?
-    var attributeListStartPosition = 0
 
     if application.hasAttributeListLength {
       attributeListLength = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
       guard attributeListLength! <= input.count
       else { throw MRPError.badPduLength }
-      // Calculate position from the start (total bytes parsed so far)
-      attributeListStartPosition = input.count
     }
 
     var attributeList = [VectorAttribute<V>]()
