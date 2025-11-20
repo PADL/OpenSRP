@@ -12,8 +12,6 @@ var PlatformSwiftSettings: [SwiftSetting] = []
 var PlatformLinkerSettings: [LinkerSetting] = []
 
 #if os(Linux)
-PlatformCSettings += [.unsafeFlags(["-I", "/usr/include/libnl3"])]
-
 PlatformPackageDependencies = [
   .package(
     url: "https://github.com/PADL/IORingSwift",
@@ -21,7 +19,7 @@ PlatformPackageDependencies = [
   ),
   .package(
     url: "https://github.com/PADL/NetLinkSwift",
-    branch: "main"
+    branch: "pkgconfig"
   ),
   .package(url: "https://github.com/xtremekforever/swift-systemd", from: "0.2.1"),
 ]
