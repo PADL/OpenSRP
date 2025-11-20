@@ -19,7 +19,7 @@ jobs:
       - name: Version
         run: swift --version
       - name: Build
-        run: swift build --build-tests
+        run: swift build --build-tests -Xcc -I/usr/include/libnl3
       - name: Test
         run: swift test --skip-build
 
