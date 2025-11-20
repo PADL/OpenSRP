@@ -11,11 +11,6 @@ var PlatformCSettings: [CSetting] = []
 var PlatformSwiftSettings: [SwiftSetting] = []
 var PlatformLinkerSettings: [LinkerSetting] = []
 
-PlatformSwiftSettings += [
-  .swiftLanguageMode(.v5),
-  .enableExperimentalFeature("StrictConcurrency"),
-]
-
 #if os(Linux)
 PlatformCSettings += [.unsafeFlags(["-I", "/usr/include/libnl3"])]
 
