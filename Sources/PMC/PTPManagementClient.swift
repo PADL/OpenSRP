@@ -50,7 +50,7 @@ public actor PTPManagementClient {
     _peerAddress = try sockaddr_un(family: sa_family_t(AF_LOCAL), presentationAddress: path)
     _socket = try Socket(ring: IORing.shared, domain: sa_family_t(AF_LOCAL), type: SOCK_DGRAM)
     try _socket.bind(to: _localAddress)
-    _rxTask = Task { @IORingActor in
+    _rxTask = Task {
       repeat {
         do {
           for try await packet in try await _socket.receiveMessages(count: Int(ETH_DATA_LEN)) {
