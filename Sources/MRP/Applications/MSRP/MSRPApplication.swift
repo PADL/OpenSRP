@@ -937,6 +937,11 @@ extension MSRPApplication {
             eventSource: .map
           )
         } catch let error as MSRPFailure {
+          // Leave any existing talkerAdvertise before joining talkerFailed
+          try await participant.leaveNow { attributeType, _, attributeValue in
+            attributeType == MSRPAttributeType.talkerAdvertise.rawValue &&
+              (attributeValue as! MSRPStreamIDRepresentable).streamID == talkerValue.streamID
+          }
           let talkerFailed = MSRPTalkerFailedValue(
             streamID: talkerValue.streamID,
             dataFrameParameters: talkerValue.dataFrameParameters,
