@@ -1576,6 +1576,270 @@ final class MRPTests: XCTestCase {
       }
     }
   }
+
+  func testPTPManagementErrorStatusParsing() throws {
+    // Test that management error status TLV consumes all bytes before throwing
+    // This verifies the fix for the ParserSpan migration bug
+
+    // Build a PTP management message with error status TLV
+    var bytes: [UInt8] = []
+
+    // PTP Header (34 bytes)
+    bytes.append(0x0D) // majorSdoId_messageType (management)
+    bytes.append(0x02) // versionPTP
+    bytes.append(contentsOf: [0x00, 0x36]) // messageLength (54 bytes)
+    bytes.append(0x00) // domainNumber
+    bytes.append(0x00) // minorSdoId
+    bytes.append(0x00) // flagField0
+    bytes.append(0x00) // flagField1
+    bytes.append(contentsOf: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]) // correctionField
+    bytes.append(contentsOf: [0x00, 0x00, 0x00, 0x00]) // messageTypeSpecific
+    bytes.append(contentsOf: [
+      0x01,
+      0x02,
+      0x03,
+      0x04,
+      0x05,
+      0x06,
+      0x07,
+      0x08,
+    ]) // sourcePortIdentity.clockIdentity
+    bytes.append(contentsOf: [0x00, 0x01]) // sourcePortIdentity.portNumber
+    bytes.append(contentsOf: [0x00, 0x01]) // sequenceId
+    bytes.append(0x04) // controlField
+    bytes.append(0x7F) // logMessageInterval
+
+    // Management message fields (10 bytes before TLV)
+    bytes.append(contentsOf: [
+      0xFF,
+      0xFF,
+      0xFF,
+      0xFF,
+      0xFF,
+      0xFF,
+      0xFF,
+      0xFF,
+    ]) // targetPortIdentity.clockIdentity
+    bytes.append(contentsOf: [0xFF, 0xFF]) // targetPortIdentity.portNumber
+    bytes.append(0x01) // startingBoundaryHops
+    bytes.append(0x01) // boundaryHops
+    bytes.append(0x02) // reserved_actionField (response)
+    bytes.append(0x00) // reserved
+
+    // Management error status TLV (tlvType=2, with display data)
+    bytes.append(contentsOf: [0x00, 0x02]) // tlvType = managementErrorStatus
+    bytes.append(contentsOf: [0x00, 0x0C]) // lengthField = 12 (8 base + 4 display data)
+    bytes.append(contentsOf: [0x00, 0x01]) // managementErrorId = responseTooBig
+    bytes.append(contentsOf: [0x20, 0x00]) // managementId = DEFAULT_DATA_SET
+    bytes.append(contentsOf: [0x00, 0x00, 0x00, 0x00]) // reserved
+    bytes.append(contentsOf: [0x54, 0x45, 0x53, 0x54]) // displayData = "TEST"
+
+    // Attempt to parse - should throw the management error but consume all bytes
+    XCTAssertThrowsError(
+      try bytes.withParserSpan { input in
+        try PTP.ManagementMessage(parsing: &input)
+      }
+    ) { error in
+      // Should throw the management error ID
+      XCTAssertTrue(error is PTPManagementError)
+      if let ptpError = error as? PTPManagementError {
+        XCTAssertEqual(ptpError, .responseTooBig)
+      }
+    }
+  }
+
+  func testPTPUnknownManagementIDParsing() throws {
+    // Test that unknown management ID consumes all data bytes before throwing
+    // This verifies the fix for the ParserSpan migration bug
+
+    // Build a PTP management message with unknown management ID
+    var bytes: [UInt8] = []
+
+    // PTP Header (34 bytes)
+    bytes.append(0x0D) // majorSdoId_messageType (management)
+    bytes.append(0x02) // versionPTP
+    bytes.append(contentsOf: [0x00, 0x38]) // messageLength (56 bytes)
+    bytes.append(0x00) // domainNumber
+    bytes.append(0x00) // minorSdoId
+    bytes.append(0x00) // flagField0
+    bytes.append(0x00) // flagField1
+    bytes.append(contentsOf: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]) // correctionField
+    bytes.append(contentsOf: [0x00, 0x00, 0x00, 0x00]) // messageTypeSpecific
+    bytes.append(contentsOf: [
+      0x01,
+      0x02,
+      0x03,
+      0x04,
+      0x05,
+      0x06,
+      0x07,
+      0x08,
+    ]) // sourcePortIdentity.clockIdentity
+    bytes.append(contentsOf: [0x00, 0x01]) // sourcePortIdentity.portNumber
+    bytes.append(contentsOf: [0x00, 0x02]) // sequenceId
+    bytes.append(0x04) // controlField
+    bytes.append(0x7F) // logMessageInterval
+
+    // Management message fields (10 bytes before TLV)
+    bytes.append(contentsOf: [
+      0xFF,
+      0xFF,
+      0xFF,
+      0xFF,
+      0xFF,
+      0xFF,
+      0xFF,
+      0xFF,
+    ]) // targetPortIdentity.clockIdentity
+    bytes.append(contentsOf: [0xFF, 0xFF]) // targetPortIdentity.portNumber
+    bytes.append(0x01) // startingBoundaryHops
+    bytes.append(0x01) // boundaryHops
+    bytes.append(0x00) // reserved_actionField (get)
+    bytes.append(0x00) // reserved
+
+    // Management TLV with unknown management ID
+    bytes.append(contentsOf: [0x00, 0x01]) // tlvType = management
+    bytes.append(contentsOf: [0x00, 0x08]) // lengthField = 8 (2 for ID + 6 data)
+    bytes.append(contentsOf: [0xFF, 0xFF]) // managementId = 0xFFFF (unknown)
+    bytes.append(contentsOf: [0x01, 0x02, 0x03, 0x04, 0x05, 0x06]) // dataField (6 bytes)
+
+    // Attempt to parse - should throw unknown enumeration error but consume all bytes
+    XCTAssertThrowsError(
+      try bytes.withParserSpan { input in
+        try PTP.ManagementMessage(parsing: &input)
+      }
+    ) { error in
+      // Should throw unknown enumeration error
+      XCTAssertTrue(error is PTP.Error)
+      if let ptpError = error as? PTP.Error {
+        XCTAssertEqual(ptpError, .unknownEnumerationValue)
+      }
+    }
+  }
+
+  func testPTPHeaderMessageLengthValidation() throws {
+    // Test that PTP Header correctly validates messageLength against total buffer size
+    // This is a regression test for the ParserSpan migration bug where messageLength
+    // was incorrectly checked against remaining bytes instead of total buffer size
+
+    // Build a minimal valid PTP header (34 bytes)
+    var bytes: [UInt8] = []
+    bytes.append(0x0D) // majorSdoId_messageType (management)
+    bytes.append(0x02) // versionPTP
+    bytes.append(contentsOf: [0x00, 0x22]) // messageLength (34 bytes = header size)
+    bytes.append(0x00) // domainNumber
+    bytes.append(0x00) // minorSdoId
+    bytes.append(0x00) // flagField0
+    bytes.append(0x00) // flagField1
+    bytes.append(contentsOf: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]) // correctionField
+    bytes.append(contentsOf: [0x00, 0x00, 0x00, 0x00]) // messageTypeSpecific
+    bytes.append(contentsOf: [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]) // clockIdentity
+    bytes.append(contentsOf: [0x00, 0x01]) // portNumber
+    bytes.append(contentsOf: [0x00, 0x01]) // sequenceId
+    bytes.append(0x04) // controlField
+    bytes.append(0x7F) // logMessageInterval
+
+    // This should parse successfully - messageLength (34) should be validated against
+    // the original buffer size (34), not the remaining bytes after parsing first 4 bytes (30)
+    XCTAssertNoThrow(
+      try bytes.withParserSpan { input in
+        _ = try PTP.Header(parsing: &input)
+      }
+    )
+  }
+
+  func testPTPHeaderMessageLengthTruncated() throws {
+    // Test that PTP Header correctly detects truncated messages
+
+    // Build a header claiming to be 100 bytes but only provide 34
+    var bytes: [UInt8] = []
+    bytes.append(0x0D) // majorSdoId_messageType (management)
+    bytes.append(0x02) // versionPTP
+    bytes.append(contentsOf: [0x00, 0x64]) // messageLength (100 bytes - more than we have!)
+    bytes.append(0x00) // domainNumber
+    bytes.append(0x00) // minorSdoId
+    bytes.append(0x00) // flagField0
+    bytes.append(0x00) // flagField1
+    bytes.append(contentsOf: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]) // correctionField
+    bytes.append(contentsOf: [0x00, 0x00, 0x00, 0x00]) // messageTypeSpecific
+    bytes.append(contentsOf: [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]) // clockIdentity
+    bytes.append(contentsOf: [0x00, 0x01]) // portNumber
+    bytes.append(contentsOf: [0x00, 0x01]) // sequenceId
+    bytes.append(0x04) // controlField
+    bytes.append(0x7F) // logMessageInterval
+
+    // Should throw messageTruncated error
+    XCTAssertThrowsError(
+      try bytes.withParserSpan { input in
+        _ = try PTP.Header(parsing: &input)
+      }
+    ) { error in
+      XCTAssertTrue(error is PTP.Error)
+      if let ptpError = error as? PTP.Error {
+        XCTAssertEqual(ptpError, .messageTruncated)
+      }
+    }
+  }
+
+  func testPTPHeaderWith70ByteMessage() throws {
+    // Regression test for the messageLength validation bug
+    // This test ensures that a 70-byte message with messageLength=70
+    // parses without throwing messageTruncated (the bug that was fixed)
+
+    // Build a simple 70-byte PTP management message
+    var bytes: [UInt8] = []
+
+    // PTP Header (34 bytes)
+    bytes.append(0x0D) // majorSdoId_messageType (management)
+    bytes.append(0x02) // versionPTP
+    bytes.append(contentsOf: [0x00, 0x46]) // messageLength (70 bytes total)
+    bytes.append(0x00) // domainNumber
+    bytes.append(0x00) // minorSdoId
+    bytes.append(0x00) // flagField0
+    bytes.append(0x00) // flagField1
+    bytes.append(contentsOf: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]) // correctionField
+    bytes.append(contentsOf: [0x00, 0x00, 0x00, 0x00]) // messageTypeSpecific
+    bytes.append(contentsOf: [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]) // clockIdentity
+    bytes.append(contentsOf: [0x00, 0x01]) // portNumber
+    bytes.append(contentsOf: [0x00, 0x01]) // sequenceId
+    bytes.append(0x04) // controlField
+    bytes.append(0x7F) // logMessageInterval
+
+    // Management message fields (14 bytes)
+    bytes.append(contentsOf: [
+      0xFF,
+      0xFF,
+      0xFF,
+      0xFF,
+      0xFF,
+      0xFF,
+      0xFF,
+      0xFF,
+    ]) // targetPortIdentity.clockIdentity
+    bytes.append(contentsOf: [0xFF, 0xFF]) // targetPortIdentity.portNumber
+    bytes.append(0x01) // startingBoundaryHops
+    bytes.append(0x01) // boundaryHops
+    bytes.append(0x00) // reserved_actionField (get)
+    bytes.append(0x00) // reserved
+
+    // Management TLV (22 bytes to reach 70 total: 34 header + 14 mgmt + 22 TLV)
+    bytes.append(contentsOf: [0x00, 0x01]) // tlvType = management
+    bytes.append(contentsOf: [0x00, 0x12]) // lengthField = 18 (16 data + 2 for managementId)
+    bytes.append(contentsOf: [0x00, 0x00]) // managementId = NULL_PTP_MANAGEMENT
+    bytes.append(contentsOf: [UInt8](repeating: 0x00, count: 16)) // dataField (16 bytes of padding)
+
+    XCTAssertEqual(bytes.count, 70)
+
+    // The key test: this should NOT throw messageTruncated
+    // Before the fix, it would fail because messageLength (70) was checked against
+    // input.count after consuming 4 bytes (66), causing a false positive truncation error
+    XCTAssertNoThrow(
+      try bytes.withParserSpan { input in
+        let msg = try PTP.ManagementMessage(parsing: &input)
+        XCTAssertEqual(msg.header.messageLength, 70)
+      }
+    )
+  }
 }
 
 private final class AttributeValue<A: Application>: @unchecked Sendable, Equatable {
