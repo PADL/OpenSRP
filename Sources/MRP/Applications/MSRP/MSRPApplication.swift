@@ -1492,7 +1492,10 @@ extension MSRPApplication {
     case .listener:
       let attributeValue = (attributeValue as! MSRPListenerValue)
       guard let declarationType = try? MSRPDeclarationType(attributeSubtype: attributeSubtype)
-      else { throw MRPError.invalidMSRPDeclarationType }
+      else {
+        // attributeSubtype of 0 (ignore) returns nil - this is expected, skip this event
+        throw MRPError.doNotPropagateAttribute
+      }
       try await _onRegisterAttachIndication(
         contextIdentifier: contextIdentifier,
         port: port,
@@ -1673,7 +1676,10 @@ extension MSRPApplication {
       )
     case .listener:
       guard let declarationType = try? MSRPDeclarationType(attributeSubtype: attributeSubtype)
-      else { throw MRPError.invalidMSRPDeclarationType }
+      else {
+        // attributeSubtype of 0 (ignore) returns nil - this is expected, skip this event
+        throw MRPError.doNotPropagateAttribute
+      }
       try await _onDeregisterAttachIndication(
         contextIdentifier: contextIdentifier,
         port: port,

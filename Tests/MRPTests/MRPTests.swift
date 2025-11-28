@@ -1522,6 +1522,60 @@ final class MRPTests: XCTestCase {
     XCTAssertEqual(parsedMessage.attributeType, 1)
     XCTAssertEqual(parsedMessage.attributeList.count, 1)
   }
+
+  func testMSRPListenerWithIgnoreSubtype() async throws {
+    // Test case for packet with attributeSubtype = 0 (ignore) in listener events
+    // This is the actual packet from the bug report
+    // payload: 00040400090002050200027e00000308000e00030001f2fed2a40000948800000000000000000000000000000000
+
+    let logger = Logger(label: "com.padl.MRPTests.MSRPIgnoreSubtype")
+    let bridge = MockBridge()
+    let controller = try await MRPController(bridge: bridge, logger: logger)
+    let msrp = try await MSRPApplication(controller: controller)
+
+    let pduBytes: [UInt8] = [
+      0x00, 0x04, 0x04, 0x00, 0x09, 0x00, 0x02, 0x05,
+      0x02, 0x00, 0x02, 0x7E, 0x00, 0x00, 0x03, 0x08,
+      0x00, 0x0E, 0x00, 0x03, 0x00, 0x01, 0xF2, 0xFE,
+      0xD2, 0xA4, 0x00, 0x00, 0x94, 0x88, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ]
+
+    // Parse the PDU directly
+    let pdu = try pduBytes.withParserSpan { input in
+      try MRPDU(parsing: &input, application: msrp)
+    }
+
+    XCTAssertEqual(pdu.protocolVersion, 0)
+    XCTAssertEqual(pdu.messages.count, 2)
+
+    // Check listener message
+    guard pdu.messages.count >= 2 else {
+      XCTFail("Expected 2 messages")
+      return
+    }
+
+    let listenerMessage = pdu.messages[1]
+    XCTAssertEqual(listenerMessage.attributeType, 3) // listener
+    XCTAssertEqual(listenerMessage.attributeList.count, 1)
+
+    if let listenerAttribute = listenerMessage.attributeList.first {
+      XCTAssertEqual(listenerAttribute.numberOfValues, 3)
+
+      // Check the fourPackedEvents
+      let applicationEvents = listenerAttribute.applicationEvents
+      XCTAssertNotNil(applicationEvents)
+
+      if let applicationEvents {
+        // Should have 4 subtypes: [2, 0, 2, 0]
+        XCTAssertGreaterThanOrEqual(applicationEvents.count, 3)
+        XCTAssertEqual(applicationEvents[0], 2) // ready
+        XCTAssertEqual(applicationEvents[1], 0) // ignore
+        XCTAssertEqual(applicationEvents[2], 2) // ready
+      }
+    }
+  }
 }
 
 private final class AttributeValue<A: Application>: @unchecked Sendable, Equatable {
