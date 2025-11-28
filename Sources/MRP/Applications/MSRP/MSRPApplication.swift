@@ -1153,7 +1153,7 @@ extension MSRPApplication {
 
     var mergedDeclarationType: MSRPDeclarationType? = if isJoin {
       if talkerRegistration.1 is MSRPTalkerFailedValue {
-        .listenerAskingFailed
+        declarationType == nil ? nil : .listenerAskingFailed
       } else {
         declarationType
       }
@@ -1162,7 +1162,14 @@ extension MSRPApplication {
     }
 
     if isJoin, talkerRegistration.1 is MSRPTalkerFailedValue {
-      _logger.trace("MSRP: stream \(streamID) talkerFailed propagated as listenerAskingFailed")
+      if declarationType != nil {
+        _logger.trace("MSRP: stream \(streamID) talkerFailed propagated as listenerAskingFailed")
+      } else {
+        _logger
+          .trace(
+            "MSRP: stream \(streamID) talkerFailed received but no listener exists, not propagating"
+          )
+      }
     }
 
     // collect listener declarations from all other ports and merge declaration type
