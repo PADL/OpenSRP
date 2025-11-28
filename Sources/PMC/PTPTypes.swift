@@ -767,7 +767,9 @@ public enum PTP {
       }
       versionPTP = try PtpVersion(parsing: &input)
       messageLength = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
-      guard messageLength <= input.count else {
+      // messageLength includes the entire message including the 4 bytes we've already parsed
+      // input.count is now original_buffer_size - 4, so we need to add 4 back
+      guard messageLength <= input.count + 4 else {
         throw Error.messageTruncated
       }
       domainNumber = try UInt8(parsing: &input)
@@ -901,8 +903,13 @@ public enum PTP {
         guard lengthField >= 2 else {
           throw Error.invalidManagementTLVLength
         }
-        let managementId = try PTPManagementID(parsing: &input)
+        // Parse raw management ID first, then consume data field even if ID is unknown
+        let managementIdRaw = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
         let dataField = try Array(parsing: &input, byteCount: Int(lengthField - 2))
+        // Now validate the management ID after consuming all data
+        guard let managementId = PTPManagementID(rawValue: managementIdRaw) else {
+          throw Error.unknownEnumerationValue
+        }
         managementTLV = PTPManagementTLV(
           _tlvType: tlvType,
           _managementId: managementId,
