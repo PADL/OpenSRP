@@ -47,9 +47,9 @@ struct ThreePackedEvents: Equatable, CustomStringConvertible {
   }
 
   static func chunked(_ values: [UInt8]) -> [ThreePackedEvents] {
-    let values = values.chunks(ofCount: 3)
-    return values.map {
-      ThreePackedEvents(($0[0], $0[safe: 1] ?? 0, $0[safe: 2] ?? 0))
+    values.chunks(ofCount: 3).map { chunk in
+      let array = Array(chunk, multiple: 3, with: 0)
+      return ThreePackedEvents((array[0], array[1], array[2]))
     }
   }
 }
@@ -83,9 +83,9 @@ struct FourPackedEvents: Equatable, CustomStringConvertible {
   }
 
   static func chunked(_ values: [UInt8]) -> [FourPackedEvents] {
-    let values = values.chunks(ofCount: 4)
-    return values.map {
-      FourPackedEvents(($0[0], $0[safe: 1] ?? 0, $0[safe: 2] ?? 0, $0[safe: 3] ?? 0))
+    values.chunks(ofCount: 4).map { chunk in
+      let array = Array(chunk, multiple: 4, with: 0)
+      return FourPackedEvents((array[0], array[1], array[2], array[3]))
     }
   }
 }
