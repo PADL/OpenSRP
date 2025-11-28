@@ -906,6 +906,11 @@ extension MSRPApplication {
       }
 
       if declarationType == .talkerAdvertise {
+        // Leave any existing talkerFailed before joining talkerAdvertise
+        try await participant.leaveNow { attributeType, _, attributeValue in
+          attributeType == MSRPAttributeType.talkerFailed.rawValue &&
+            (attributeValue as! MSRPStreamIDRepresentable).streamID == talkerValue.streamID
+        }
         do {
           try await _canBridgeTalker(
             participant: participant,
@@ -937,6 +942,11 @@ extension MSRPApplication {
             eventSource: .map
           )
         } catch let error as MSRPFailure {
+          // Leave any existing talkerAdvertise before joining talkerFailed
+          try await participant.leaveNow { attributeType, _, attributeValue in
+            attributeType == MSRPAttributeType.talkerAdvertise.rawValue &&
+              (attributeValue as! MSRPStreamIDRepresentable).streamID == talkerValue.streamID
+          }
           let talkerFailed = MSRPTalkerFailedValue(
             streamID: talkerValue.streamID,
             dataFrameParameters: talkerValue.dataFrameParameters,
@@ -959,6 +969,11 @@ extension MSRPApplication {
         }
       } else {
         precondition(declarationType == .talkerFailed)
+        // Leave any existing talkerAdvertise before joining talkerFailed
+        try await participant.leaveNow { attributeType, _, attributeValue in
+          attributeType == MSRPAttributeType.talkerAdvertise.rawValue &&
+            (attributeValue as! MSRPStreamIDRepresentable).streamID == talkerValue.streamID
+        }
         let talkerFailed = MSRPTalkerFailedValue(
           streamID: talkerValue.streamID,
           dataFrameParameters: talkerValue.dataFrameParameters,
@@ -1175,11 +1190,11 @@ extension MSRPApplication {
       // exclude talker port
       guard participant.port != talkerRegistration.0.port else { return }
 
-      for listenerAttribute in await participant.findAttributes(
+      for listenerAttribute in await participant.findAllAttributes(
         attributeType: MSRPAttributeType.listener.rawValue,
         matching: .matchAnyIndex(streamID.id)
       ) {
-        guard let declarationType = try? MSRPDeclarationType(attributeSubtype: listenerAttribute.0)
+        guard let declarationType = try? MSRPDeclarationType(attributeSubtype: listenerAttribute.attributeSubtype)
         else { continue }
         if mergedDeclarationType == nil {
           mergedDeclarationType = declarationType
