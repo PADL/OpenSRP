@@ -24,8 +24,8 @@ import IORingUtils
 #endif
 
 public actor PTPManagementClient {
-  public static let DefaultUDSPath = "/var/run/ptp4l"
-  public static let DefaultUDSROPath = "/var/run/ptp4lro"
+  public static let DefaultUDSPath = "/var/run/ptp/ptp4l"
+  public static let DefaultUDSROPath = "/var/run/ptp/ptp4lro"
 
   // FIXME: using a continuation only allows for one response per request
   private typealias Continuation = CheckedContinuation<PTPManagementRepresentable, Error>
