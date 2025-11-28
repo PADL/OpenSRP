@@ -38,6 +38,15 @@ extension Collection {
   }
 }
 
+extension Array {
+  /// Creates an array from a collection, padding to a multiple of the specified value.
+  init(_ collection: some Collection<Element>, multiple: Int, with element: Element) {
+    let elements = Array(collection)
+    let paddingCount = (multiple - elements.count % multiple) % multiple
+    self = elements + Array(repeating: element, count: paddingCount)
+  }
+}
+
 // https://www.swiftbysundell.com/articles/async-and-concurrent-forEach-and-map/
 public extension Sequence {
   func asyncMap<T>(
