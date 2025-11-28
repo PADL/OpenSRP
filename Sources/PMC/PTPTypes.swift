@@ -914,6 +914,10 @@ public enum PTP {
           throw Error.invalidManagementTLVLength
         }
         let managementErrorId = try PTPManagementError(parsing: &input)
+        // Consume the rest of the TLV before throwing
+        _ = try PTPManagementID(parsing: &input) // managementId
+        _ = try UInt32(parsing: &input, storedAsBigEndian: UInt32.self) // reserved
+        _ = try Array(parsing: &input, byteCount: Int(lengthField - 8)) // displayData
         throw managementErrorId
       default:
         throw Error.invalidManagementTLVType
