@@ -541,7 +541,7 @@ public enum PTP {
     }
 
     public var description: String {
-      String(cString: text)
+      String(decoding: text, as: UTF8.self)
     }
   }
 
