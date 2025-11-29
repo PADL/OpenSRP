@@ -371,7 +371,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     )
     // we allow attributes that are in the leaving state to be "found", because
     // they haven't yet been timed out yet (and a leave indication issued)
-    guard let attributeValue, attributeValue.registrarState != .MT else {
+    guard let attributeValue, attributeValue.isRegistered else {
       _logger.trace("\(self): could not find attribute type \(attributeType) matching \(filter)")
       return nil
     }
@@ -384,7 +384,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   ) -> [(AttributeSubtype?, any Value)] {
     (_attributes[attributeType] ?? [])
       .filter {
-        $0.matches(attributeType: attributeType, matching: filter) && $0.registrarState != .MT
+        $0.matches(attributeType: attributeType, matching: filter) && $0.isRegistered
       }
       .map { ($0.attributeSubtype, $0.unwrappedValue) }
   }
@@ -870,8 +870,16 @@ Sendable, Hashable, Equatable,
     applicant.state
   }
 
+  var isDeclared: Bool {
+    applicantState.isDeclared
+  }
+
   var registrarState: Registrar.State? {
     registrar?.state
+  }
+
+  var isRegistered: Bool {
+    registrarState?.isRegistered ?? false
   }
 
   // Returns true if attribute can be garbage collected.
@@ -879,7 +887,7 @@ Sendable, Hashable, Equatable,
   // - We are not running the Registrar state machine, OR the registrar state is MT (not registered)
   // - AND the applicant is not declaring the attribute
   fileprivate var canGC: Bool {
-    (registrarState == nil || registrarState == .MT) && !applicantState.isDeclared
+    !isRegistered && !isDeclared
   }
 
   nonisolated var description: String {

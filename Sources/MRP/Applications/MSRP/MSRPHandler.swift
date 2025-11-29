@@ -63,8 +63,8 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
       streamID = talker.streamID.streamIDString
       accumulatedLatency = Int(talker.accumulatedLatency)
       destination = _macAddressToString(talker.dataFrameParameters.destinationAddress)
-      registered = attributeValue.registrarState?.isRegistered ?? false
-      declared = attributeValue.applicantState.isDeclared
+      registered = attributeValue.isRegistered
+      declared = attributeValue.isDeclared
     }
   }
 
@@ -86,8 +86,8 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
       systemID = talkerFailed.systemID.description
       accumulatedLatency = Int(talkerFailed.accumulatedLatency)
       destination = _macAddressToString(talkerFailed.dataFrameParameters.destinationAddress)
-      registered = attributeValue.registrarState?.isRegistered ?? false
-      declared = attributeValue.applicantState.isDeclared
+      registered = attributeValue.isRegistered
+      declared = attributeValue.isDeclared
     }
   }
 
@@ -114,8 +114,8 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
         }
       }
       self.type = type ?? ""
-      registered = attributeValue.registrarState?.isRegistered ?? false
-      declared = attributeValue.applicantState.isDeclared
+      registered = attributeValue.isRegistered
+      declared = attributeValue.isDeclared
     }
   }
 
@@ -839,7 +839,7 @@ fileprivate extension MSRPApplication {
     await apply { participant in
       await participant.findAllAttributes(matching: filter)
         .filter {
-          $0.attributeValue is any MSRPTalkerValue && $0.registrarState?.isRegistered ?? false
+          $0.attributeValue is any MSRPTalkerValue && $0.isRegistered
         }
         .asyncMap {
           try? await MSRPHandler<A.P>.Stream(
@@ -926,7 +926,7 @@ fileprivate extension Participant where A.P: AVBPort {
       attributeType: MSRPAttributeType.listener.rawValue,
       matching: .matchIndex(streamID)
     )
-    .filter { $0.registrarState?.isRegistered == true }
+    .filter(\.isRegistered)
     .map { MSRPHandler<A.P>.Stream.Listener(
       participant: self as! Participant<MSRPApplication<A.P>>,
       attributeValue: $0

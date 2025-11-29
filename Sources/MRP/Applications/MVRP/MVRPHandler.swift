@@ -51,8 +51,8 @@ struct MVRPHandler<P: Port>: Sendable, RestApiApplicationHandler {
 
     fileprivate init(attributeValue: AttributeValue) {
       vid = (attributeValue.attributeValue as! MVRPVIDValue).vid
-      registered = attributeValue.registrarState?.isRegistered ?? false
-      declared = attributeValue.applicantState.isDeclared
+      registered = attributeValue.isRegistered
+      declared = attributeValue.isDeclared
     }
   }
 
