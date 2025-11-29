@@ -244,7 +244,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     eventSource: EventSource
   ) async throws {
     try await _apply { attributeValue in
-      try await attributeValue.handle(
+      try await _handleAttributeValue(
+        attributeValue,
         protocolEvent: event,
         eventSource: eventSource
       )
@@ -423,6 +424,32 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     try await _leave(eventSource: .application, isLeaveAll: false, isIncluded)
   }
 
+  fileprivate func _gcAttributeValue(_ attributeValue: _AttributeValue<A>) {
+    if let index = _attributes.index(forKey: attributeValue.attributeType) {
+      _attributes.values[index].remove(attributeValue)
+      if _attributes.values[index].isEmpty {
+        _attributes.removeValue(forKey: attributeValue.attributeType)
+      }
+    }
+  }
+
+  private func _handleAttributeValue(
+    _ attributeValue: _AttributeValue<A>,
+    protocolEvent: ProtocolEvent,
+    eventSource: EventSource,
+    replacingAttributeSubtype: AttributeSubtype? = nil
+  ) async throws {
+    let canGC = try await attributeValue.handle(
+      protocolEvent: protocolEvent,
+      eventSource: eventSource,
+      replacingAttributeSubtype: replacingAttributeSubtype
+    )
+
+    if canGC {
+      _gcAttributeValue(attributeValue)
+    }
+  }
+
   private func _leave(
     eventSource: EventSource,
     isLeaveAll: Bool,
@@ -437,7 +464,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
         return
       }
 
-      try await attributeValue.handle(
+      try await _handleAttributeValue(
+        attributeValue,
         protocolEvent: isLeaveAll ? .rLA : .rLv,
         eventSource: eventSource
       )
@@ -628,7 +656,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
           createIfMissing: true
         ) else { continue }
 
-        try await attribute.handle(
+        try await _handleAttributeValue(
+          attribute,
           protocolEvent: attributeEvent.protocolEvent,
           eventSource: eventSource,
           replacingAttributeSubtype: attributeSubtype
@@ -757,7 +786,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       createIfMissing: true
     )
 
-    try await attribute.handle(
+    try await _handleAttributeValue(
+      attribute,
       protocolEvent: isNew ? .New : .Join,
       eventSource: eventSource,
       replacingAttributeSubtype: attributeSubtype
@@ -777,7 +807,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       createIfMissing: false
     )
 
-    try await attribute.handle(
+    try await _handleAttributeValue(
+      attribute,
       protocolEvent: .Lv,
       eventSource: eventSource,
       replacingAttributeSubtype: attributeSubtype
@@ -880,10 +911,14 @@ Sendable, Hashable, Equatable,
 
   @Sendable
   private func _onLeaveTimerExpired() async throws {
-    try await handle(
+    let canGC = try await handle(
       protocolEvent: .leavetimer,
       eventSource: .leaveTimer
     )
+
+    if canGC, let participant {
+      await participant._gcAttributeValue(self)
+    }
   }
 
   func hash(into hasher: inout Hasher) {
@@ -938,11 +973,12 @@ Sendable, Hashable, Equatable,
     )
   }
 
+  // returns true if attribute can be garbage collected
   func handle(
     protocolEvent event: ProtocolEvent,
     eventSource: EventSource,
     replacingAttributeSubtype subtype: AttributeSubtype? = nil
-  ) async throws {
+  ) async throws -> Bool {
     // fast path for MSRP pre-applicant event handler: silently replace attribute
     // subtypes as if the Listener declaration had been withdrawn and
     // replaced by the updated Listener declaration (35.2.6)
@@ -952,6 +988,11 @@ Sendable, Hashable, Equatable,
 
     try await _handleRegistrar(context: context)
     try await _handleApplicant(context: context)
+
+    // if we are not running the Registrant state machine, or the registrar
+    // state is MT, and we are not declaring the attribute, then the attribute
+    // is safe to garbage collect
+    return (registrarState == nil || registrarState == .MT) && !applicantState.isDeclared
   }
 
   private func _handleApplicant(context: EventContext<A>) async throws {
