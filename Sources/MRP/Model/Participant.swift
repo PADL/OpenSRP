@@ -244,7 +244,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     eventSource: EventSource
   ) async throws {
     try await _apply { attributeValue in
-      try await attributeValue.handle(
+      try await _handleAttributeValue(
+        attributeValue,
         protocolEvent: event,
         eventSource: eventSource
       )
@@ -423,6 +424,33 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     try await _leave(eventSource: .application, isLeaveAll: false, isIncluded)
   }
 
+  fileprivate func _gcAttributeValue(_ attributeValue: _AttributeValue<A>) {
+    if let index = _attributes.index(forKey: attributeValue.attributeType) {
+      _attributes.values[index].remove(attributeValue)
+      if _attributes.values[index].isEmpty {
+        _attributes.removeValue(forKey: attributeValue.attributeType)
+      }
+    }
+  }
+
+  private func _handleAttributeValue(
+    _ attributeValue: _AttributeValue<A>,
+    protocolEvent: ProtocolEvent,
+    eventSource: EventSource,
+    replacingAttributeSubtype: AttributeSubtype? = nil,
+    gcNow: Bool = false
+  ) async throws {
+    try await attributeValue.handle(
+      protocolEvent: protocolEvent,
+      eventSource: eventSource,
+      replacingAttributeSubtype: replacingAttributeSubtype
+    )
+
+    if gcNow, attributeValue.canGC {
+      _gcAttributeValue(attributeValue)
+    }
+  }
+
   private func _leave(
     eventSource: EventSource,
     isLeaveAll: Bool,
@@ -437,9 +465,11 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
         return
       }
 
-      try await attributeValue.handle(
+      try await _handleAttributeValue(
+        attributeValue,
         protocolEvent: isLeaveAll ? .rLA : .rLv,
-        eventSource: eventSource
+        eventSource: eventSource,
+        gcNow: true
       )
     }
   }
@@ -628,7 +658,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
           createIfMissing: true
         ) else { continue }
 
-        try await attribute.handle(
+        try await _handleAttributeValue(
+          attribute,
           protocolEvent: attributeEvent.protocolEvent,
           eventSource: eventSource,
           replacingAttributeSubtype: attributeSubtype
@@ -757,7 +788,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       createIfMissing: true
     )
 
-    try await attribute.handle(
+    try await _handleAttributeValue(
+      attribute,
       protocolEvent: isNew ? .New : .Join,
       eventSource: eventSource,
       replacingAttributeSubtype: attributeSubtype
@@ -777,7 +809,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       createIfMissing: false
     )
 
-    try await attribute.handle(
+    try await _handleAttributeValue(
+      attribute,
       protocolEvent: .Lv,
       eventSource: eventSource,
       replacingAttributeSubtype: attributeSubtype
@@ -841,6 +874,14 @@ Sendable, Hashable, Equatable,
     registrar?.state
   }
 
+  // Returns true if attribute can be garbage collected.
+  // An attribute is safe to GC if:
+  // - We are not running the Registrar state machine, OR the registrar state is MT (not registered)
+  // - AND the applicant is not declaring the attribute
+  fileprivate var canGC: Bool {
+    (registrarState == nil || registrarState == .MT) && !applicantState.isDeclared
+  }
+
   nonisolated var description: String {
     if let attributeSubtype {
       "_AttributeValue(attributeType: \(attributeType), attributeSubtype: \(attributeSubtype), attributeValue: \(value), A \(applicant) R \(registrar?.description ?? "-"))"
@@ -884,6 +925,10 @@ Sendable, Hashable, Equatable,
       protocolEvent: .leavetimer,
       eventSource: .leaveTimer
     )
+
+    if canGC, let participant {
+      await participant._gcAttributeValue(self)
+    }
   }
 
   func hash(into hasher: inout Hasher) {
