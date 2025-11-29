@@ -223,6 +223,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     try await _handleLeaveAll(protocolEvent: .leavealltimer, eventSource: .leaveAllTimer)
     // Table 10.5: Request opportunity to transmit on entry to the Active state
     try await _requestTxOpportunity(eventSource: .leaveAll)
+    // Garbage collect attributes that have been inactive for 3x LeaveAll period
+    await _gcInactiveAttributes()
   }
 
   private func _apply(
@@ -430,6 +432,27 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       if _attributes.values[index].isEmpty {
         _attributes.removeValue(forKey: attributeValue.attributeType)
       }
+    }
+  }
+
+  // Garbage collect attributes that meet the canGC criteria AND have been
+  // inactive for longer than 3x the LeaveAll period. This ensures that
+  // attributes actively being propagated through the bridge are never removed,
+  // while truly stale attributes are eventually cleaned up.
+  private func _gcInactiveAttributes() async {
+    guard let controller else { return }
+
+    // Attributes must be inactive for 3x LeaveAll period to be considered stale
+    let gcThreshold = controller.timerConfiguration.leaveAllTime * 3
+
+    let attributesToGC = _attributes.values
+      .flatMap { $0 }
+      .filter { $0.canGC && $0.inactiveLongerThan(gcThreshold) }
+
+    attributesToGC.forEach { _gcAttributeValue($0) }
+
+    if !attributesToGC.isEmpty {
+      _logger.debug("\(self): garbage collected \(attributesToGC.count) inactive attribute(s)")
     }
   }
 
@@ -842,6 +865,7 @@ Sendable, Hashable, Equatable,
 
   private let _participant: Weak<P>
   private let _attributeSubtype: Mutex<AttributeSubtype?>
+  private let _lastActivity: Mutex<ContinuousClock.Instant>
 
   private let applicant = Applicant() // A per-Attribute Applicant state machine (10.7.7)
   // note registrar is not mutated outside init() so it does not need a mutex
@@ -882,6 +906,16 @@ Sendable, Hashable, Equatable,
     (registrarState == nil || registrarState == .MT) && !applicantState.isDeclared
   }
 
+  // Update the last activity timestamp to indicate this attribute is still active
+  fileprivate func touch() {
+    _lastActivity.withLock { $0 = ContinuousClock.now }
+  }
+
+  // Check if attribute has been inactive for longer than the specified duration
+  fileprivate func inactiveLongerThan(_ duration: Duration) -> Bool {
+    _lastActivity.withLock { ContinuousClock.now.duration(to: $0) > duration }
+  }
+
   nonisolated var description: String {
     if let attributeSubtype {
       "_AttributeValue(attributeType: \(attributeType), attributeSubtype: \(attributeSubtype), attributeValue: \(value), A \(applicant) R \(registrar?.description ?? "-"))"
@@ -901,6 +935,7 @@ Sendable, Hashable, Equatable,
     registrar = nil
     attributeType = type
     _attributeSubtype = .init(subtype)
+    _lastActivity = .init(ContinuousClock.now)
     self.value = value
   }
 
@@ -909,6 +944,7 @@ Sendable, Hashable, Equatable,
     _participant = Weak(participant)
     attributeType = type
     _attributeSubtype = .init(subtype)
+    _lastActivity = .init(ContinuousClock.now)
     self.value = AnyValue(value)
     if participant._type != .applicantOnly {
       registrar = Registrar(onLeaveTimerExpired: _onLeaveTimerExpired)
@@ -997,6 +1033,9 @@ Sendable, Hashable, Equatable,
 
     try await _handleRegistrar(context: context)
     try await _handleApplicant(context: context)
+
+    // Update activity timestamp to indicate this attribute is still active
+    touch()
   }
 
   private func _handleApplicant(context: EventContext<A>) async throws {
