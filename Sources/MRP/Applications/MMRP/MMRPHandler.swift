@@ -53,8 +53,8 @@ struct MMRPHandler<P: Port>: Sendable, RestApiApplicationHandler {
     fileprivate init(attributeValue: AttributeValue) {
       let macValue = attributeValue.attributeValue as! MMRPMACValue
       mac = _macAddressToString(macValue.macAddress)
-      registered = attributeValue.registrarState?.isRegistered ?? false
-      declared = attributeValue.applicantState.isDeclared
+      registered = attributeValue.isRegistered
+      declared = attributeValue.isDeclared
     }
   }
 

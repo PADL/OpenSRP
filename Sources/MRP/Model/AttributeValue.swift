@@ -34,4 +34,7 @@ struct AttributeValue {
   let attributeValue: any Value
   let applicantState: Applicant.State
   let registrarState: Registrar.State?
+
+  var isDeclared: Bool { applicantState.isDeclared }
+  var isRegistered: Bool { registrarState?.isRegistered ?? false }
 }
