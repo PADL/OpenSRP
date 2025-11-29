@@ -1073,7 +1073,7 @@ Sendable, Hashable, Equatable,
   private func _handleRegistrar(context: EventContext<A>) async throws {
     context.participant._logger.trace("\(context.participant): handling registrar \(context)")
 
-    if let registrarAction = context.registrar?.action(for: context.event, flags: context.smFlags) {
+    if let registrarAction = context.registrar?.action(for: context.event, eventSource: context.eventSource, flags: context.smFlags, logger: context.participant._logger) {
       context.participant._logger
         .trace(
           "\(context.participant): registrar action for event \(context.event): \(registrarAction)"

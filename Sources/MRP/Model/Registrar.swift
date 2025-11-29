@@ -14,6 +14,7 @@
 // limitations under the License.
 //
 
+import Logging
 import Synchronization
 
 // The job of the Registrar is to record declarations of the attribute made by
@@ -43,14 +44,25 @@ final class Registrar: Sendable, CustomStringConvertible {
   }
 
   // note: this function has side effects, it will start/stop leavetimer
-  func action(for event: ProtocolEvent, flags: StateMachineHandlerFlags) -> Action? {
+  func action(for event: ProtocolEvent, eventSource: EventSource, flags: StateMachineHandlerFlags, logger: Logger? = nil) -> Action? {
     _state.withLock { state in
       if state == .LV, event == .rNew || event == .rJoinIn || event == .rJoinMt {
         stopLeaveTimer()
       } else if state == .IN,
                 event == .rLv || event == .rLA || event == .txLA || event == .ReDeclare
       {
-        startLeaveTimer()
+        // Only start leave timer for rLA/txLA if it's from a peer (not our own LeaveAll timer)
+        // This prevents local LeaveAll from deregistering transit attributes
+        // Note: LeaveAll timer fires with eventSource = .leaveAllTimer, then triggers txLA with eventSource = .leaveAll
+        let isLocalLeaveAll = (event == .rLA || event == .txLA) &&
+                              (eventSource == .leaveAllTimer || eventSource == .leaveAll)
+
+        if !isLocalLeaveAll {
+          logger?.debug("Registrar: starting leave timer for event=\(event) eventSource=\(eventSource) state=\(state)")
+          startLeaveTimer()
+        } else {
+          logger?.debug("Registrar: skipping leave timer for local LeaveAll, state=\(state) (transit attribute)")
+        }
       }
       return state.action(for: event, flags: flags)
     }

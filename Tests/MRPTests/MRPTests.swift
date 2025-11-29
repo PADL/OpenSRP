@@ -1001,19 +1001,19 @@ final class MRPTests: XCTestCase {
     XCTAssertEqual(registrar.state, .MT)
 
     // Test Begin event
-    XCTAssertNil(registrar.action(for: .Begin, flags: normalFlags))
+    XCTAssertNil(registrar.action(for: .Begin, eventSource: .peer, flags: normalFlags))
     XCTAssertEqual(registrar.state, .MT)
 
     // Test rNew event from MT -> IN with New action
-    let action1 = registrar.action(for: .rNew, flags: normalFlags)
+    let action1 = registrar.action(for: .rNew, eventSource: .peer, flags: normalFlags)
     XCTAssertEqual(action1, .New)
     XCTAssertEqual(registrar.state, .IN)
 
     // Test rJoinIn event from IN (no state change, no action)
-    XCTAssertNil(registrar.action(for: .rJoinIn, flags: normalFlags))
+    XCTAssertNil(registrar.action(for: .rJoinIn, eventSource: .peer, flags: normalFlags))
     XCTAssertEqual(registrar.state, .IN)
 
-    let action2 = registrar.action(for: .rLv, flags: normalFlags)
+    let action2 = registrar.action(for: .rLv, eventSource: .peer, flags: normalFlags)
     #if AVNU
     // Test rLv event from IN -> MT with Lv action (per Avnu ProAV Bridge Specification)
     XCTAssertEqual(action2, .Lv)
@@ -1023,7 +1023,7 @@ final class MRPTests: XCTestCase {
     XCTAssertEqual(registrar.state, .LV)
     #endif
     // Test rJoinIn from MT -> IN with Join action
-    let action3 = registrar.action(for: .rJoinIn, flags: normalFlags)
+    let action3 = registrar.action(for: .rJoinIn, eventSource: .peer, flags: normalFlags)
     #if AVNU
     XCTAssertEqual(action3, .Join)
     #else
@@ -1032,11 +1032,11 @@ final class MRPTests: XCTestCase {
     XCTAssertEqual(registrar.state, .IN)
 
     // Test rLA event from IN -> LV (starts leave timer)
-    XCTAssertNil(registrar.action(for: .rLA, flags: normalFlags))
+    XCTAssertNil(registrar.action(for: .rLA, eventSource: .peer, flags: normalFlags))
     XCTAssertEqual(registrar.state, .LV)
 
     // Test leavetimer event from LV -> MT with Lv action
-    let action4 = registrar.action(for: .leavetimer, flags: normalFlags)
+    let action4 = registrar.action(for: .leavetimer, eventSource: .peer, flags: normalFlags)
     XCTAssertEqual(action4, .Lv)
     XCTAssertEqual(registrar.state, .MT)
   }
@@ -1046,21 +1046,21 @@ final class MRPTests: XCTestCase {
 
     // Test registrationForbidden flag
     let forbiddenFlags: StateMachineHandlerFlags = [.registrationForbidden]
-    XCTAssertNil(registrar.action(for: .rNew, flags: forbiddenFlags))
+    XCTAssertNil(registrar.action(for: .rNew, eventSource: .peer, flags: forbiddenFlags))
     XCTAssertEqual(registrar.state, .MT)
 
     // Test registrationFixedNewIgnored flag
     let ignoredFlags: StateMachineHandlerFlags = [.registrationFixedNewIgnored]
-    XCTAssertNil(registrar.action(for: .rNew, flags: ignoredFlags))
+    XCTAssertNil(registrar.action(for: .rNew, eventSource: .peer, flags: ignoredFlags))
     XCTAssertEqual(registrar.state, .MT)
 
     // Test registrationFixedNewPropagated flag (allows rNew, blocks others)
     let propagatedFlags: StateMachineHandlerFlags = [.registrationFixedNewPropagated]
-    let action1 = registrar.action(for: .rNew, flags: propagatedFlags)
+    let action1 = registrar.action(for: .rNew, eventSource: .peer, flags: propagatedFlags)
     XCTAssertEqual(action1, .New)
     XCTAssertEqual(registrar.state, .IN)
 
-    XCTAssertNil(registrar.action(for: .rJoinIn, flags: propagatedFlags))
+    XCTAssertNil(registrar.action(for: .rJoinIn, eventSource: .peer, flags: propagatedFlags))
     XCTAssertEqual(registrar.state, .IN) // No change
   }
 
@@ -1069,12 +1069,12 @@ final class MRPTests: XCTestCase {
     let pointToPointFlags: StateMachineHandlerFlags = [.operPointToPointMAC]
 
     // Set up state to LV
-    _ = registrar.action(for: .rNew, flags: [])
-    _ = registrar.action(for: .rLA, flags: [])
+    _ = registrar.action(for: .rNew, eventSource: .peer, flags: [])
+    _ = registrar.action(for: .rLA, eventSource: .peer, flags: [])
     XCTAssertEqual(registrar.state, .LV)
 
     // Test leavetimer with point-to-point flag
-    let action = registrar.action(for: .leavetimer, flags: pointToPointFlags)
+    let action = registrar.action(for: .leavetimer, eventSource: .peer, flags: pointToPointFlags)
     XCTAssertEqual(action, .Lv)
     XCTAssertEqual(registrar.state, .MT)
   }
@@ -1195,7 +1195,7 @@ final class MRPTests: XCTestCase {
 
     // Initialize all state machines
     XCTAssertNil(applicant.action(for: .Begin, flags: normalFlags))
-    XCTAssertNil(registrar.action(for: .Begin, flags: normalFlags))
+    XCTAssertNil(registrar.action(for: .Begin, eventSource: .peer, flags: normalFlags))
     let leaveAllAction = leaveAll.action(for: .Begin)
     XCTAssertEqual(leaveAllAction, .leavealltimer)
 
@@ -1213,7 +1213,7 @@ final class MRPTests: XCTestCase {
     XCTAssertEqual(applicant.description, "AN")
 
     // Receive our own New message
-    let registrarAction = registrar.action(for: .rNew, flags: normalFlags)
+    let registrarAction = registrar.action(for: .rNew, eventSource: .peer, flags: normalFlags)
     XCTAssertEqual(registrarAction, .New)
     XCTAssertEqual(registrar.state, .IN)
 
@@ -1230,7 +1230,7 @@ final class MRPTests: XCTestCase {
     XCTAssertNil(applicant.action(for: .rLA, flags: normalFlags))
     XCTAssertEqual(applicant.description, "VP") // QA -> VP on rLA
 
-    XCTAssertNil(registrar.action(for: .rLA, flags: normalFlags))
+    XCTAssertNil(registrar.action(for: .rLA, eventSource: .peer, flags: normalFlags))
     XCTAssertEqual(registrar.state, .LV) // IN -> LV on rLA
 
     let leaveAllAction2 = leaveAll.action(for: .rLA)
