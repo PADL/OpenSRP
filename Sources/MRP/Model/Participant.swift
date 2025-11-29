@@ -223,8 +223,6 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     try await _handleLeaveAll(protocolEvent: .leavealltimer, eventSource: .leaveAllTimer)
     // Table 10.5: Request opportunity to transmit on entry to the Active state
     try await _requestTxOpportunity(eventSource: .leaveAll)
-    // Garbage collect stale attributes with MT registrar and observer applicant
-    await _gcAttributeValues()
   }
 
   private func _apply(
@@ -432,25 +430,6 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       if _attributes.values[index].isEmpty {
         _attributes.removeValue(forKey: attributeValue.attributeType)
       }
-    }
-  }
-
-  // Garbage collect stale attributes with MT registrar and observer applicant state.
-  // This is called periodically from the LeaveAll timer to clean up attributes
-  // that should no longer be in the database.
-  //
-  // NOTE: If LeaveAll timer is disabled, this will never run, causing a potential
-  // memory leak for stale attributes. Consider adding a fallback periodic GC
-  // mechanism if LeaveAll is optional in your deployment.
-  private func _gcAttributeValues() async {
-    let attributesToGC = _attributes.values
-      .flatMap { $0 }
-      .filter(\.canGC)
-
-    attributesToGC.forEach { _gcAttributeValue($0) }
-
-    if !attributesToGC.isEmpty {
-      _logger.trace("\(self): garbage collected \(attributesToGC.count) stale attribute(s)")
     }
   }
 
