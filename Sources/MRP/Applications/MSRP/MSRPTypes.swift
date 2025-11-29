@@ -117,6 +117,34 @@ extension MSRPTalkerValue {
 
 typealias MSRPPortLatency = Int
 
+public struct MSRPSystemID: Sendable, Equatable, ExpressibleByIntegerLiteral,
+  CustomStringConvertible, Hashable, SerDes
+{
+  public typealias IntegerLiteralType = UInt64
+
+  public let id: UInt64
+
+  public init(integerLiteral id: UInt64) {
+    self.id = id
+  }
+
+  public init(id: UInt64) {
+    self.id = id
+  }
+
+  public var description: String {
+    _formatHex(id, padToWidth: 16)
+  }
+
+  public func serialize(into serializationContext: inout SerializationContext) throws {
+    serializationContext.serialize(uint64: id)
+  }
+
+  public init(parsing input: inout ParserSpan) throws {
+    id = try UInt64(parsing: &input, storedAsBigEndian: UInt64.self)
+  }
+}
+
 public struct MSRPStreamID: Sendable, ExpressibleByIntegerLiteral, ExpressibleByStringLiteral,
   CustomStringConvertible,
   Value, Hashable
@@ -203,10 +231,10 @@ public enum TSNFailureCode: UInt8, SerDes, Equatable {
 }
 
 public struct MSRPFailure: Error, Equatable {
-  let systemID: UInt64
+  let systemID: MSRPSystemID
   let failureCode: TSNFailureCode
 
-  public init(systemID: UInt64, failureCode: TSNFailureCode) {
+  public init(systemID: MSRPSystemID, failureCode: TSNFailureCode) {
     self.systemID = systemID
     self.failureCode = failureCode
   }

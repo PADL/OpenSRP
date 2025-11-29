@@ -83,7 +83,7 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
       streamID = talkerFailed.streamID.streamIDString
       failureCode = Int(talkerFailed.failureCode.rawValue)
       failureReason = String(describing: talkerFailed.failureCode)
-      systemID = _formatHex(talkerFailed.systemID, padToWidth: 16)
+      systemID = talkerFailed.systemID.description
       accumulatedLatency = Int(talkerFailed.accumulatedLatency)
       destination = _macAddressToString(talkerFailed.dataFrameParameters.destinationAddress)
       registered = attributeValue.registrarState?.isRegistered ?? false

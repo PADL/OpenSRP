@@ -152,7 +152,7 @@ struct MSRPTalkerFailedValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equata
   let tSpec: MSRPTSpec
   let priorityAndRank: MSRPPriorityAndRank
   let accumulatedLatency: UInt32
-  let systemID: UInt64
+  let systemID: MSRPSystemID
   let failureCode: TSNFailureCode
 
   static func == (lhs: MSRPTalkerFailedValue, rhs: MSRPTalkerFailedValue) -> Bool {
@@ -169,7 +169,7 @@ struct MSRPTalkerFailedValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equata
     tSpec: MSRPTSpec,
     priorityAndRank: MSRPPriorityAndRank,
     accumulatedLatency: UInt32,
-    systemID: UInt64,
+    systemID: MSRPSystemID,
     failureCode: TSNFailureCode
   ) {
     self.streamID = streamID
@@ -183,7 +183,7 @@ struct MSRPTalkerFailedValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equata
 
   func serialize(into serializationContext: inout SerializationContext) throws {
     try _serialize(into: &serializationContext)
-    serializationContext.serialize(uint64: systemID)
+    try systemID.serialize(into: &serializationContext)
     try failureCode.serialize(into: &serializationContext)
   }
 
@@ -193,7 +193,7 @@ struct MSRPTalkerFailedValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equata
     tSpec = try MSRPTSpec(parsing: &input)
     priorityAndRank = try MSRPPriorityAndRank(parsing: &input)
     accumulatedLatency = try UInt32(parsing: &input, storedAsBigEndian: UInt32.self)
-    systemID = try UInt64(parsing: &input, storedAsBigEndian: UInt64.self)
+    systemID = try MSRPSystemID(parsing: &input)
     failureCode = try TSNFailureCode(parsing: &input)
   }
 
@@ -204,7 +204,7 @@ struct MSRPTalkerFailedValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equata
       tSpec: MSRPTSpec(),
       priorityAndRank: MSRPPriorityAndRank(),
       accumulatedLatency: 0,
-      systemID: 0,
+      systemID: MSRPSystemID(id: 0),
       failureCode: .unknown
     )
   }

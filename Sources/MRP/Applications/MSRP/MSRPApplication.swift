@@ -66,9 +66,9 @@ protocol MSRPAwareBridge<P>: Bridge where P: AVBPort {
   var srClassPriorityMapNotifications: AnyAsyncSequence<SRClassPriorityMapNotification<P>> { get }
 }
 
-extension AVBPort {
-  var systemID: UInt64 {
-    0x8000_0000_0000_0000 | UInt64(eui48: macAddress)
+public extension AVBPort {
+  var systemID: MSRPSystemID {
+    MSRPSystemID(id: 0x8000_0000_0000_0000 | UInt64(eui48: macAddress))
   }
 }
 

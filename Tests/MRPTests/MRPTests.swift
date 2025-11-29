@@ -652,6 +652,67 @@ final class MRPTests: XCTestCase {
     XCTAssertEqual(ee1, ee2)
   }
 
+  func testMSRPSystemIDCreation() {
+    // Test creation with integer literal
+    let systemID1: MSRPSystemID = 0x7FFF_F8FB_1C25
+    XCTAssertEqual(systemID1.id, 0x7FFF_F8FB_1C25)
+
+    // Test creation with init
+    let systemID2 = MSRPSystemID(id: 9_223_372_056_556_595_877)
+    XCTAssertEqual(systemID2.id, 9_223_372_056_556_595_877)
+  }
+
+  func testMSRPSystemIDEquality() {
+    let systemID1 = MSRPSystemID(id: 0x7FFF_F8FB_1C25)
+    let systemID2 = MSRPSystemID(id: 0x7FFF_F8FB_1C25)
+    let systemID3 = MSRPSystemID(id: 0x1234_5678_90AB_CDEF)
+
+    XCTAssertEqual(systemID1, systemID2)
+    XCTAssertNotEqual(systemID1, systemID3)
+  }
+
+  func testMSRPSystemIDDescription() {
+    let systemID = MSRPSystemID(id: 0x7FFF_F8FB_1C25)
+    // Description should be hex formatted without 0x prefix, padded to 16 chars
+    XCTAssertEqual(systemID.description, "00007ffff8fb1c25")
+
+    let systemID2 = MSRPSystemID(id: 0x1234_5678_90AB_CDEF)
+    XCTAssertEqual(systemID2.description, "1234567890abcdef")
+  }
+
+  func testMSRPSystemIDSerialization() throws {
+    let systemID = MSRPSystemID(id: 0x1234_5678_90AB_CDEF)
+    var serializationContext = SerializationContext()
+    try systemID.serialize(into: &serializationContext)
+
+    // Should be serialized as big-endian 64-bit integer (8 bytes)
+    XCTAssertEqual(serializationContext.bytes.count, 8)
+    XCTAssertEqual(serializationContext.bytes, [0x12, 0x34, 0x56, 0x78, 0x90, 0xAB, 0xCD, 0xEF])
+  }
+
+  func testMSRPSystemIDParsing() throws {
+    let bytes: [UInt8] = [0x12, 0x34, 0x56, 0x78, 0x90, 0xAB, 0xCD, 0xEF]
+    let systemID = try bytes.withParserSpan { input in
+      try MSRPSystemID(parsing: &input)
+    }
+
+    XCTAssertEqual(systemID.id, 0x1234_5678_90AB_CDEF)
+  }
+
+  func testMSRPSystemIDHashable() {
+    let systemID1 = MSRPSystemID(id: 0x7FFF_F8FB_1C25)
+    let systemID2 = MSRPSystemID(id: 0x7FFF_F8FB_1C25)
+    let systemID3 = MSRPSystemID(id: 0x1234_5678_90AB_CDEF)
+
+    var set = Set<MSRPSystemID>()
+    set.insert(systemID1)
+    set.insert(systemID2) // Should not increase set size
+    XCTAssertEqual(set.count, 1)
+
+    set.insert(systemID3)
+    XCTAssertEqual(set.count, 2)
+  }
+
   func testMSRPSerialization() async throws {
     let streamID = MSRPStreamID(0x1234_5678_9ABC_DEF0)
     let dataFrameParams = MSRPDataFrameParameters()
@@ -1867,7 +1928,7 @@ final class MRPTests: XCTestCase {
       tSpec: tSpec,
       priorityAndRank: priorityAndRank,
       accumulatedLatency: 261_300,
-      systemID: 9_223_372_056_556_595_877,
+      systemID: MSRPSystemID(id: 9_223_372_056_556_595_877),
       failureCode: .egressPortIsNotAvbCapable
     )
 
@@ -1928,7 +1989,7 @@ final class MRPTests: XCTestCase {
       tSpec: tSpec,
       priorityAndRank: priorityAndRank,
       accumulatedLatency: 261_300,
-      systemID: 9_223_372_056_556_595_877,
+      systemID: MSRPSystemID(id: 9_223_372_056_556_595_877),
       failureCode: .egressPortIsNotAvbCapable
     )
 
