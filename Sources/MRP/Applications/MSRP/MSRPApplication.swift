@@ -1194,7 +1194,8 @@ extension MSRPApplication {
         attributeType: MSRPAttributeType.listener.rawValue,
         matching: .matchAnyIndex(streamID.id)
       ) {
-        guard let declarationType = try? MSRPDeclarationType(attributeSubtype: listenerAttribute.attributeSubtype)
+        guard let declarationType = try? MSRPDeclarationType(attributeSubtype: listenerAttribute
+          .attributeSubtype)
         else { continue }
         if mergedDeclarationType == nil {
           mergedDeclarationType = declarationType
