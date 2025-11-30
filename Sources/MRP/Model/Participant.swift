@@ -1010,6 +1010,20 @@ Sendable, Hashable, Equatable,
   private func _handleApplicant(context: EventContext<A>) async throws {
     context.participant._logger.trace("\(context.participant): handling applicant \(context)")
 
+    // For bridges: when Registrar registers an attribute from a peer, transition Applicant
+    // from Observer to Passive state so it maintains the declaration during LeaveAll.
+    // This ensures propagated attributes send In (not Empty) during LeaveAll cycles.
+    if context.eventSource == .peer, registrar?.state == .IN {
+      let applicantState = context.applicant.state
+      // If Applicant is in Observer state, send .Join to transition to Passive
+      if applicantState == .AO || applicantState == .QO || applicantState == .VO {
+        context.participant._logger.debug(
+          "\(context.participant): transitioning Applicant from Observer \(applicantState) to Passive for propagated attribute"
+        )
+        _ = context.applicant.action(for: .Join, flags: context.smFlags)
+      }
+    }
+
     let applicantAction = applicant.action(for: context.event, flags: context.smFlags)
 
     if let applicantAction {
