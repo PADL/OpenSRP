@@ -1166,17 +1166,6 @@ extension MSRPApplication {
       nil
     }
 
-    if isJoin, talkerRegistration.1 is MSRPTalkerFailedValue {
-      if declarationType != nil {
-        _logger.trace("MSRP: stream \(streamID) talkerFailed propagated as listenerAskingFailed")
-      } else {
-        _logger
-          .trace(
-            "MSRP: stream \(streamID) talkerFailed received but no listener exists, not propagating"
-          )
-      }
-    }
-
     // collect listener declarations from all other ports and merge declaration type
     await apply(for: contextIdentifier) { participant in
       // exclude registering or leaving port
