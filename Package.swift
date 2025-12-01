@@ -8,7 +8,10 @@ let PlatformTargetDependencies: [Target.Dependency]
 let PlatformProducts: [Product]
 let PlatformTargets: [Target]
 var PlatformCSettings: [CSetting] = []
-var PlatformSwiftSettings: [SwiftSetting] = []
+var PlatformSwiftSettings: [SwiftSetting] = [
+  .enableExperimentalFeature("StrictConcurrency"),
+  .enableExperimentalFeature("NonisolatedNonsendingByDefault"),
+]
 var PlatformLinkerSettings: [LinkerSetting] = []
 
 #if os(Linux)
