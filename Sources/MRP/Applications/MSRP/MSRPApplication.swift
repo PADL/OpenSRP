@@ -905,12 +905,12 @@ extension MSRPApplication {
         accumulatedLatency += 500 // clause 35.2.2.8.6, 500ns default
       }
 
+      try await participant.leaveNow { attributeType, _, attributeValue in
+        attributeType == declarationType.talkerComplement.rawValue &&
+          (attributeValue as! MSRPStreamIDRepresentable).streamID == talkerValue.streamID
+      }
+
       if declarationType == .talkerAdvertise {
-        // Leave any existing talkerFailed before joining talkerAdvertise
-        try await participant.leaveNow { attributeType, _, attributeValue in
-          attributeType == MSRPAttributeType.talkerFailed.rawValue &&
-            (attributeValue as! MSRPStreamIDRepresentable).streamID == talkerValue.streamID
-        }
         do {
           try await _canBridgeTalker(
             participant: participant,
@@ -969,11 +969,6 @@ extension MSRPApplication {
         }
       } else {
         precondition(declarationType == .talkerFailed)
-        // Leave any existing talkerAdvertise before joining talkerFailed
-        try await participant.leaveNow { attributeType, _, attributeValue in
-          attributeType == MSRPAttributeType.talkerAdvertise.rawValue &&
-            (attributeValue as! MSRPStreamIDRepresentable).streamID == talkerValue.streamID
-        }
         let talkerFailed = MSRPTalkerFailedValue(
           streamID: talkerValue.streamID,
           dataFrameParameters: talkerValue.dataFrameParameters,
@@ -1776,6 +1771,16 @@ extension MSRPApplication {
     get async {
       guard _maxTalkerAttributes > 0 else { return false }
       return await _numberOfRegisteredTalkerAttributes >= _maxTalkerAttributes
+    }
+  }
+}
+
+private extension MSRPDeclarationType {
+  var talkerComplement: MSRPAttributeType! {
+    switch self {
+    case .talkerAdvertise: .talkerFailed
+    case .talkerFailed: .talkerAdvertise
+    default: nil
     }
   }
 }
