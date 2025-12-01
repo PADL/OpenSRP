@@ -44,16 +44,32 @@ final class Registrar: Sendable, CustomStringConvertible {
 
   // note: this function has side effects, it will start/stop leavetimer
   func action(for event: ProtocolEvent, flags: StateMachineHandlerFlags) -> Action? {
-    _state.withLock { state in
+    enum LeaveTimerAction { case none; case start; case stop }
+
+    let (leaveTimerAction, stateAction) = _state.withLock { state in
+      var leaveTimerAction = LeaveTimerAction.none
+
       if state == .LV, event == .rNew || event == .rJoinIn || event == .rJoinMt {
-        stopLeaveTimer()
+        leaveTimerAction = .stop
       } else if state == .IN,
                 event == .rLv || event == .rLA || event == .txLA || event == .ReDeclare
       {
-        startLeaveTimer()
+        leaveTimerAction = .start
       }
-      return state.action(for: event, flags: flags)
+
+      return (leaveTimerAction, state.action(for: event, flags: flags))
     }
+
+    switch leaveTimerAction {
+    case .start:
+      startLeaveTimer()
+    case .stop:
+      stopLeaveTimer()
+    default:
+      break
+    }
+
+    return stateAction
   }
 
   var state: State { _state.withLock { $0 } }
