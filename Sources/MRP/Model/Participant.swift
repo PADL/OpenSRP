@@ -612,6 +612,9 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       // Applicant or Registrar state machine performs the sLA action
       // (10.7.6.6); or a MRPDU is received with a LeaveAll
       _logger.debug("\(self): sending leave all events, source \(eventSource)")
+      // the rLA! event is responsible for starting the leave timer on
+      // registered attributes (Table 10-4), as well as requesting the
+      // applicant to redeclare attributes (Table 10-3).
       try await _apply(protocolEvent: .rLA, eventSource: eventSource)
       try _txEnqueueLeaveAllEvents()
     default:
