@@ -59,17 +59,15 @@ final class Timer: CustomStringConvertible, Sendable {
 
     _task.withLock { task in
       task?.cancel() // in case stop() was not called
-      task = Task<(), Error> { try await _loop(interval: interval) }
+      task = Task<(), Error> { try await _fire(interval: interval) }
     }
   }
 
-  private func _loop(interval: Duration) async throws {
-    repeat {
-      do {
-        try await Task.sleep(for: interval, clock: .continuous)
-        try await _onExpiry()
-      } catch {}
-    } while !Task.isCancelled
+  private func _fire(interval: Duration) async throws {
+    try await Task.sleep(for: interval, clock: .continuous)
+    try await _onExpiry()
+    // don't need to cancel task because we are about to return
+    _task.withLock { $0 = nil }
   }
 
   func stop() {

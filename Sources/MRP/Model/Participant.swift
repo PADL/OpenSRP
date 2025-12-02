@@ -211,11 +211,14 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
 
   @Sendable
   private func _onJoinTimerExpired() async throws {
+    guard let controller else { return }
     if _type == .pointToPoint && _pendingTransmissionRequest {
       // Check if rate limiting window has expired
       _pendingTransmissionRequest = false
     }
     try await _requestTxOpportunity(eventSource: .joinTimer)
+    // Restart join timer for next period
+    _jointimer?.start(interval: controller.timerConfiguration.joinTime)
   }
 
   @Sendable

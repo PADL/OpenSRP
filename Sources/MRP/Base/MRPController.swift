@@ -411,13 +411,20 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
     logger.debug("controller starting periodic timer on port \(port)")
     var periodicTimer = _periodicTimers[port.id]
     if periodicTimer == nil {
-      periodicTimer = Timer(label: "periodictimer") {
-        try await self._apply { @Sendable application in
+      periodicTimer = Timer(label: "periodictimer") { [weak self] in
+        guard let self else { return }
+        try await _apply { @Sendable application in
           try await application.periodic()
         }
+        await _restartPeriodicTimer(port: port)
       }
+      _periodicTimers[port.id] = periodicTimer
     }
     periodicTimer!.start(interval: timerConfiguration.periodicTime)
+  }
+
+  private func _restartPeriodicTimer(port: P) {
+    _periodicTimers[port.id]?.start(interval: timerConfiguration.periodicTime)
   }
 
   private func _stopPeriodicTimer(port: P) {
