@@ -82,4 +82,8 @@ final class Timer: CustomStringConvertible, Sendable {
   deinit {
     stop()
   }
+
+  var isRunning: Bool {
+    _task.withLock { $0 != nil }
+  }
 }
