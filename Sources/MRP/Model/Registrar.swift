@@ -35,6 +35,7 @@ final class Registrar: Sendable, CustomStringConvertible {
     case Lv // send a Lv indication to MAP and the MRP application (10.7.6.14)
   }
 
+  // initializing _state to .MT is equivalent to handling the .Begin event
   private let _state = Mutex(State.MT)
   private let _leavetimer: Timer
 

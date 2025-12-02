@@ -27,6 +27,8 @@ final class LeaveAll: Sendable, CustomStringConvertible {
     case sLA
   }
 
+  // initializing _state to .Passive and starting leavealltimer is equivalent
+  // to handling the .Begin event
   private let _state = Mutex(State.Passive)
   private let _leaveAllTime: Duration
   private let _leaveAllTimer: Timer

@@ -96,6 +96,7 @@ final class Applicant: Sendable, CustomStringConvertible {
     }
   }
 
+  // initializing _state to .VO is equivalent to handling the .Begin event
   private let _state = Mutex(State.VO)
 
   func action(for event: ProtocolEvent, flags: StateMachineHandlerFlags) -> Action? {
