@@ -931,7 +931,10 @@ Sendable, Hashable, Equatable,
     _attributeSubtype = .init(subtype)
     self.value = AnyValue(value)
     if participant._type != .applicantOnly {
-      registrar = Registrar(onLeaveTimerExpired: _onLeaveTimerExpired)
+      registrar = Registrar(
+        leaveTime: participant.controller!.timerConfiguration.leaveTime,
+        onLeaveTimerExpired: _onLeaveTimerExpired
+      )
     }
   }
 

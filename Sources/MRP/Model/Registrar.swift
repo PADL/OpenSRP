@@ -36,10 +36,12 @@ final class Registrar: Sendable, CustomStringConvertible {
   }
 
   // initializing _state to .MT is equivalent to handling the .Begin event
+  private let _leaveTime: Duration
   private let _state = Mutex(State.MT)
   private let _leavetimer: Timer
 
-  init(onLeaveTimerExpired: @escaping Timer.Action) {
+  init(leaveTime: Duration = LeaveTime, onLeaveTimerExpired: @escaping Timer.Action) {
+    _leaveTime = leaveTime
     _leavetimer = Timer(label: "leavetimer", onExpiry: onLeaveTimerExpired)
   }
 
@@ -76,7 +78,7 @@ final class Registrar: Sendable, CustomStringConvertible {
   var state: State { _state.withLock { $0 } }
 
   private func _startLeaveTimer() {
-    _leavetimer.start(interval: LeaveTime)
+    _leavetimer.start(interval: _leaveTime)
   }
 
   func stopLeaveTimer() {
