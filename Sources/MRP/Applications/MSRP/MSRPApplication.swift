@@ -1182,17 +1182,9 @@ extension MSRPApplication {
     talkerRegistration: TalkerRegistration,
     isJoin: Bool
   ) async throws -> MSRPDeclarationType? {
+    var mergedDeclarationType = isJoin ? declarationType : nil
     let streamID = talkerRegistration.1.streamID
-
-    var mergedDeclarationType: MSRPDeclarationType? = if isJoin {
-      if talkerRegistration.1 is MSRPTalkerFailedValue {
-        declarationType == nil ? nil : .listenerAskingFailed
-      } else {
-        declarationType
-      }
-    } else {
-      nil
-    }
+    var listenerCount = mergedDeclarationType != nil ? 1 : 0
 
     // collect listener declarations from all other ports and merge declaration type
     await apply(for: contextIdentifier) { participant in
@@ -1217,7 +1209,14 @@ extension MSRPApplication {
             with: mergedDeclarationType
           )
         }
+        listenerCount += 1
       }
+    }
+
+    precondition(mergedDeclarationType == nil || listenerCount > 0)
+
+    if talkerRegistration.1 is MSRPTalkerFailedValue, listenerCount > 0 {
+      mergedDeclarationType = .listenerAskingFailed
     }
 
     return mergedDeclarationType
