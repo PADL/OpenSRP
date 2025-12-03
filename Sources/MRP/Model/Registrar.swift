@@ -63,7 +63,7 @@ final class Registrar: Sendable, CustomStringConvertible {
 
     switch leaveTimerAction {
     case .start:
-      startLeaveTimer()
+      _startLeaveTimer()
     case .stop:
       stopLeaveTimer()
     default:
@@ -75,7 +75,7 @@ final class Registrar: Sendable, CustomStringConvertible {
 
   var state: State { _state.withLock { $0 } }
 
-  func startLeaveTimer() {
+  private func _startLeaveTimer() {
     _leavetimer.start(interval: LeaveTime)
   }
 
