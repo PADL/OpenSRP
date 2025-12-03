@@ -54,6 +54,8 @@ final class Registrar: Sendable, CustomStringConvertible {
 
       if state == .LV, event == .rNew || event == .rJoinIn || event == .rJoinMt {
         leaveTimerAction = .stop
+      } else if state != .MT, event == .rLvNow {
+        leaveTimerAction = .stop
       } else if state == .IN,
                 event == .rLv || event == .rLA || event == .txLA || event == .ReDeclare
       {
@@ -152,6 +154,11 @@ private extension Registrar.State {
       if self == .LV || flags.contains(.operPointToPointMAC) {
         action = .Lv
       }
+      self = .MT
+    case .rLvNow:
+      // behave as though .rLv was received with immediate leavetimer expiration
+      guard self != .MT else { break }
+      action = .Lv
       self = .MT
     default:
       break

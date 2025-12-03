@@ -138,8 +138,7 @@ struct MSRPPortState<P: AVBPort>: Sendable {
 }
 
 public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventObserver,
-  BaseApplicationContextObserver,
-  ApplicationEventHandler, CustomStringConvertible, @unchecked Sendable where P == P
+  BaseApplicationContextObserver, CustomStringConvertible, @unchecked Sendable where P == P
 {
   private typealias TalkerRegistration = (Participant<MSRPApplication>, any MSRPTalkerValue)
 
@@ -397,50 +396,6 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
   {
     .normalParticipant
   }
-
-  // If an MSRP message is received from a Port with an event value specifying
-  // the JoinIn or JoinMt message, and if the StreamID (35.2.2.8.2,
-  // 35.2.2.10.2), and Direction (35.2.1.2) all match those of an attribute
-  // already registered on that Port, and the Attribute Type (35.2.2.4) or
-  // FourPackedEvent (35.2.2.7.2) has changed, then the Bridge should behave as
-  // though an rLv! event (with immediate leavetimer expiration in the
-  // Registrar state table) was generated for the MAD in the Received MSRP
-  // Attribute Declarations before the rJoinIn! or rJoinMt! event for the
-  // attribute in the received message is processed
-  public func preApplicantEventHandler(
-    context: EventContext<MSRPApplication>
-  ) async throws {
-    guard context.event == .rJoinIn || context.event == .rJoinMt else { return }
-
-    let contextAttributeType = MSRPAttributeType(rawValue: context.attributeType)!
-    guard let contextDirection = contextAttributeType.direction else { return }
-
-    let contextStreamID = (context.attributeValue as! MSRPStreamIDRepresentable).streamID
-
-    try await context.participant.leaveNow { attributeType, _, attributeValue in
-      let attributeType = MSRPAttributeType(rawValue: attributeType)!
-      guard let direction = attributeType.direction else { return false }
-      let streamID = (attributeValue as! MSRPStreamIDRepresentable).streamID
-
-      // force immediate leave if the streamID and direction match and the
-      // attribute type has changed
-      let isIncluded = contextStreamID == streamID &&
-        contextDirection == direction &&
-        contextAttributeType != attributeType
-
-      // NB: we don't handle attribute subtypes here, they are handled in
-      // Participant.swift (this is something of a leaky abstraction)
-      if isIncluded {
-        _logger
-          .debug(
-            "MSRP: forcing immediate leave for stream \(streamID) owing to attribute change: \(attributeType)->\(contextAttributeType)"
-          )
-      }
-      return isIncluded
-    }
-  }
-
-  public func postApplicantEventHandler(context: EventContext<MSRPApplication>) {}
 
   // On receipt of a REGISTER_STREAM.request the MSRP Participant shall issue a
   // MAD_Join.request service primitive (10.2, 10.3). The attribute_type (10.2)
@@ -892,6 +847,26 @@ extension MSRPApplication {
         "MSRP: register stream indication from port \(port) streamID \(talkerValue.streamID) declarationType \(declarationType) dataFrameParameters \(talkerValue.dataFrameParameters) isNew \(isNew) source \(eventSource)"
       )
 
+    // Deregister the opposite talker type from the peer to ensure mutual exclusion
+    if eventSource == .peer {
+      let sourceParticipant = try findParticipant(for: contextIdentifier, port: port)
+      let oppositeType: MSRPAttributeType = declarationType == .talkerAdvertise ? .talkerFailed :
+        .talkerAdvertise
+
+      let oppositeAttributes = await sourceParticipant.findAttributes(
+        attributeType: oppositeType.rawValue,
+        matching: .matchAnyIndex(talkerValue.streamID.index)
+      )
+
+      for (_, attributeValue) in oppositeAttributes {
+        try? await sourceParticipant.deregister(
+          attributeType: oppositeType.rawValue,
+          attributeValue: attributeValue,
+          eventSource: eventSource
+        )
+      }
+    }
+
     // TL;DR: propagate Talker declarations to other ports
     try await apply(for: contextIdentifier) { participant in
       guard participant.port != port else { return } // don't propagate to source port
@@ -930,12 +905,14 @@ extension MSRPApplication {
         accumulatedLatency += 500 // clause 35.2.2.8.6, 500ns default
       }
 
-      // if a Talker Failed attribute already exists when a Talker Advertised
-      // is registered, or vice versa, immediately deregister the existing
-      // attribute
-      try await participant.leaveStreamNow(
-        attributeType: declarationType.talkerComplement,
-        streamID: talkerValue.streamID
+      // Leave the opposite talker declaration type to ensure mutual exclusion
+      // (per spec, only one talker declaration type should exist per stream)
+      let oppositeType: MSRPAttributeType = declarationType == .talkerAdvertise ? .talkerFailed :
+        .talkerAdvertise
+      try? await participant.leave(
+        attributeType: oppositeType.rawValue,
+        attributeValue: talkerValue,
+        eventSource: .map
       )
 
       if declarationType == .talkerAdvertise {
@@ -970,11 +947,6 @@ extension MSRPApplication {
             eventSource: .map
           )
         } catch let error as MSRPFailure {
-          // Leave any existing talkerAdvertise before joining talkerFailed
-          try await participant.leaveNow { attributeType, _, attributeValue in
-            attributeType == MSRPAttributeType.talkerAdvertise.rawValue &&
-              (attributeValue as! MSRPStreamIDRepresentable).streamID == talkerValue.streamID
-          }
           let talkerFailed = MSRPTalkerFailedValue(
             streamID: talkerValue.streamID,
             dataFrameParameters: talkerValue.dataFrameParameters,
@@ -1140,13 +1112,14 @@ extension MSRPApplication {
     for streamID: MSRPStreamID,
     participant: Participant<MSRPApplication>
   ) async -> (any MSRPTalkerValue)? {
+    // TalkerFailed takes precedence over TalkerAdvertise per spec
     if let value = await participant.findAttribute(
-      attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
+      attributeType: MSRPAttributeType.talkerFailed.rawValue,
       matching: .matchAnyIndex(streamID.index)
     ) {
       value.1 as? (any MSRPTalkerValue)
     } else if let value = await participant.findAttribute(
-      attributeType: MSRPAttributeType.talkerFailed.rawValue,
+      attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
       matching: .matchAnyIndex(streamID.index)
     ) {
       value.1 as? (any MSRPTalkerValue)
@@ -1781,25 +1754,6 @@ extension MSRPApplication {
     get async {
       guard _maxTalkerAttributes > 0 else { return false }
       return await _numberOfRegisteredTalkerAttributes >= _maxTalkerAttributes
-    }
-  }
-}
-
-private extension MSRPDeclarationType {
-  var talkerComplement: MSRPAttributeType! {
-    switch self {
-    case .talkerAdvertise: .talkerFailed
-    case .talkerFailed: .talkerAdvertise
-    default: nil
-    }
-  }
-}
-
-private extension Participant {
-  func leaveStreamNow(attributeType: MSRPAttributeType, streamID: MSRPStreamID) async throws {
-    try await leaveNow {
-      $0 == attributeType.rawValue &&
-        ($2 as! MSRPStreamIDRepresentable).streamID == streamID
     }
   }
 }
