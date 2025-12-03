@@ -555,15 +555,12 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     return pdu
   }
 
-  private func rx(message: Message, sourceMacAddress: EUI48) async throws {
-    let eventSource: EventSource = _isEqualMacAddress(
-      sourceMacAddress,
-      port.macAddress
-    ) ? .local : .peer
+  private func rx(message: Message, eventSource: EventSource, leaveAll: inout Bool) async throws {
     for vectorAttribute in message.attributeList {
       // 10.6 Protocol operation: process LeaveAll first.
       if vectorAttribute.leaveAllEvent == .LeaveAll {
         try await _leaveAll(eventSource: eventSource, attributeType: message.attributeType)
+        leaveAll = true
       }
 
       let packedEvents = try vectorAttribute.attributeEvents
@@ -592,8 +589,16 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
 
   func rx(pdu: MRPDU, sourceMacAddress: EUI48) async throws {
     _debugLogPdu(pdu, direction: .rx)
+    var leaveAll = false
+    let eventSource: EventSource = _isEqualMacAddress(
+      sourceMacAddress,
+      port.macAddress
+    ) ? .local : .peer
     for message in pdu.messages {
-      try await rx(message: message, sourceMacAddress: sourceMacAddress)
+      try await rx(message: message, eventSource: eventSource, leaveAll: &leaveAll)
+    }
+    if leaveAll {
+      try await _handleLeaveAll(protocolEvent: .rLA, eventSource: eventSource)
     }
   }
 
