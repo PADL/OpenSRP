@@ -203,9 +203,7 @@ extension Application {
     sourceMacAddress: EUI48
   ) async throws {
     let participant = try findParticipant(for: contextIdentifier, port: port)
-    for message in pdu.messages {
-      try await participant.rx(message: message, sourceMacAddress: sourceMacAddress)
-    }
+    try await participant.rx(pdu: pdu, sourceMacAddress: sourceMacAddress)
   }
 
   func flush(for contextIdentifier: MAPContextIdentifier) async throws {

@@ -637,8 +637,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     return pdu
   }
 
-  func rx(message: Message, sourceMacAddress: EUI48) async throws {
-    _debugLogMessage(message, direction: .rx)
+  private func rx(message: Message, sourceMacAddress: EUI48) async throws {
     let eventSource: EventSource = _isEqualMacAddress(
       sourceMacAddress,
       port.macAddress
@@ -671,6 +670,13 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
           replacingAttributeSubtype: attributeSubtype
         )
       }
+    }
+  }
+
+  func rx(pdu: MRPDU, sourceMacAddress: EUI48) async throws {
+    _debugLogPdu(pdu, direction: .rx)
+    for message in pdu.messages {
+      try await rx(message: message, sourceMacAddress: sourceMacAddress)
     }
   }
 
