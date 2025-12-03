@@ -43,6 +43,7 @@ public enum ProtocolEvent: Sendable {
   case leavetimer // leavetimer has expired (10.7.5.21)
   case leavealltimer // leavealltimer has expired (10.7.5.22)
   case periodictimer // periodictimer has expired (10.7.5.23)
+  case rLvNow // receive Leave message with immediate leavetimer expiration (35.2.6)
 
   fileprivate var _r: Bool {
     switch self {
@@ -100,7 +101,7 @@ public enum EventSource: Sendable {
   case `internal`
   // event source was transitive via MAP function
   case map
-  // event source was a preApplicantEventHandler/postApplicantEventHandler hook
+  // event source was a event handler hook
   case application
   // event source was immediate re-registration after LeaveAll processing
   case leaveAll
