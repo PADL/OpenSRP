@@ -212,7 +212,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
 
       for try await notification in bridge.srClassPriorityMapNotifications {
         guard let port = try? await controller.port(with: notification.portID) else { continue }
-        withPortState(port: port) { portState in
+        try? withPortState(port: port) { portState in
           portState.srClassPriorityMap = notification.map
         }
       }
@@ -226,8 +226,8 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
   @discardableResult
   func withPortState<T>(
     port: P,
-    body: (_: inout MSRPPortState<P>) throws -> T
-  ) rethrows -> T {
+    _ body: (_: inout MSRPPortState<P>) throws -> T
+  ) throws -> T {
     try _portStates.withLock {
       if let index = $0.index(forKey: port.id) {
         return try body(&$0.values[index])
@@ -868,9 +868,7 @@ extension MSRPApplication {
       guard participant.port != port else { return } // don't propagate to source port
 
       let port = participant.port
-      var portState: MSRPPortState<P>?
-      withPortState(port: port) { portState = $0 }
-      guard let portState else { return }
+      guard let portState = try? withPortState(port: port, { $0 }) else { return }
 
       guard await !_shouldPruneTalkerDeclaration(
         port: port,
@@ -1300,17 +1298,14 @@ extension MSRPApplication {
     mergedDeclarationType: MSRPDeclarationType?,
     talkerRegistration: TalkerRegistration
   ) async throws {
-    var portState: MSRPPortState<P>?
-
-    withPortState(port: port) {
+    let portState = try withPortState(port: port) {
       if mergedDeclarationType == .listenerReady || mergedDeclarationType == .listenerReadyFailed {
         $0.register(streamID: streamID)
       } else {
         $0.deregister(streamID: streamID)
       }
-      portState = $0
+      return $0
     }
-    guard let portState else { throw MRPError.portNotFound }
 
     _logger
       .info(
@@ -1509,7 +1504,7 @@ extension MSRPApplication {
     case .domain:
       let domain = (attributeValue as! MSRPDomainValue)
       let isEndStation = await controller?.isEndStation ?? false
-      withPortState(port: port) { portState in
+      try withPortState(port: port) { portState in
         let srClassPriority = portState.srClassPriorityMap[domain.srClassID]
         let isSrpDomainBoundaryPort = srClassPriority != domain.srClassPriority
         _logger
@@ -1691,7 +1686,7 @@ extension MSRPApplication {
       )
     case .domain:
       let domain = (attributeValue as! MSRPDomainValue)
-      withPortState(port: port) { portState in
+      try withPortState(port: port) { portState in
         portState.srpDomainBoundaryPort[domain.srClassID] = nil
       }
     }
@@ -1705,7 +1700,7 @@ extension MSRPApplication {
   ) async throws {
     var domain: MSRPDomainValue?
 
-    domain = withPortState(port: participant.port) { portState in
+    domain = try withPortState(port: participant.port) { portState in
       portState.getDomain(for: srClassID, defaultSRPVid: _srPVid)
     }
 

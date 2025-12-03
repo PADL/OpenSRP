@@ -135,7 +135,8 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
       streams: [Stream]
     ) {
       deltaBandwidth = application._deltaBandwidths[srClassID] ?? 0
-      let portState = application.withPortState(port: participant.port) { $0 }
+      guard let portState = try? application.withPortState(port: participant.port, { $0 })
+      else { return nil }
       guard let domain = portState.getDomain(for: srClassID, defaultSRPVid: application._srPVid)
       else { return nil }
       domainBoundaryPort = portState.srpDomainBoundaryPort[srClassID] ?? true
@@ -198,7 +199,8 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
         let streamID = (attributeValue.attributeValue as! MSRPListenerValue).streamID
 
         streamAge = if let application = participant.application {
-          application.withPortState(port: participant.port) { $0.getStreamAge(for: streamID) }
+          (try? application
+            .withPortState(port: participant.port) { $0.getStreamAge(for: streamID) }) ?? 0
         } else {
           0
         }
@@ -220,7 +222,7 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
       attributeValue: AttributeValue
     ) async throws {
       let talker = attributeValue.attributeValue as! any MSRPTalkerValue
-      let portState = application.withPortState(port: participant.port) { $0 }
+      let portState = try application.withPortState(port: participant.port) { $0 }
 
       streamID = talker.streamID.streamIDString
       vid = talker.dataFrameParameters.vlanIdentifier.vid
@@ -255,7 +257,8 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
       let port = participant.port
       let streams = await application._getStreams()
 
-      enabled = application.withPortState(port: participant.port) { $0.msrpPortEnabledStatus }
+      enabled = (try? application
+        .withPortState(port: participant.port) { $0.msrpPortEnabledStatus }) ?? false
       listener = await participant._getListeners()
       talker = await participant._getTalkers()
       talkerFailed = await participant._getTalkersFailed()
@@ -821,7 +824,7 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
 
 fileprivate extension MSRPApplication {
   func _getTransmitRate(for participant: Participant<MSRPApplication>) async throws -> Int {
-    let portState = withPortState(port: participant.port) { $0 }
+    let portState = try withPortState(port: participant.port) { $0 }
     let bandwidthUsed = try await _calculateBandwidthUsed(
       participant: participant,
       portState: portState
