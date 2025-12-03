@@ -146,7 +146,8 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
       self.priority = priority
       let streams = streams.filter { $0.priority == priority }
       present = !streams.isEmpty
-      operIdleSlope = streams.map(\.bandwidth).reduce(0, +)
+      operIdleSlope = streams.map(\.bandwidth)
+        .reduce(0, +) * 1000 // Convert kbps to bps (IEEE 802.1Q units)
     }
   }
 
