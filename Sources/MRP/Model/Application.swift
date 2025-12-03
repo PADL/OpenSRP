@@ -218,6 +218,6 @@ extension Application {
 public protocol ApplicationEventHandler<A>: Application {
   associatedtype A: Application
 
-  func preApplicantEventHandler(context: EventContext<A>) async throws
-  func postApplicantEventHandler(context: EventContext<A>)
+  func willHandleEvent(context: EventContext<A>) async throws
+  func didHandleEvent(context: EventContext<A>)
 }

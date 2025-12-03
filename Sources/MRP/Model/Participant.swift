@@ -440,13 +440,11 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     _ attributeValue: _AttributeValue<A>,
     protocolEvent: ProtocolEvent,
     eventSource: EventSource,
-    replacingAttributeSubtype: AttributeSubtype? = nil,
     gcNow: Bool = false
   ) async throws {
     try await attributeValue.handle(
       protocolEvent: protocolEvent,
-      eventSource: eventSource,
-      replacingAttributeSubtype: replacingAttributeSubtype
+      eventSource: eventSource
     )
 
     if gcNow, attributeValue.canGC {
@@ -666,8 +664,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
         try await _handleAttributeValue(
           attribute,
           protocolEvent: attributeEvent.protocolEvent,
-          eventSource: eventSource,
-          replacingAttributeSubtype: attributeSubtype
+          eventSource: eventSource
         )
       }
     }
@@ -803,8 +800,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     try await _handleAttributeValue(
       attribute,
       protocolEvent: isNew ? .New : .Join,
-      eventSource: eventSource,
-      replacingAttributeSubtype: attributeSubtype
+      eventSource: eventSource
     )
   }
 
@@ -824,8 +820,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     try await _handleAttributeValue(
       attribute,
       protocolEvent: .Lv,
-      eventSource: eventSource,
-      replacingAttributeSubtype: attributeSubtype
+      eventSource: eventSource
     )
   }
 }
@@ -1008,37 +1003,29 @@ Sendable, Hashable, Equatable,
 
   func handle(
     protocolEvent event: ProtocolEvent,
-    eventSource: EventSource,
-    replacingAttributeSubtype subtype: AttributeSubtype? = nil
+    eventSource: EventSource
   ) async throws {
-    // fast path for MSRP pre-applicant event handler: silently replace attribute
-    // subtypes as if the Listener declaration had been withdrawn and
-    // replaced by the updated Listener declaration (35.2.6)
-    if let subtype { attributeSubtype = subtype }
-
     let context = try await _getEventContext(for: event, eventSource: eventSource)
+    let applicationEventHandler = context.participant.application as? any ApplicationEventHandler<A>
 
+    try await applicationEventHandler?.willHandleEvent(context: context)
     try await _handleRegistrar(context: context)
     try await _handleApplicant(context: context)
+    applicationEventHandler?.didHandleEvent(context: context)
   }
 
   private func _handleApplicant(context: EventContext<A>) async throws {
     context.participant._logger.trace("\(context.participant): handling applicant \(context)")
 
-    let applicantAction = applicant.action(for: context.event, flags: context.smFlags)
+    guard let applicantAction = applicant.action(for: context.event, flags: context.smFlags)
+    else { return }
 
-    if let applicantAction {
-      context.participant._logger
-        .trace(
-          "\(context.participant): applicant action for event \(context.event): \(applicantAction)"
-        )
-      let applicationEventHandler = context.participant
-        .application as? any ApplicationEventHandler<A>
-      try await applicationEventHandler?.preApplicantEventHandler(context: context)
-      let attributeEvent = try await _handle(applicantAction: applicantAction, context: context)
-      applicationEventHandler?.postApplicantEventHandler(context: context)
-      counters.withLock { $0.count(context: context, attributeEvent: attributeEvent) }
-    }
+    context.participant._logger
+      .trace(
+        "\(context.participant): applicant action for event \(context.event): \(applicantAction)"
+      )
+    let attributeEvent = try await _handle(applicantAction: applicantAction, context: context)
+    counters.withLock { $0.count(context: context, attributeEvent: attributeEvent) }
   }
 
   private func _handle(

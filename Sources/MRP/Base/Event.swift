@@ -100,7 +100,7 @@ public enum EventSource: Sendable {
   case `internal`
   // event source was transitive via MAP function
   case map
-  // event source was a preApplicantEventHandler/postApplicantEventHandler hook
+  // event source was a event handler hook
   case application
   // event source was immediate re-registration after LeaveAll processing
   case leaveAll

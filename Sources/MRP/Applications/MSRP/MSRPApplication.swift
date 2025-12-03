@@ -407,9 +407,10 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
   // Registrar state table) was generated for the MAD in the Received MSRP
   // Attribute Declarations before the rJoinIn! or rJoinMt! event for the
   // attribute in the received message is processed
-  public func preApplicantEventHandler(
+  public func willHandleEvent(
     context: EventContext<MSRPApplication>
   ) async throws {
+    guard context.eventSource != .application else { return } // don't recurse
     guard context.event == .rJoinIn || context.event == .rJoinMt else { return }
 
     let contextAttributeType = MSRPAttributeType(rawValue: context.attributeType)!
@@ -417,7 +418,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
 
     let contextStreamID = (context.attributeValue as! MSRPStreamIDRepresentable).streamID
 
-    try await context.participant.leaveNow { attributeType, _, attributeValue in
+    try await context.participant.leaveNow { attributeType, attributeSubtype, attributeValue in
       let attributeType = MSRPAttributeType(rawValue: attributeType)!
       guard let direction = attributeType.direction else { return false }
       let streamID = (attributeValue as! MSRPStreamIDRepresentable).streamID
@@ -426,10 +427,8 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
       // attribute type has changed
       let isIncluded = contextStreamID == streamID &&
         contextDirection == direction &&
-        contextAttributeType != attributeType
+        (contextAttributeType != attributeType || context.attributeSubtype != attributeSubtype)
 
-      // NB: we don't handle attribute subtypes here, they are handled in
-      // Participant.swift (this is something of a leaky abstraction)
       if isIncluded {
         _logger
           .debug(
@@ -440,7 +439,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     }
   }
 
-  public func postApplicantEventHandler(context: EventContext<MSRPApplication>) {}
+  public func didHandleEvent(context: EventContext<MSRPApplication>) {}
 
   // On receipt of a REGISTER_STREAM.request the MSRP Participant shall issue a
   // MAD_Join.request service primitive (10.2, 10.3). The attribute_type (10.2)
