@@ -903,10 +903,13 @@ extension MSRPApplication {
         accumulatedLatency += 500 // clause 35.2.2.8.6, 500ns default
       }
 
-      try await participant.leaveNow { attributeType, _, attributeValue in
-        attributeType == declarationType.talkerComplement.rawValue &&
-          (attributeValue as! MSRPStreamIDRepresentable).streamID == talkerValue.streamID
-      }
+      // if a Talker Failed attribute already exists when a Talker Advertised
+      // is registered, or vice versa, immediately deregister the existing
+      // attribute
+      try await participant.leaveStreamNow(
+        attributeType: declarationType.talkerComplement,
+        streamID: talkerValue.streamID
+      )
 
       if declarationType == .talkerAdvertise {
         do {
@@ -1765,6 +1768,15 @@ private extension MSRPDeclarationType {
     case .talkerAdvertise: .talkerFailed
     case .talkerFailed: .talkerAdvertise
     default: nil
+    }
+  }
+}
+
+private extension Participant {
+  func leaveStreamNow(attributeType: MSRPAttributeType, streamID: MSRPStreamID) async throws {
+    try await leaveNow {
+      $0 == attributeType.rawValue &&
+        ($2 as! MSRPStreamIDRepresentable).streamID == streamID
     }
   }
 }
