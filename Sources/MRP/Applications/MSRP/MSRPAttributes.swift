@@ -222,7 +222,7 @@ struct MSRPTalkerFailedValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equata
   }
 }
 
-struct MSRPListenerValue: Value, Equatable {
+struct MSRPListenerValue: Value, Equatable, MSRPStreamIDRepresentable {
   let streamID: MSRPStreamID
 
   var index: UInt64 { streamID.id }
