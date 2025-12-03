@@ -230,13 +230,12 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
 
   private func _apply(
     attributeType: AttributeType? = nil,
-    matching filter: AttributeValueFilter? = nil,
+    matching filter: AttributeValueFilter = .matchAny,
     _ block: AsyncParticipantApplyFunction<A>
   ) async rethrows {
     for attribute in _attributes {
       for attributeValue in attribute.value {
-        if let filter,
-           !attributeValue.matches(attributeType: attributeType, matching: filter) { continue }
+        if !attributeValue.matches(attributeType: attributeType, matching: filter) { continue }
         try await block(attributeValue)
       }
     }
@@ -362,69 +361,14 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     return attributeValue
   }
 
-  public func findAttribute(
+  private func _findRegisteredAttributes(
     attributeType: AttributeType,
-    matching filter: AttributeValueFilter
-  ) -> (AttributeSubtype?, any Value)? {
-    let attributeValue = try? _findOrCreateAttribute(
-      attributeType: attributeType,
-      attributeSubtype: nil,
-      matching: filter,
-      createIfMissing: false
-    )
-    // we allow attributes that are in the leaving state to be "found", because
-    // they haven't yet been timed out yet (and a leave indication issued)
-    guard let attributeValue, attributeValue.isRegistered else {
-      _logger.trace("\(self): could not find attribute type \(attributeType) matching \(filter)")
-      return nil
-    }
-    return (attributeValue.attributeSubtype, attributeValue.unwrappedValue)
-  }
-
-  public func findAttributes(
-    attributeType: AttributeType,
-    matching filter: AttributeValueFilter
-  ) -> [(AttributeSubtype?, any Value)] {
+    matching filter: AttributeValueFilter = .matchAny
+  ) -> [_AttributeValue<A>] {
     (_attributes[attributeType] ?? [])
       .filter {
         $0.matches(attributeType: attributeType, matching: filter) && $0.isRegistered
       }
-      .map { ($0.attributeSubtype, $0.unwrappedValue) }
-  }
-
-  func findAllAttributes(
-    matching filter: AttributeValueFilter
-  ) -> [AttributeValue] {
-    _attributes.values.flatMap { $0 }
-      .map { AttributeValue(
-        attributeType: $0.attributeType,
-        attributeSubtype: $0.attributeSubtype,
-        attributeValue: $0.unwrappedValue,
-        applicantState: $0.applicantState,
-        registrarState: $0.registrarState
-      ) }
-  }
-
-  func findAllAttributes(
-    attributeType: AttributeType,
-    matching filter: AttributeValueFilter
-  ) -> [AttributeValue] {
-    (_attributes[attributeType] ?? [])
-      .filter { $0.matches(attributeType: attributeType, matching: filter) }
-      .map { AttributeValue(
-        attributeType: attributeType,
-        attributeSubtype: $0.attributeSubtype,
-        attributeValue: $0.unwrappedValue,
-        applicantState: $0.applicantState,
-        registrarState: $0.registrarState
-      ) }
-  }
-
-  public func leaveNow(
-    _ isIncluded: @Sendable (AttributeType, AttributeSubtype?, any Value)
-      -> Bool
-  ) async throws {
-    try await _leave(eventSource: .application, isLeaveAll: false, isIncluded)
   }
 
   fileprivate func _gcAttributeValue(_ attributeValue: _AttributeValue<A>) {
@@ -439,48 +383,24 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   private func _handleAttributeValue(
     _ attributeValue: _AttributeValue<A>,
     protocolEvent: ProtocolEvent,
-    eventSource: EventSource,
-    gcNow: Bool = false
+    eventSource: EventSource
   ) async throws {
     try await attributeValue.handle(
       protocolEvent: protocolEvent,
       eventSource: eventSource
     )
-
-    if gcNow, attributeValue.canGC {
-      _gcAttributeValue(attributeValue)
-    }
-  }
-
-  private func _leave(
-    eventSource: EventSource,
-    isLeaveAll: Bool,
-    _ isIncluded: @Sendable (AttributeType, AttributeSubtype?, any Value) -> Bool
-  ) async throws {
-    try await _apply { attributeValue in
-      guard isIncluded(
-        attributeValue.attributeType,
-        attributeValue.attributeSubtype,
-        attributeValue.unwrappedValue
-      ) else {
-        return
-      }
-
-      try await _handleAttributeValue(
-        attributeValue,
-        protocolEvent: isLeaveAll ? .rLA : .rLv,
-        eventSource: eventSource,
-        gcNow: true
-      )
-    }
   }
 
   private func _leaveAll(
     eventSource: EventSource,
     attributeType leaveAllAttributeType: AttributeType
   ) async throws {
-    try await _leave(eventSource: eventSource, isLeaveAll: true) { attributeType, _, _ in
-      attributeType == leaveAllAttributeType
+    try await _apply(attributeType: leaveAllAttributeType) { attributeValue in
+      try await _handleAttributeValue(
+        attributeValue,
+        protocolEvent: .rLA,
+        eventSource: eventSource
+      )
     }
   }
 
@@ -751,9 +671,56 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     _logger
       .debug("\(self): \(direction): -------------------------------------------------------------")
   }
+}
 
-  func periodic() async throws {
-    try await _requestTxOpportunity(eventSource: .periodicTimer)
+// MARK: - public APIs for use by applications
+
+public extension Participant {
+  func findAttribute(
+    attributeType: AttributeType,
+    matching filter: AttributeValueFilter
+  ) -> (AttributeSubtype?, any Value)? {
+    findAttributes(attributeType: attributeType, matching: filter).first
+  }
+
+  func findAttributes(
+    attributeType: AttributeType,
+    matching filter: AttributeValueFilter = .matchAny
+  ) -> [(AttributeSubtype?, any Value)] {
+    _findRegisteredAttributes(attributeType: attributeType, matching: filter).map { (
+      $0.attributeSubtype,
+      $0.unwrappedValue
+    ) }
+  }
+
+  func leaveNow(
+    _ isIncluded: @Sendable (AttributeType, AttributeSubtype?, any Value)
+      -> Bool
+  ) async throws {
+    try await _apply { attributeValue in
+      guard attributeValue.isRegistered else { return }
+
+      guard isIncluded(
+        attributeValue.attributeType,
+        attributeValue.attributeSubtype,
+        attributeValue.unwrappedValue
+      ) else {
+        return
+      }
+
+      try await _handleAttributeValue(
+        attributeValue,
+        protocolEvent: .rLv,
+        eventSource: .application
+      )
+
+      // act as if the leavetimer had expired, transitioning .LV registrar state to .MT
+      try await _handleAttributeValue(
+        attributeValue,
+        protocolEvent: .leavetimer,
+        eventSource: .application
+      )
+    }
   }
 
   // A Flush! event signals to the Registrar state machine that there is a
@@ -822,6 +789,42 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       protocolEvent: .Lv,
       eventSource: eventSource
     )
+  }
+
+  func periodic() async throws {
+    try await _requestTxOpportunity(eventSource: .periodicTimer)
+  }
+}
+
+// MARK: - for use by REST APIs
+
+extension Participant {
+  func findAllAttributes(
+    matching filter: AttributeValueFilter = .matchAny
+  ) -> [AttributeValue] {
+    _attributes.values.flatMap { $0 }
+      .map { AttributeValue(
+        attributeType: $0.attributeType,
+        attributeSubtype: $0.attributeSubtype,
+        attributeValue: $0.unwrappedValue,
+        applicantState: $0.applicantState,
+        registrarState: $0.registrarState
+      ) }
+  }
+
+  func findAllAttributes(
+    attributeType: AttributeType,
+    matching filter: AttributeValueFilter = .matchAny
+  ) -> [AttributeValue] {
+    (_attributes[attributeType] ?? [])
+      .filter { $0.matches(attributeType: attributeType, matching: filter) }
+      .map { AttributeValue(
+        attributeType: attributeType,
+        attributeSubtype: $0.attributeSubtype,
+        attributeValue: $0.unwrappedValue,
+        applicantState: $0.applicantState,
+        registrarState: $0.registrarState
+      ) }
   }
 }
 
@@ -943,10 +946,6 @@ Sendable, Hashable, Equatable,
       protocolEvent: .leavetimer,
       eventSource: .leaveTimer
     )
-
-    if canGC, let participant {
-      await participant._gcAttributeValue(self)
-    }
   }
 
   func hash(into hasher: inout Hasher) {
@@ -1001,7 +1000,7 @@ Sendable, Hashable, Equatable,
     )
   }
 
-  func handle(
+  fileprivate func handle(
     protocolEvent event: ProtocolEvent,
     eventSource: EventSource
   ) async throws {
@@ -1012,6 +1011,9 @@ Sendable, Hashable, Equatable,
     try await _handleRegistrar(context: context)
     try await _handleApplicant(context: context)
     applicationEventHandler?.didHandleEvent(context: context)
+
+    // remove attribute entirely if it is no longer declared or registered
+    if canGC { await participant?._gcAttributeValue(self) }
   }
 
   private func _handleApplicant(context: EventContext<A>) async throws {
