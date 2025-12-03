@@ -928,13 +928,14 @@ extension MSRPApplication {
         accumulatedLatency += 500 // clause 35.2.2.8.6, 500ns default
       }
 
-      // if a Talker Failed attribute already exists when a Talker Advertised
-      // is registered, or vice versa, immediately deregister the existing
-      // attribute
-      try await participant.leaveStreamNow(
-        attributeType: declarationType.talkerComplement,
-        streamID: talkerValue.streamID
-      )
+      // Leave the opposite talker declaration type to ensure mutual exclusion
+      // (per spec, only one talker declaration type should exist per stream)
+      try await participant.leaveNow { attributeType, _, attributeValue in
+        let attributeType = MSRPAttributeType(rawValue: attributeType)!
+        return attributeType.direction == .talker && attributeType != declarationType
+          .attributeType &&
+          (attributeValue as! MSRPStreamIDRepresentable).streamID == talkerValue.streamID
+      }
 
       if declarationType == .talkerAdvertise {
         do {
@@ -973,11 +974,6 @@ extension MSRPApplication {
             eventSource: .map
           )
         } catch let error as MSRPFailure {
-          // Leave any existing talkerAdvertise before joining talkerFailed
-          try await participant.leaveNow { attributeType, _, attributeValue in
-            attributeType == MSRPAttributeType.talkerAdvertise.rawValue &&
-              (attributeValue as! MSRPStreamIDRepresentable).streamID == talkerValue.streamID
-          }
           let talkerFailed = MSRPTalkerFailedValue(
             streamID: talkerValue.streamID,
             dataFrameParameters: talkerValue.dataFrameParameters,
@@ -1782,25 +1778,6 @@ extension MSRPApplication {
     get async {
       guard _maxTalkerAttributes > 0 else { return false }
       return await _numberOfRegisteredTalkerAttributes >= _maxTalkerAttributes
-    }
-  }
-}
-
-private extension MSRPDeclarationType {
-  var talkerComplement: MSRPAttributeType! {
-    switch self {
-    case .talkerAdvertise: .talkerFailed
-    case .talkerFailed: .talkerAdvertise
-    default: nil
-    }
-  }
-}
-
-private extension Participant {
-  func leaveStreamNow(attributeType: MSRPAttributeType, streamID: MSRPStreamID) async throws {
-    try await leaveNow {
-      $0 == attributeType.rawValue &&
-        ($2 as! MSRPStreamIDRepresentable).streamID == streamID
     }
   }
 }
