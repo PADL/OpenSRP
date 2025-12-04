@@ -55,8 +55,6 @@ final class Timer: CustomStringConvertible, Sendable {
   }
 
   func start(interval: Duration) {
-    precondition(interval >= .milliseconds(100))
-
     _task.withLock { task in
       task?.cancel() // in case stop() was not called
       task = Task<(), Error> {
