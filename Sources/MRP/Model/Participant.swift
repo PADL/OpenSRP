@@ -928,20 +928,17 @@ Sendable, Hashable, Equatable,
 
   private func _getEventContext(
     for event: ProtocolEvent,
-    eventSource: EventSource
-  ) async throws -> EventContext<A> {
-    guard let participant else { throw MRPError.internalError }
-
-    let smFlags = try await participant._getSmFlags(for: attributeType)
-
-    return EventContext(
+    eventSource: EventSource,
+    isolation participant: isolated P
+  ) throws -> EventContext<A> {
+    try EventContext(
       participant: participant,
       event: event,
       eventSource: eventSource,
       attributeType: attributeType,
       attributeSubtype: attributeSubtype,
       attributeValue: unwrappedValue,
-      smFlags: smFlags,
+      smFlags: participant._getSmFlags(for: attributeType),
       applicant: applicant,
       registrar: registrar
     )
@@ -951,39 +948,44 @@ Sendable, Hashable, Equatable,
     protocolEvent event: ProtocolEvent,
     eventSource: EventSource
   ) async throws {
-    let context = try await _getEventContext(for: event, eventSource: eventSource)
+    guard let participant else { throw MRPError.internalError }
+    try await _handle(protocolEvent: event, eventSource: eventSource, isolation: participant)
+  }
+
+  private func _handle(
+    protocolEvent event: ProtocolEvent,
+    eventSource: EventSource,
+    isolation participant: isolated P
+  ) async throws {
+    let context = try _getEventContext(for: event, eventSource: eventSource, isolation: participant)
     let applicationEventHandler = context.participant.application as? any ApplicationEventHandler<A>
 
     try await applicationEventHandler?.willHandleEvent(context: context)
-    try await _handleRegistrar(context: context)
-    try await _handleApplicant(context: context)
+    try await _handleRegistrar(context: context, isolation: context.participant)
+    try await _handleApplicant(context: context, isolation: context.participant)
     applicationEventHandler?.didHandleEvent(context: context)
 
     // remove attribute entirely if it is no longer declared or registered
-    if canGC { await participant?._gcAttributeValue(self) }
+    if canGC { participant._gcAttributeValue(self) }
   }
 
-  private func _handleApplicant(context: EventContext<A>) async throws {
-    context.participant._logger.trace("\(context.participant): handling applicant \(context)")
+  private func _handleApplicant(
+    context: EventContext<A>,
+    isolation participant: isolated P
+  ) throws {
+    participant._logger.trace("\(context.participant): handling applicant \(context)")
 
     guard let applicantAction = applicant.action(for: context.event, flags: context.smFlags)
     else { return }
 
-    context.participant._logger
+    participant._logger
       .trace(
         "\(context.participant): applicant action for event \(context.event): \(applicantAction)"
       )
-    let attributeEvent = try await _handle(applicantAction: applicantAction, context: context)
-    counters.withLock { $0.count(context: context, attributeEvent: attributeEvent) }
-  }
 
-  private func _handle(
-    applicantAction action: Applicant.Action,
-    context: EventContext<A>
-  ) async throws -> AttributeEvent? {
     var attributeEvent: AttributeEvent?
 
-    switch action {
+    switch applicantAction {
     case .sN:
       // The AttributeEvent value New is encoded in the Vector as specified in
       // 10.7.6.1.
@@ -1011,38 +1013,36 @@ Sendable, Hashable, Equatable,
     }
 
     if let attributeEvent {
-      await context.participant._txEnqueue(
+      participant._txEnqueue(
         attributeEvent: attributeEvent,
         attributeValue: self,
-        encodingOptional: action.encodingOptional,
+        encodingOptional: applicantAction.encodingOptional,
         eventSource: context.eventSource
       )
     }
 
-    return attributeEvent
+    counters.withLock { $0.count(context: context, attributeEvent: attributeEvent) }
   }
 
-  private func _handleRegistrar(context: EventContext<A>) async throws {
+  private func _handleRegistrar(
+    context: EventContext<A>,
+    isolation participant: isolated P
+  ) async throws {
     context.participant._logger.trace("\(context.participant): handling registrar \(context)")
 
-    if let registrarAction = context.registrar?.action(for: context.event, flags: context.smFlags) {
-      context.participant._logger
-        .trace(
-          "\(context.participant): registrar action for event \(context.event): \(registrarAction)"
-        )
-      try await _handle(
-        registrarAction: registrarAction,
-        context: context
-      )
+    guard let registrarAction = context.registrar?
+      .action(for: context.event, flags: context.smFlags)
+    else {
+      return
     }
-  }
 
-  private func _handle(
-    registrarAction action: Registrar.Action,
-    context: EventContext<A>
-  ) async throws {
+    context.participant._logger
+      .trace(
+        "\(context.participant): registrar action for event \(context.event): \(registrarAction)"
+      )
+
     guard let application = context.participant.application else { throw MRPError.internalError }
-    switch action {
+    switch registrarAction {
     case .New:
       fallthrough
     case .Join:
@@ -1052,7 +1052,7 @@ Sendable, Hashable, Equatable,
         attributeType: context.attributeType,
         attributeSubtype: context.attributeSubtype,
         attributeValue: context.attributeValue,
-        isNew: action == .New,
+        isNew: registrarAction == .New,
         eventSource: context.eventSource
       )
     case .Lv:
