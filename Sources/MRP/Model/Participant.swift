@@ -98,24 +98,6 @@ private enum EnqueuedEvent<A: Application>: Equatable, CustomStringConvertible {
       "EnqueuedEvent(\(unsafeAttributeEvent))"
     }
   }
-
-  func canBeReplacedBy(_ newEvent: EnqueuedEvent<A>) -> Bool {
-    if self == newEvent {
-      // if the event is identical, replace it (effectively, a no-op)
-      true
-    } else if let existingAttributeEvent = attributeEvent,
-              let newAttributeEvent = newEvent.attributeEvent
-    {
-      // clause 10.6 suggests the message actually transmitted is "that
-      // appropriate to the state of the machine when the opportunity is
-      // presented". I believe this means we can replace any event with the
-      // same attribute value. We could probably simplify this by just
-      // transmitting all current attribute values at TX opportunities.
-      existingAttributeEvent.attributeValue == newAttributeEvent.attributeValue
-    } else {
-      false
-    }
-  }
 }
 
 public final actor Participant<A: Application>: Equatable, Hashable, CustomStringConvertible {
@@ -137,7 +119,6 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   private var _leaveAll: LeaveAll!
   private var _jointimer: Timer?
   private var _transmissionOpportunityTimestamps: [ContinuousClock.Instant] = []
-  private var _pendingTransmissionRequest = false
   private nonisolated let _controller: Weak<MRPController<A.P>>
   private nonisolated let _application: Weak<A>
 
@@ -184,12 +165,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     // instance of this timer is required on a per-Port, per-MRP Participant
     // basis. The value of JoinTime used to initialize this timer is determined
     // in accordance with 10.7.11.
-
-    // only required for shared media, in the point-to-point case packets
-    // are transmitted immediately
-    let jointimer = Timer(label: "jointimer", onExpiry: _onJoinTimerExpired)
-    jointimer.start(interval: JoinTime)
-    _jointimer = jointimer
+    _jointimer = Timer(label: "jointimer", onExpiry: _onJoinTimerExpired)
 
     // The Leave All Period Timer, leavealltimer, controls the frequency with
     // which the LeaveAll state machine generates LeaveAll PDUs. The timer is
@@ -210,22 +186,10 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   }
 
   @Sendable
-  private func _onJoinTimerExpired() async throws {
-    guard let controller else { return }
-    if _type == .pointToPoint && _pendingTransmissionRequest {
-      // Check if rate limiting window has expired
-      _pendingTransmissionRequest = false
-    }
-    try await _requestTxOpportunity(eventSource: .joinTimer)
-    // Restart join timer for next period
-    _jointimer?.start(interval: controller.timerConfiguration.joinTime)
-  }
-
-  @Sendable
   private func _onLeaveAllTimerExpired() async throws {
     try await _handleLeaveAll(protocolEvent: .leavealltimer, eventSource: .leaveAllTimer)
     // Table 10.5: Request opportunity to transmit on entry to the Active state
-    try await _requestTxOpportunity(eventSource: .leaveAll)
+    _requestTxOpportunity(eventSource: .leaveAll)
   }
 
   private func _apply(
@@ -267,7 +231,10 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     )
   }
 
-  private func _txOpportunity(eventSource: EventSource) async throws {
+  @Sendable
+  private func _onJoinTimerExpired() async throws {
+    let eventSource = EventSource.joinTimer
+
     // this will send a .tx/.txLA event to all attributes which will then make
     // the appropriate state transitions, potentially triggering the encoding
     // of a vector
@@ -281,50 +248,23 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       try await _apply(protocolEvent: .tx, eventSource: eventSource)
     }
     try await _tx()
+
+    // If events remain (e.g., arrived during TX processing or didn't fit in PDU),
+    // request another TX opportunity
+    if !_enqueuedEvents.isEmpty {
+      _requestTxOpportunity(eventSource: eventSource)
+    }
   }
 
-  private func _requestTxOpportunity(eventSource: EventSource) async throws {
-    guard let controller else { throw MRPError.internalError }
+  private func _requestTxOpportunity(eventSource: EventSource) {
+    _logger.trace("\(self): \(eventSource) requested TX opportunity")
 
-    let now = ContinuousClock.now
+    guard let jointimer = _jointimer, !jointimer.isRunning else { return }
+    guard let controller else { return }
     let joinTime = controller.timerConfiguration.joinTime
-
-    if _type == .pointToPoint {
-      // Point-to-point: immediate transmission with rate limiting
-      // Remove timestamps older than 1.5 × JoinTime
-      let rateWindow = joinTime * 1.5
-      _transmissionOpportunityTimestamps.removeAll { $0.duration(to: now) > rateWindow }
-
-      // Check rate limit: max 3 transmissions per 1.5 × JoinTime
-      guard _transmissionOpportunityTimestamps.count < 3 else {
-        _logger
-          .trace(
-            "\(self): rate limiting TX opportunity, \(_transmissionOpportunityTimestamps.count) transmissions in last \(rateWindow)"
-          )
-        _pendingTransmissionRequest = true
-        return
-      }
-
-      _transmissionOpportunityTimestamps.append(now)
-      try await _txOpportunity(eventSource: eventSource)
-    } else {
-      // Shared media: randomized delay between 0 and JoinTime
-      if !_pendingTransmissionRequest {
-        _pendingTransmissionRequest = true
-        let randomDelay = Duration
-          .nanoseconds(Int64.random(in: 0..<joinTime.nanoseconds))
-
-        Task {
-          do {
-            try await Task.sleep(for: randomDelay)
-            try await _txOpportunity(eventSource: eventSource)
-          } catch {
-            _logger.error("\(self): failed to perform delayed TX opportunity: \(error)")
-          }
-          _pendingTransmissionRequest = false
-        }
-      }
-    }
+    let randomDelay = Duration
+      .nanoseconds(Int64.random(in: 0..<joinTime.nanoseconds))
+    jointimer.start(interval: randomDelay)
   }
 
   private func _findOrCreateAttribute(
@@ -483,10 +423,10 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     return messages
   }
 
-  private func _txEnqueue(_ event: EnqueuedEvent<A>) {
+  private func _txEnqueue(_ event: EnqueuedEvent<A>, eventSource: EventSource) {
     if let index = _enqueuedEvents.index(forKey: event.attributeType) {
       if let eventIndex = _enqueuedEvents.values[index]
-        .firstIndex(where: { $0.canBeReplacedBy(event) })
+        .firstIndex(where: { $0 == event })
       {
         _enqueuedEvents.values[index][eventIndex] = event
       } else {
@@ -495,25 +435,27 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     } else {
       _enqueuedEvents[event.attributeType] = [event]
     }
+    _requestTxOpportunity(eventSource: eventSource)
   }
 
   fileprivate func _txEnqueue(
     attributeEvent: AttributeEvent,
     attributeValue: _AttributeValue<A>,
-    encodingOptional: Bool
+    encodingOptional: Bool,
+    eventSource: EventSource
   ) {
     let event = EnqueuedEvent<A>.AttributeEvent(
       attributeEvent: attributeEvent,
       attributeValue: attributeValue,
       encodingOptional: encodingOptional
     )
-    _txEnqueue(.attributeEvent(event))
+    _txEnqueue(.attributeEvent(event), eventSource: eventSource)
   }
 
-  private func _txEnqueueLeaveAllEvents() throws {
+  private func _txEnqueueLeaveAllEvents(eventSource: EventSource) throws {
     guard let application else { throw MRPError.internalError }
     for attributeType in application.validAttributeTypes {
-      _txEnqueue(.leaveAllEvent(attributeType))
+      _txEnqueue(.leaveAllEvent(attributeType), eventSource: eventSource)
     }
   }
 
@@ -534,7 +476,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       // registered attributes (Table 10-4), as well as requesting the
       // applicant to redeclare attributes (Table 10-3).
       try await _apply(protocolEvent: .rLA, eventSource: eventSource)
-      try _txEnqueueLeaveAllEvents()
+      try _txEnqueueLeaveAllEvents(eventSource: eventSource)
     default:
       break
     }
@@ -797,7 +739,7 @@ public extension Participant {
   }
 
   func periodic() async throws {
-    try await _requestTxOpportunity(eventSource: .periodicTimer)
+    _requestTxOpportunity(eventSource: .periodicTimer)
   }
 }
 
@@ -1072,7 +1014,8 @@ Sendable, Hashable, Equatable,
       await context.participant._txEnqueue(
         attributeEvent: attributeEvent,
         attributeValue: self,
-        encodingOptional: action.encodingOptional
+        encodingOptional: action.encodingOptional,
+        eventSource: context.eventSource
       )
     }
 
