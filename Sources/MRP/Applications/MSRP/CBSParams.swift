@@ -188,7 +188,7 @@ extension MSRPAwareBridge {
   }
 }
 
-private func calcFrameSize(_ tSpec: MSRPTSpec) -> UInt16 {
+func calcFrameSize(_ tSpec: MSRPTSpec) -> UInt16 {
   tSpec.maxFrameSize + VLAN_OVERHEAD + L2_OVERHEAD + L1_OVERHEAD
 }
 

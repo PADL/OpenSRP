@@ -831,6 +831,13 @@ extension MSRPApplication {
         throw MSRPFailure(systemID: port.systemID, failureCode: .insufficientBridgeResources)
       }
 
+      // maxFrameSize does not include preamble, IEEE 802.3 header,
+      // Priority/VID tag, CRC, interframe gap
+      guard calcFrameSize(tSpec) <= port.mtu else {
+        _logger.error("MSRP: MaxFrameSize \(tSpec.maxFrameSize) is too large for media")
+        throw MSRPFailure(systemID: port.systemID, failureCode: .maxFrameSizeTooLargeForMedia)
+      }
+
       guard try await _checkAvailableBandwidth(
         participant: participant,
         portState: portState,
