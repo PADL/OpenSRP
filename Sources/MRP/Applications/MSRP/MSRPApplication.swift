@@ -533,6 +533,38 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
 }
 
 extension MSRPApplication {
+  // Enforce mutual exclusion between talkerAdvertise and talkerFailed on a participant
+  private func _enforceTalkerMutualExclusion(
+    participant: Participant<MSRPApplication>,
+    declarationType: MSRPDeclarationType,
+    streamID: MSRPStreamID,
+    eventSource: EventSource
+  ) async throws {
+    let oppositeType: MSRPAttributeType = declarationType == .talkerAdvertise ? .talkerFailed :
+      .talkerAdvertise
+
+    let oppositeAttributes = await participant.findAttributes(
+      attributeType: oppositeType.rawValue,
+      matching: .matchAnyIndex(streamID.index)
+    )
+
+    for (_, attributeValue) in oppositeAttributes {
+      if eventSource == .map {
+        try? await participant.leave(
+          attributeType: oppositeType.rawValue,
+          attributeValue: attributeValue,
+          eventSource: eventSource
+        )
+      } else {
+        try? await participant.deregister(
+          attributeType: oppositeType.rawValue,
+          attributeValue: attributeValue,
+          eventSource: eventSource
+        )
+      }
+    }
+  }
+
   private func _shouldPruneTalkerDeclaration(
     port: P,
     streamID: MSRPStreamID,
@@ -850,21 +882,12 @@ extension MSRPApplication {
     // Deregister the opposite talker type from the peer to ensure mutual exclusion
     if eventSource == .peer {
       let sourceParticipant = try findParticipant(for: contextIdentifier, port: port)
-      let oppositeType: MSRPAttributeType = declarationType == .talkerAdvertise ? .talkerFailed :
-        .talkerAdvertise
-
-      let oppositeAttributes = await sourceParticipant.findAttributes(
-        attributeType: oppositeType.rawValue,
-        matching: .matchAnyIndex(talkerValue.streamID.index)
+      try await _enforceTalkerMutualExclusion(
+        participant: sourceParticipant,
+        declarationType: declarationType,
+        streamID: talkerValue.streamID,
+        eventSource: .peer
       )
-
-      for (_, attributeValue) in oppositeAttributes {
-        try? await sourceParticipant.deregister(
-          attributeType: oppositeType.rawValue,
-          attributeValue: attributeValue,
-          eventSource: eventSource
-        )
-      }
     }
 
     // TL;DR: propagate Talker declarations to other ports
@@ -907,11 +930,10 @@ extension MSRPApplication {
 
       // Leave the opposite talker declaration type to ensure mutual exclusion
       // (per spec, only one talker declaration type should exist per stream)
-      let oppositeType: MSRPAttributeType = declarationType == .talkerAdvertise ? .talkerFailed :
-        .talkerAdvertise
-      try? await participant.leave(
-        attributeType: oppositeType.rawValue,
-        attributeValue: talkerValue,
+      try await _enforceTalkerMutualExclusion(
+        participant: participant,
+        declarationType: declarationType,
+        streamID: talkerValue.streamID,
         eventSource: .map
       )
 
@@ -1038,7 +1060,10 @@ extension MSRPApplication {
         for: talkerValue.streamID,
         participant: talkerParticipant
       ), currentTalker.streamID == talkerValue.streamID else {
-        _logger.debug("MSRP: talker \(talkerValue.streamID) no longer exists, skipping port parameter update")
+        _logger
+          .debug(
+            "MSRP: talker \(talkerValue.streamID) no longer exists, skipping port parameter update"
+          )
         return
       }
 
