@@ -580,7 +580,6 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
 extension MSRPApplication {
   private func _shouldPruneTalkerDeclaration(
     port: P,
-    portState: MSRPPortState<P>,
     streamID: MSRPStreamID,
     declarationType: MSRPDeclarationType,
     dataFrameParameters: MSRPDataFrameParameters,
@@ -590,6 +589,8 @@ extension MSRPApplication {
     isNew: Bool,
     eventSource: EventSource
   ) async -> Bool {
+    guard let portState = try? withPortState(port: port, { $0 }) else { return true }
+
     if _talkerPruning || portState.talkerPruning {
       if let mmrpParticipant = try? _mmrp?.findParticipant(port: port),
          await mmrpParticipant.findAttribute(
@@ -784,7 +785,7 @@ extension MSRPApplication {
 
   private func _canBridgeTalker(
     participant: Participant<MSRPApplication>,
-    portState: MSRPPortState<P>,
+    port: P,
     streamID: MSRPStreamID,
     declarationType: MSRPDeclarationType,
     dataFrameParameters: MSRPDataFrameParameters,
@@ -797,6 +798,10 @@ extension MSRPApplication {
     let port = participant.port
 
     do {
+      guard let portState = try? withPortState(port: port, { $0 }) else {
+        throw MSRPFailure(systemID: port.systemID, failureCode: .insufficientBridgeResources)
+      }
+
       guard portState.msrpPortEnabledStatus else {
         _logger.error("MSRP: port \(port) is not enabled")
         throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
@@ -892,11 +897,9 @@ extension MSRPApplication {
       guard participant.port != port else { return } // don't propagate to source port
 
       let port = participant.port
-      guard let portState = try? withPortState(port: port, { $0 }) else { return }
 
       guard await !_shouldPruneTalkerDeclaration(
         port: port,
-        portState: portState,
         streamID: talkerValue.streamID,
         declarationType: declarationType,
         dataFrameParameters: talkerValue.dataFrameParameters,
@@ -939,7 +942,7 @@ extension MSRPApplication {
         do {
           try await _canBridgeTalker(
             participant: participant,
-            portState: portState,
+            port: port,
             streamID: talkerValue.streamID,
             declarationType: declarationType,
             dataFrameParameters: talkerValue.dataFrameParameters,
