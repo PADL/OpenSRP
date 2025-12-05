@@ -537,7 +537,7 @@ public enum PTP {
 
     public init(parsing input: inout ParserSpan) throws {
       let length = try UInt8(parsing: &input)
-      text = try Array(parsing: &input, byteCount: Int(length)) + [0]
+      text = try Array(parsing: &input, byteCount: Int(length))
     }
 
     public var description: String {
