@@ -1079,7 +1079,7 @@ extension MSRPApplication {
         mergedDeclarationType = .listenerAskingFailed
       }
     default:
-      mergedDeclarationType = .listenerReadyFailed
+      preconditionFailure("\(firstDeclarationType) is not a listener declaration")
     }
 
     _logger
