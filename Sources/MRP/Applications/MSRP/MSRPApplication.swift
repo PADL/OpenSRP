@@ -102,7 +102,8 @@ struct MSRPPortState<P: AVBPort>: Sendable {
 
   func getStreamAge(for streamID: MSRPStreamID) -> UInt32 {
     guard let epoch = streamEpochs[streamID],
-          let time = try? P.timeSinceEpoch()
+          let time = try? P.timeSinceEpoch(),
+          time >= epoch
     else {
       return 0
     }
