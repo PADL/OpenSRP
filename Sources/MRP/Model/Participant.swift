@@ -970,12 +970,9 @@ Sendable, Hashable, Equatable,
     isolation participant: isolated P
   ) async throws {
     let context = try _getEventContext(for: event, eventSource: eventSource, isolation: participant)
-    let applicationEventHandler = context.participant.application as? any ApplicationEventHandler<A>
 
-    try await applicationEventHandler?.willHandleEvent(context: context)
     try await _handleRegistrar(context: context, isolation: context.participant)
     try await _handleApplicant(context: context, isolation: context.participant)
-    applicationEventHandler?.didHandleEvent(context: context)
 
     // remove attribute entirely if it is no longer declared or registered
     if canGC { participant._gcAttributeValue(self) }

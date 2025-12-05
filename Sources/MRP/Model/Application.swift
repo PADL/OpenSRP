@@ -214,10 +214,3 @@ extension Application {
     try await apply(for: contextIdentifier) { try await $0.redeclare() }
   }
 }
-
-public protocol ApplicationEventHandler<A>: Application {
-  associatedtype A: Application
-
-  func willHandleEvent(context: EventContext<A>) async throws
-  func didHandleEvent(context: EventContext<A>)
-}
