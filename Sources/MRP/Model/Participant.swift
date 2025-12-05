@@ -667,6 +667,8 @@ public extension Participant {
         protocolEvent: .leavetimer,
         eventSource: .application
       )
+
+      precondition(!attributeValue.isRegistered)
     }
   }
 
