@@ -1555,6 +1555,11 @@ extension MSRPApplication {
   ) async throws {
     let streamID = talkerValue.streamID
 
+    // .application indicates we are being called by willHandleEvent, which is
+    // only the case where a subsequent Join[In] is due with the complementary
+    // Talker attribute (i.e. Talker Failed for Talker Advertise and vv).
+    guard eventSource != .application else { return }
+
     _logger
       .info(
         "MSRP: deregister stream indication from port \(port) streamID \(streamID) source \(eventSource)"
