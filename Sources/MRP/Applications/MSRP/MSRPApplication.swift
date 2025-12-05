@@ -1032,11 +1032,21 @@ extension MSRPApplication {
       ) else {
         return
       }
+
+      // verify talker still exists (guard against race with talker departure)
+      guard let currentTalker = await _findTalkerRegistration(
+        for: talkerValue.streamID,
+        participant: talkerParticipant
+      ), currentTalker.streamID == talkerValue.streamID else {
+        _logger.debug("MSRP: talker \(talkerValue.streamID) no longer exists, skipping port parameter update")
+        return
+      }
+
       try? await _updatePortParameters(
         port: participant.port,
         streamID: listenerRegistration.0.streamID,
         mergedDeclarationType: mergedDeclarationType,
-        talkerRegistration: (talkerParticipant, talkerValue)
+        talkerRegistration: (talkerParticipant, currentTalker)
       )
     }
   }
