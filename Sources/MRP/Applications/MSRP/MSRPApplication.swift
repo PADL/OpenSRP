@@ -892,6 +892,8 @@ extension MSRPApplication {
       guard participant.port != port else { return } // don't propagate to source port
 
       let port = participant.port
+
+      // Read port state for pruning check (snapshot is acceptable for this check)
       guard let portState = try? withPortState(port: port, { $0 }) else { return }
 
       guard await !_shouldPruneTalkerDeclaration(
@@ -937,6 +939,11 @@ extension MSRPApplication {
 
       if declarationType == .talkerAdvertise {
         do {
+          // Re-fetch port state for admission control to ensure current bandwidth calculations
+          guard let portState = try? withPortState(port: port, { $0 }) else {
+            throw MSRPFailure(systemID: port.systemID, failureCode: .insufficientBridgeResources)
+          }
+
           try await _canBridgeTalker(
             participant: participant,
             portState: portState,
