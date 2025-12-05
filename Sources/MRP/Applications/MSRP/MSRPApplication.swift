@@ -650,6 +650,22 @@ extension MSRPApplication {
     }
   }
 
+  private func _checkAsCapable(
+    port: P,
+    attributeType: MSRPAttributeType,
+    isJoin: Bool
+  ) async throws {
+    guard !_ignoreAsCapable else { return }
+
+    guard await (try? port.isAsCapable) ?? false else {
+      _logger
+        .trace(
+          "MSRP: ignoring \(isJoin ? "join" : "leave") indication for attribute \(attributeType) as port is not asCapable"
+        )
+      throw MRPError.doNotPropagateAttribute
+    }
+  }
+
   private func _checkAvailableBandwidth(
     port: P,
     portState: MSRPPortState<P>,
@@ -1455,15 +1471,7 @@ extension MSRPApplication {
       throw MRPError.doNotPropagateAttribute
     }
 
-    if !_ignoreAsCapable {
-      guard await (try? port.isAsCapable) ?? false else {
-        _logger
-          .trace(
-            "MSRP: ignoring join indication for attribute \(attributeType) as port is not asCapable"
-          )
-        throw MRPError.doNotPropagateAttribute
-      }
-    }
+    try await _checkAsCapable(port: port, attributeType: attributeType, isJoin: true)
 
     switch attributeType {
     case .talkerAdvertise:
@@ -1658,6 +1666,8 @@ extension MSRPApplication {
       // don't recursively invoke MAP
       throw MRPError.doNotPropagateAttribute
     }
+
+    try await _checkAsCapable(port: port, attributeType: attributeType, isJoin: false)
 
     switch attributeType {
     case .talkerAdvertise:
