@@ -520,6 +520,20 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
           createIfMissing: true
         ) else { continue }
 
+        // if a Bridge receives a MSRP JoinIn/JoinMt message with a different
+        // attribute subtype, it should behave as if a rLv! event with immediate
+        // leavetimer expiration was received.
+        if attributeEvent.protocolEvent == .rJoinIn || attributeEvent.protocolEvent == .rJoinMt,
+           let attributeSubtype, attribute.attributeSubtype != attributeSubtype
+        {
+          _logger
+            .debug(
+              "\(self): \(eventSource) declared attribute \(attribute) with new subtype \(attributeSubtype); replacing"
+            )
+          try? await attribute.rLvNow(eventSource: eventSource)
+          attribute.attributeSubtype = attributeSubtype
+        }
+
         try await _handleAttributeValue(
           attribute,
           protocolEvent: attributeEvent.protocolEvent,
@@ -640,38 +654,6 @@ public extension Participant {
     ) }
   }
 
-  func leaveNow(
-    _ isIncluded: @Sendable (AttributeType, AttributeSubtype?, any Value)
-      -> Bool
-  ) async throws {
-    try await _apply { attributeValue in
-      guard attributeValue.isRegistered else { return }
-
-      guard isIncluded(
-        attributeValue.attributeType,
-        attributeValue.attributeSubtype,
-        attributeValue.unwrappedValue
-      ) else {
-        return
-      }
-
-      try await _handleAttributeValue(
-        attributeValue,
-        protocolEvent: .rLv,
-        eventSource: .application
-      )
-
-      // act as if the leavetimer had expired, transitioning .LV registrar state to .MT
-      try await _handleAttributeValue(
-        attributeValue,
-        protocolEvent: .leavetimer,
-        eventSource: .application
-      )
-
-      precondition(!attributeValue.isRegistered)
-    }
-  }
-
   // A Flush! event signals to the Registrar state machine that there is a
   // need to rapidly deregister information on the Port associated with the
   // state machine as a result of a topology change that has occurred in the
@@ -713,6 +695,15 @@ public extension Participant {
       createIfMissing: true
     )
 
+    if !isNew, let attributeSubtype, attribute.attributeSubtype != attributeSubtype { _logger
+      .debug(
+        "\(self): \(eventSource) declared attribute \(attribute) with new subtype \(attributeSubtype); replacing"
+      )
+
+      try? await _handleAttributeValue(attribute, protocolEvent: .Lv, eventSource: eventSource)
+      attribute.attributeSubtype = attributeSubtype
+    }
+
     try await _handleAttributeValue(
       attribute,
       protocolEvent: isNew ? .New : .Join,
@@ -729,13 +720,32 @@ public extension Participant {
     let attribute = try _findOrCreateAttribute(
       attributeType: attributeType,
       attributeSubtype: attributeSubtype,
-      matching: .matchEqual(attributeValue), // don't match on subtype, we want to replace it
+      matching: .matchEqual(attributeValue),
       createIfMissing: false
     )
 
     try await _handleAttributeValue(
       attribute,
       protocolEvent: .Lv,
+      eventSource: eventSource
+    )
+  }
+
+  func deregister(
+    attributeType: AttributeType,
+    attributeValue: some Value,
+    eventSource: EventSource
+  ) async throws {
+    let attribute = try _findOrCreateAttribute(
+      attributeType: attributeType,
+      attributeSubtype: nil,
+      matching: .matchEqual(attributeValue),
+      createIfMissing: false
+    )
+
+    try await _handleAttributeValue(
+      attribute,
+      protocolEvent: .rLvNow,
       eventSource: eventSource
     )
   }
@@ -815,7 +825,7 @@ Sendable, Hashable, Equatable,
   var participant: P? { _participant.object }
   var unwrappedValue: any Value { value.value }
 
-  private(set) var attributeSubtype: AttributeSubtype? {
+  var attributeSubtype: AttributeSubtype? {
     get {
       _attributeSubtype.withLock { $0 }
     }
@@ -1067,6 +1077,16 @@ Sendable, Hashable, Equatable,
         eventSource: context.eventSource
       )
     }
+  }
+
+  fileprivate func rLvNow(
+    eventSource: EventSource
+  ) async throws {
+    try await handle(
+      protocolEvent: .rLvNow,
+      eventSource: eventSource
+    )
+    precondition(!isRegistered)
   }
 }
 

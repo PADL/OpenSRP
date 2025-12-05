@@ -43,6 +43,7 @@ public enum ProtocolEvent: Sendable {
   case leavetimer // leavetimer has expired (10.7.5.21)
   case leavealltimer // leavealltimer has expired (10.7.5.22)
   case periodictimer // periodictimer has expired (10.7.5.23)
+  case rLvNow // receive Leave message with immediate leavetimer expiration (35.2.6)
 
   fileprivate var _r: Bool {
     switch self {
