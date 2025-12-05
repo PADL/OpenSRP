@@ -846,7 +846,7 @@ fileprivate extension MSRPApplication {
           $0.attributeValue is any MSRPTalkerValue && $0.isRegistered
         }
         .asyncMap {
-          try? await MSRPHandler<A.P>.Stream(
+          try? await MSRPHandler<P>.Stream(
             application: self,
             participant: participant,
             attributeValue: $0
