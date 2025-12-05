@@ -466,11 +466,10 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
   public func deregisterStream(
     streamID: MSRPStreamID
   ) async throws {
-    let talkerRegistration = try await _findTalkerRegistration(for: streamID)
-    let declarationType: MSRPDeclarationType
-    guard let talkerRegistration else {
+    guard let talkerRegistration = await _findTalkerRegistration(for: streamID) else {
       throw MRPError.participantNotFound
     }
+    let declarationType: MSRPDeclarationType
     if talkerRegistration.1 is MSRPTalkerAdvertiseValue {
       declarationType = .talkerAdvertise
     } else {
@@ -1165,19 +1164,17 @@ extension MSRPApplication {
 
   private func _findTalkerRegistration(
     for streamID: MSRPStreamID
-  ) async throws -> TalkerRegistration? {
+  ) async -> TalkerRegistration? {
     var talkerRegistration: TalkerRegistration?
 
     await apply { participant in
       guard let participantTalker = await _findTalkerRegistration(
         for: streamID,
         participant: participant
-      ) else {
+      ), talkerRegistration == nil else {
         return
       }
-      if talkerRegistration == nil {
-        talkerRegistration = (participant, participantTalker)
-      }
+      talkerRegistration = (participant, participantTalker)
     }
 
     return talkerRegistration
@@ -1442,7 +1439,7 @@ extension MSRPApplication {
     isNew: Bool,
     eventSource: EventSource
   ) async throws {
-    guard let talkerRegistration = try? await _findTalkerRegistration(for: streamID) else {
+    guard let talkerRegistration = await _findTalkerRegistration(for: streamID) else {
       // no listener attribute propagation if no talker (35.2.4.4.1)
       // this is an expected race condition - listener arrives before talker
       // when talker arrives, _updateExistingListeners() will process it
@@ -1626,7 +1623,7 @@ extension MSRPApplication {
     // StreamID of the Declaration matches a Stream that the Talker is
     // transmitting, then the Talker shall stop the transmission for this
     // Stream, if it is transmitting.
-    guard let talkerRegistration = try? await _findTalkerRegistration(for: streamID) else {
+    guard let talkerRegistration = await _findTalkerRegistration(for: streamID) else {
       return
     }
 
