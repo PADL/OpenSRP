@@ -1435,9 +1435,12 @@ extension MSRPApplication {
     eventSource: EventSource
   ) async throws {
     guard let talkerRegistration = try? await _findTalkerRegistration(for: streamID) else {
+      // no listener attribute propagation if no talker (35.2.4.4.1)
+      // this is an expected race condition - listener arrives before talker
+      // when talker arrives, _updateExistingListeners() will process it
       _logger
-        .error(
-          "MSRP: could not find talker registration for listener stream \(streamID)"
+        .debug(
+          "MSRP: listener registration for stream \(streamID) received before talker, will be processed when talker arrives"
         )
       return
     }
