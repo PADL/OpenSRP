@@ -102,7 +102,8 @@ struct MSRPPortState<P: AVBPort>: Sendable {
 
   func getStreamAge(for streamID: MSRPStreamID) -> UInt32 {
     guard let epoch = streamEpochs[streamID],
-          let time = try? P.timeSinceEpoch()
+          let time = try? P.timeSinceEpoch(),
+          time >= epoch
     else {
       return 0
     }
@@ -137,8 +138,7 @@ struct MSRPPortState<P: AVBPort>: Sendable {
 }
 
 public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventObserver,
-  BaseApplicationContextObserver,
-  ApplicationEventHandler, CustomStringConvertible, @unchecked Sendable where P == P
+  BaseApplicationContextObserver, CustomStringConvertible, @unchecked Sendable where P == P
 {
   private typealias TalkerRegistration = (Participant<MSRPApplication>, any MSRPTalkerValue)
 
@@ -397,50 +397,6 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     .normalParticipant
   }
 
-  // If an MSRP message is received from a Port with an event value specifying
-  // the JoinIn or JoinMt message, and if the StreamID (35.2.2.8.2,
-  // 35.2.2.10.2), and Direction (35.2.1.2) all match those of an attribute
-  // already registered on that Port, and the Attribute Type (35.2.2.4) or
-  // FourPackedEvent (35.2.2.7.2) has changed, then the Bridge should behave as
-  // though an rLv! event (with immediate leavetimer expiration in the
-  // Registrar state table) was generated for the MAD in the Received MSRP
-  // Attribute Declarations before the rJoinIn! or rJoinMt! event for the
-  // attribute in the received message is processed
-  public func preApplicantEventHandler(
-    context: EventContext<MSRPApplication>
-  ) async throws {
-    guard context.event == .rJoinIn || context.event == .rJoinMt else { return }
-
-    let contextAttributeType = MSRPAttributeType(rawValue: context.attributeType)!
-    guard let contextDirection = contextAttributeType.direction else { return }
-
-    let contextStreamID = (context.attributeValue as! MSRPStreamIDRepresentable).streamID
-
-    try await context.participant.leaveNow { attributeType, _, attributeValue in
-      let attributeType = MSRPAttributeType(rawValue: attributeType)!
-      guard let direction = attributeType.direction else { return false }
-      let streamID = (attributeValue as! MSRPStreamIDRepresentable).streamID
-
-      // force immediate leave if the streamID and direction match and the
-      // attribute type has changed
-      let isIncluded = contextStreamID == streamID &&
-        contextDirection == direction &&
-        contextAttributeType != attributeType
-
-      // NB: we don't handle attribute subtypes here, they are handled in
-      // Participant.swift (this is something of a leaky abstraction)
-      if isIncluded {
-        _logger
-          .debug(
-            "MSRP: forcing immediate leave for stream \(streamID) owing to attribute change: \(attributeType)->\(contextAttributeType)"
-          )
-      }
-      return isIncluded
-    }
-  }
-
-  public func postApplicantEventHandler(context: EventContext<MSRPApplication>) {}
-
   // On receipt of a REGISTER_STREAM.request the MSRP Participant shall issue a
   // MAD_Join.request service primitive (10.2, 10.3). The attribute_type (10.2)
   // parameter of the request shall carry the appropriate Talker Attribute Type
@@ -510,11 +466,10 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
   public func deregisterStream(
     streamID: MSRPStreamID
   ) async throws {
-    let talkerRegistration = try await _findTalkerRegistration(for: streamID)
-    let declarationType: MSRPDeclarationType
-    guard let talkerRegistration else {
+    guard let talkerRegistration = await _findTalkerRegistration(for: streamID) else {
       throw MRPError.participantNotFound
     }
+    let declarationType: MSRPDeclarationType
     if talkerRegistration.1 is MSRPTalkerAdvertiseValue {
       declarationType = .talkerAdvertise
     } else {
@@ -577,6 +532,38 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
 }
 
 extension MSRPApplication {
+  // Enforce mutual exclusion between talkerAdvertise and talkerFailed on a participant
+  private func _enforceTalkerMutualExclusion(
+    participant: Participant<MSRPApplication>,
+    declarationType: MSRPDeclarationType,
+    streamID: MSRPStreamID,
+    eventSource: EventSource
+  ) async throws {
+    let oppositeType: MSRPAttributeType = declarationType == .talkerAdvertise ? .talkerFailed :
+      .talkerAdvertise
+
+    let oppositeAttributes = await participant.findAttributes(
+      attributeType: oppositeType.rawValue,
+      matching: .matchAnyIndex(streamID.index)
+    )
+
+    for (_, attributeValue) in oppositeAttributes {
+      if eventSource == .map {
+        try? await participant.leave(
+          attributeType: oppositeType.rawValue,
+          attributeValue: attributeValue,
+          eventSource: eventSource
+        )
+      } else {
+        try? await participant.deregister(
+          attributeType: oppositeType.rawValue,
+          attributeValue: attributeValue,
+          eventSource: eventSource
+        )
+      }
+    }
+  }
+
   private func _shouldPruneTalkerDeclaration(
     port: P,
     portState: MSRPPortState<P>,
@@ -886,11 +873,24 @@ extension MSRPApplication {
         "MSRP: register stream indication from port \(port) streamID \(talkerValue.streamID) declarationType \(declarationType) dataFrameParameters \(talkerValue.dataFrameParameters) isNew \(isNew) source \(eventSource)"
       )
 
+    // Deregister the opposite talker type from the peer to ensure mutual exclusion
+    if eventSource == .peer {
+      let sourceParticipant = try findParticipant(for: contextIdentifier, port: port)
+      try await _enforceTalkerMutualExclusion(
+        participant: sourceParticipant,
+        declarationType: declarationType,
+        streamID: talkerValue.streamID,
+        eventSource: .peer
+      )
+    }
+
     // TL;DR: propagate Talker declarations to other ports
     try await apply(for: contextIdentifier) { participant in
       guard participant.port != port else { return } // don't propagate to source port
 
       let port = participant.port
+
+      // Read port state for pruning check (snapshot is acceptable for this check)
       guard let portState = try? withPortState(port: port, { $0 }) else { return }
 
       guard await !_shouldPruneTalkerDeclaration(
@@ -926,16 +926,22 @@ extension MSRPApplication {
         accumulatedLatency += 500 // clause 35.2.2.8.6, 500ns default
       }
 
-      // if a Talker Failed attribute already exists when a Talker Advertised
-      // is registered, or vice versa, immediately deregister the existing
-      // attribute
-      try await participant.leaveStreamNow(
-        attributeType: declarationType.talkerComplement,
-        streamID: talkerValue.streamID
+      // Leave the opposite talker declaration type to ensure mutual exclusion
+      // (per spec, only one talker declaration type should exist per stream)
+      try await _enforceTalkerMutualExclusion(
+        participant: participant,
+        declarationType: declarationType,
+        streamID: talkerValue.streamID,
+        eventSource: .map
       )
 
       if declarationType == .talkerAdvertise {
         do {
+          // Re-fetch port state for admission control to ensure current bandwidth calculations
+          guard let portState = try? withPortState(port: port, { $0 }) else {
+            throw MSRPFailure(systemID: port.systemID, failureCode: .insufficientBridgeResources)
+          }
+
           try await _canBridgeTalker(
             participant: participant,
             portState: portState,
@@ -966,11 +972,6 @@ extension MSRPApplication {
             eventSource: .map
           )
         } catch let error as MSRPFailure {
-          // Leave any existing talkerAdvertise before joining talkerFailed
-          try await participant.leaveNow { attributeType, _, attributeValue in
-            attributeType == MSRPAttributeType.talkerAdvertise.rawValue &&
-              (attributeValue as! MSRPStreamIDRepresentable).streamID == talkerValue.streamID
-          }
           let talkerFailed = MSRPTalkerFailedValue(
             streamID: talkerValue.streamID,
             dataFrameParameters: talkerValue.dataFrameParameters,
@@ -1056,6 +1057,19 @@ extension MSRPApplication {
       ) else {
         return
       }
+
+      // Verify talker still exists (guard against race with talker departure)
+      guard let currentTalker = await _findTalkerRegistration(
+        for: talkerValue.streamID,
+        participant: talkerParticipant
+      ), currentTalker.streamID == talkerValue.streamID else {
+        _logger
+          .debug(
+            "MSRP: talker \(talkerValue.streamID) no longer exists, skipping port parameter update"
+          )
+        return
+      }
+
       try? await _updatePortParameters(
         port: participant.port,
         streamID: listenerRegistration.0.streamID,
@@ -1136,13 +1150,14 @@ extension MSRPApplication {
     for streamID: MSRPStreamID,
     participant: Participant<MSRPApplication>
   ) async -> (any MSRPTalkerValue)? {
+    // TalkerFailed takes precedence over TalkerAdvertise per spec
     if let value = await participant.findAttribute(
-      attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
+      attributeType: MSRPAttributeType.talkerFailed.rawValue,
       matching: .matchAnyIndex(streamID.index)
     ) {
       value.1 as? (any MSRPTalkerValue)
     } else if let value = await participant.findAttribute(
-      attributeType: MSRPAttributeType.talkerFailed.rawValue,
+      attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
       matching: .matchAnyIndex(streamID.index)
     ) {
       value.1 as? (any MSRPTalkerValue)
@@ -1153,19 +1168,17 @@ extension MSRPApplication {
 
   private func _findTalkerRegistration(
     for streamID: MSRPStreamID
-  ) async throws -> TalkerRegistration? {
+  ) async -> TalkerRegistration? {
     var talkerRegistration: TalkerRegistration?
 
     await apply { participant in
       guard let participantTalker = await _findTalkerRegistration(
         for: streamID,
         participant: participant
-      ) else {
+      ), talkerRegistration == nil else {
         return
       }
-      if talkerRegistration == nil {
-        talkerRegistration = (participant, participantTalker)
-      }
+      talkerRegistration = (participant, participantTalker)
     }
 
     return talkerRegistration
@@ -1178,17 +1191,9 @@ extension MSRPApplication {
     talkerRegistration: TalkerRegistration,
     isJoin: Bool
   ) async throws -> MSRPDeclarationType? {
+    var mergedDeclarationType = isJoin ? declarationType : nil
     let streamID = talkerRegistration.1.streamID
-
-    var mergedDeclarationType: MSRPDeclarationType? = if isJoin {
-      if talkerRegistration.1 is MSRPTalkerFailedValue {
-        declarationType == nil ? nil : .listenerAskingFailed
-      } else {
-        declarationType
-      }
-    } else {
-      nil
-    }
+    var listenerCount = mergedDeclarationType != nil ? 1 : 0
 
     // collect listener declarations from all other ports and merge declaration type
     await apply(for: contextIdentifier) { participant in
@@ -1213,7 +1218,14 @@ extension MSRPApplication {
             with: mergedDeclarationType
           )
         }
+        listenerCount += 1
       }
+    }
+
+    precondition(mergedDeclarationType == nil || listenerCount > 0)
+
+    if talkerRegistration.1 is MSRPTalkerFailedValue, listenerCount > 0 {
+      mergedDeclarationType = .listenerAskingFailed
     }
 
     return mergedDeclarationType
@@ -1431,10 +1443,13 @@ extension MSRPApplication {
     isNew: Bool,
     eventSource: EventSource
   ) async throws {
-    guard let talkerRegistration = try? await _findTalkerRegistration(for: streamID) else {
+    guard let talkerRegistration = await _findTalkerRegistration(for: streamID) else {
+      // no listener attribute propagation if no talker (35.2.4.4.1)
+      // this is an expected race condition - listener arrives before talker
+      // when talker arrives, _updateExistingListeners() will process it
       _logger
-        .error(
-          "MSRP: could not find talker registration for listener stream \(streamID)"
+        .debug(
+          "MSRP: listener registration for stream \(streamID) received before talker, will be processed when talker arrives"
         )
       return
     }
@@ -1550,6 +1565,11 @@ extension MSRPApplication {
   ) async throws {
     let streamID = talkerValue.streamID
 
+    // .application indicates we are being called by willHandleEvent, which is
+    // only the case where a subsequent Join[In] is due with the complementary
+    // Talker attribute (i.e. Talker Failed for Talker Advertise and vv).
+    guard eventSource != .application else { return }
+
     _logger
       .info(
         "MSRP: deregister stream indication from port \(port) streamID \(streamID) source \(eventSource)"
@@ -1612,7 +1632,7 @@ extension MSRPApplication {
     // StreamID of the Declaration matches a Stream that the Talker is
     // transmitting, then the Talker shall stop the transmission for this
     // Stream, if it is transmitting.
-    guard let talkerRegistration = try? await _findTalkerRegistration(for: streamID) else {
+    guard let talkerRegistration = await _findTalkerRegistration(for: streamID) else {
       return
     }
 
@@ -1775,25 +1795,6 @@ extension MSRPApplication {
     get async {
       guard _maxTalkerAttributes > 0 else { return false }
       return await _numberOfRegisteredTalkerAttributes >= _maxTalkerAttributes
-    }
-  }
-}
-
-private extension MSRPDeclarationType {
-  var talkerComplement: MSRPAttributeType! {
-    switch self {
-    case .talkerAdvertise: .talkerFailed
-    case .talkerFailed: .talkerAdvertise
-    default: nil
-    }
-  }
-}
-
-private extension Participant {
-  func leaveStreamNow(attributeType: MSRPAttributeType, streamID: MSRPStreamID) async throws {
-    try await leaveNow {
-      $0 == attributeType.rawValue &&
-        ($2 as! MSRPStreamIDRepresentable).streamID == streamID
     }
   }
 }

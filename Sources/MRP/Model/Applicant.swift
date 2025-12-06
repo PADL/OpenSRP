@@ -199,6 +199,8 @@ private extension Applicant.State {
       }
     case .rLv:
       fallthrough
+    case .rLvNow:
+      fallthrough
     case .rLA:
       fallthrough
     case .ReDeclare:
