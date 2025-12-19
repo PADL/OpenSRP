@@ -167,7 +167,7 @@ extension MVRPApplication {
       guard !bridge.hasLocalMVRPApplicant || eventSource != .local
       else { throw MRPError.doNotPropagateAttribute }
       _logger
-        .info(
+        .debug(
           "MVRP: join indication from port \(port) VID \(vlan.vid) isNew \(isNew) source \(eventSource)"
         )
       // TODO: flush FDB entries following a topology change, if isNew is true
@@ -199,7 +199,7 @@ extension MVRPApplication {
       guard !_vlanExclusions.contains(vlan) else { throw MRPError.doNotPropagateAttribute }
       guard !bridge.hasLocalMVRPApplicant || eventSource != .local
       else { throw MRPError.doNotPropagateAttribute }
-      _logger.info("MVRP: leave indication from port \(port) VID \(vlan.vid) source \(eventSource)")
+      _logger.debug("MVRP: leave indication from port \(port) VID \(vlan.vid) source \(eventSource)")
       try await bridge.deregister(vlan: vlan, from: port)
     }
   }

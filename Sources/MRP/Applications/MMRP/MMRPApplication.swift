@@ -181,7 +181,7 @@ extension MMRPApplication {
     case .mac:
       let macAddress = (attributeValue as! MMRPMACValue).macAddress
       _logger
-        .info(
+        .debug(
           "MMRP: join indication from port \(port) address \(_macAddressToString(macAddress)) isNew \(isNew) source \(eventSource)"
         )
       try await bridge.register(macAddress: macAddress, vlan: nil, on: ports)
@@ -219,7 +219,7 @@ extension MMRPApplication {
     case .mac:
       let macAddress = (attributeValue as! MMRPMACValue).macAddress
       _logger
-        .info(
+        .debug(
           "MMRP: leave indication from port \(port) address \(_macAddressToString(macAddress)) source \(eventSource)"
         )
       try? await bridge.deregister(macAddress: macAddress, vlan: nil, from: ports)
