@@ -1,0 +1,24 @@
+[Match]
+Name=lan*
+
+[Link]
+RequiredForOnline=enslaved
+
+[Network]
+Bridge=br0
+
+# Multicast DNS (mDNS)
+[BridgeMDB]
+MulticastGroupAddress=01:00:5e:00:00:fb
+
+# IEEE Std 1722.1 Table B.1 ADP and ACMP
+[BridgeMDB]
+MulticastGroupAddress=91:e0:f0:01:00:00
+
+# IEEE Std 1722.1 Table B.1 Identification Notifications
+[BridgeMDB]
+MulticastGroupAddress=91:e0:f0:01:00:01
+
+# IEEE Std 1722 Table B.4.1 MAAP frames
+[BridgeMDB]
+MulticastGroupAddress=91:e0:f0:00:ff:00

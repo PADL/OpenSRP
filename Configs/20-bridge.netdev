@@ -1,0 +1,12 @@
+[NetDev]
+Name=br0
+Kind=bridge
+MACAddress=none
+
+[Bridge]
+MulticastQuerier=no
+MulticastSnooping=yes
+MulticastIGMPVersion=2
+DefaultPVID=1
+VLANFiltering=yes
+STP=yes

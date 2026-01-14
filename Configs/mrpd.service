@@ -1,0 +1,27 @@
+[Unit]
+Description=Stream Reservation Protocol (SRP)
+After=ptp4l.service dsa-bridge-config.service
+
+[Service]
+Type=notify
+Environment=LD_PRELOAD=/usr/lib/libjemalloc.so.2
+EnvironmentFile=-/etc/default/mrp
+
+# configure MVRP hook
+ExecStartPre=/usr/sbin/nft add table bridge nat
+ExecStartPre=/usr/sbin/nft add chain bridge nat PREROUTING { type filter hook prerouting priority dstnat; policy accept; }
+ExecStartPre=/usr/sbin/nft add rule bridge nat PREROUTING meta ibrname ${BRIDGE} ether daddr 01:80:c2:00:00:21 log group 10 drop
+
+# start SRP daemon
+ExecStart=/usr/sbin/mrpd --enable-srp -b ${BRIDGE} --force-avb-capable --exclude-iface ${EXCLUDE} --configure-queues
+
+# ensure MQPRIO queues are removed
+ExecStopPost=-/usr/sbin/tc qdisc del dev lan0 parent root handle ${HANDLE}
+ExecStopPost=-/usr/sbin/tc qdisc del dev lan1 parent root handle ${HANDLE}
+ExecStopPost=-/usr/sbin/tc qdisc del dev xe0  parent root handle ${HANDLE}
+
+# unconfigure MVRP hook
+ExecStopPost=-/usr/sbin/nft delete table bridge nat
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,12 @@
+[Unit]
+Description=Precision Time Protocol (PTP) service
+Documentation=man:ptp4l
+After=dsa-switch-config.service
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/sh -c '/usr/bin/pgrep -f ptp1 | /usr/bin/xargs -I {} /usr/bin/chrt -f --pid 75 {}'
+ExecStart=/usr/sbin/ptp4l -f /etc/gPTP.cfg -l 5 -m
+
+[Install]
+WantedBy=multi-user.target

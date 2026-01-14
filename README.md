@@ -111,6 +111,8 @@ The current test environments consist of:
 * A Global Scale Technologies [MochaBIN](https://globalscaletechnologies.com/product/mochabin-copy/) with its stock 88E6141 switch chip replaced with a 88E6341, also using `ptp4l`
 * A custom board (’XEBRA’) with a Raspberry Pi CM4 and a Marvell 88E6352
 
+Kernel patches for the Marvell to support FQTSS and RMU are in the [rpi-6.18.y-xebros-rmu](https://github.com/PADL/linux/tree/rpi-6.18.y-xebros-rmu) branch.
+
 Endpoints we are testing include:
 
 * MOTU Ultralite AVB (tested with i210 and MochaBIN)
