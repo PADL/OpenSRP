@@ -2,10 +2,10 @@
 
 BR=br0
 HANDLE=9000
+INTERFACES=${1:-"br0 xe0 lan1"}
 
-for INDEX in 3 2 1 0
+for ETH in $INTERFACES
 do
-	ETH="lan${INDEX}"
 	echo "Unconfiguring ${ETH} Qdisc..."
 
 	tc qdisc del dev ${ETH} parent root handle ${HANDLE} mqprio
@@ -31,9 +31,8 @@ nft list ruleset
 
 echo ""
 
-for INDEX in 0 1 2 3
+for ETH in $INTERFACES
 do
-	ETH="lan${INDEX}"
 	echo "Configuring ${ETH} Qdisc..."
 
 	tc qdisc add dev ${ETH} parent root handle ${HANDLE} mqprio \
