@@ -16,6 +16,7 @@
 
 #if os(Linux)
 
+import class Foundation.ProcessInfo
 import AsyncAlgorithms
 @preconcurrency
 import AsyncExtensions
@@ -909,6 +910,20 @@ extension LinuxBridge: MSRPAwareBridge {
     let removeShaper = hiCredit == 0 && loCredit == 0 && idleSlope == 0
     let parent = UInt32(_nlQDiscHandle) << 16 | UInt32(queue)
 
+    // Apply multiplier from environment variable for testing
+    var adjustedIdleSlope = idleSlope
+    if let multiplierString = ProcessInfo.processInfo.environment["CBS_IDLESLOPE_MULTIPLIER"],
+       let multiplier = Double(multiplierString) {
+      adjustedIdleSlope = Int(Double(idleSlope) * multiplier)
+    }
+
+    // Apply override from environment variable for testing
+    var adjustedHiCredit = hiCredit
+    if let overrideString = ProcessInfo.processInfo.environment["CBS_HICREDIT_OVERRIDE"],
+       let override = Int(overrideString) {
+      adjustedHiCredit = override
+    }
+
     do {
       if removeShaper {
         try await port._rtnl.remove(handle: 0, parent: parent, socket: _nlLinkSocket)
@@ -917,16 +932,16 @@ extension LinuxBridge: MSRPAwareBridge {
           handle: 0, // this allows the kernel to assign a handle
           parent: parent,
           offload: true,
-          hiCredit: Int32(hiCredit),
+          hiCredit: Int32(adjustedHiCredit),
           loCredit: Int32(loCredit),
-          idleSlope: Int32(idleSlope),
+          idleSlope: Int32(adjustedIdleSlope),
           sendSlope: Int32(sendSlope),
           socket: _nlLinkSocket
         )
       }
     } catch {
       debugPrint(
-        "adjustCreditBasedShaper: bridge \(self) port \(port) parent \(parent) hiCredit \(hiCredit) loCredit \(loCredit) idleSlope \(idleSlope) sendSlope \(sendSlope) failed: \(error)"
+        "adjustCreditBasedShaper: bridge \(self) port \(port) parent \(parent) hiCredit \(hiCredit) loCredit \(loCredit) idleSlope \(adjustedIdleSlope) sendSlope \(sendSlope) failed: \(error)"
       )
       throw error
     }
