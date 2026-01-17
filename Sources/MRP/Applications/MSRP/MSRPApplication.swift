@@ -702,13 +702,12 @@ extension MSRPApplication {
     provisionalTalker: MSRPTalkerAdvertiseValue? = nil
   ) async throws -> [SRclassID: Int] {
     var bandwidthUsed = [SRclassID: Int]()
-    var talkers = await participant.findAttributes(
-      attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
-      matching: .matchAny
-    )
-    .map { $0.1 as! MSRPTalkerAdvertiseValue }
-    .filter { $0.streamID != provisionalTalker?.streamID }
-    if let provisionalTalker { talkers.append(provisionalTalker) }
+
+    // Find all active talkers (those with listeners in ready or readyFailed state)
+    var talkers = await _findActiveTalkers(participant: participant)
+
+    // Add provisional talker if provided (for bandwidth admission control check)
+    if let provisionalTalker { talkers.insert(provisionalTalker) }
 
     for talker in talkers {
       guard let srClassID = portState
@@ -1263,6 +1262,27 @@ extension MSRPApplication {
     }
   }
 
+  private func _findActiveTalkers(
+    participant: Participant<MSRPApplication<P>>
+  ) async -> Set<MSRPTalkerAdvertiseValue> {
+    // Find all active talkers by querying listeners on this port and finding their corresponding
+    // talkers
+    await Set(participant.findAttributes(
+      attributeType: MSRPAttributeType.listener.rawValue,
+      matching: .matchAny
+    ).asyncCompactMap {
+      guard let attributeSubtype = $0.0,
+            let attributeSubtype = MSRPAttributeSubtype(rawValue: attributeSubtype),
+            attributeSubtype == .ready || attributeSubtype == .readyFailed else { return nil }
+
+      let listener = $0.1 as! MSRPListenerValue
+      guard let talkerRegistration = await _findTalkerRegistration(for: listener.streamID),
+            let talkerAdvertise = talkerRegistration.1 as? MSRPTalkerAdvertiseValue
+      else { return nil }
+      return talkerAdvertise
+    })
+  }
+
   private func _updateOperIdleSlope(
     port: P,
     portState: MSRPPortState<P>,
@@ -1279,22 +1299,12 @@ extension MSRPApplication {
       return
     }
 
-    // Find all active talkers by querying listeners on this port and finding their corresponding
-    // talkers
-    var talkers: Set<MSRPTalkerAdvertiseValue> = await Set(participant.findAttributes(
-      attributeType: MSRPAttributeType.listener.rawValue,
-      matching: .matchAny
-    ).asyncCompactMap {
-      let listener = $0.1 as! MSRPListenerValue
-      guard let talkerRegistration = await _findTalkerRegistration(for: listener.streamID),
-            let talkerAdvertise = talkerRegistration.1 as? MSRPTalkerAdvertiseValue
-      else { return nil }
-      return talkerAdvertise
-    })
+    var talkers = await _findActiveTalkers(participant: participant)
 
     // Remove the specific talker stream that is the subject of this
     // registration or deregistration; we will add it back conditionally
-    if let index = talkers.firstIndex(where: { $0.streamID == talkerRegistration.streamID }) {
+    // based on the presented declaration type
+    if let index = talkers.firstIndex(where: { $0.streamID == streamID }) {
       talkers.remove(at: index)
     }
 
