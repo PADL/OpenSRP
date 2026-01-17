@@ -469,11 +469,10 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     guard let talkerRegistration = await _findTalkerRegistration(for: streamID) else {
       throw MRPError.participantNotFound
     }
-    let declarationType: MSRPDeclarationType
-    if talkerRegistration.1 is MSRPTalkerAdvertiseValue {
-      declarationType = .talkerAdvertise
+    let declarationType: MSRPDeclarationType = if talkerRegistration.1 is MSRPTalkerAdvertiseValue {
+      .talkerAdvertise
     } else {
-      declarationType = .talkerFailed
+      .talkerFailed
     }
     try await leave(
       attributeType: declarationType.attributeType.rawValue,

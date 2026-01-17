@@ -199,7 +199,8 @@ extension MVRPApplication {
       guard !_vlanExclusions.contains(vlan) else { throw MRPError.doNotPropagateAttribute }
       guard !bridge.hasLocalMVRPApplicant || eventSource != .local
       else { throw MRPError.doNotPropagateAttribute }
-      _logger.debug("MVRP: leave indication from port \(port) VID \(vlan.vid) source \(eventSource)")
+      _logger
+        .debug("MVRP: leave indication from port \(port) VID \(vlan.vid) source \(eventSource)")
       try await bridge.deregister(vlan: vlan, from: port)
     }
   }
