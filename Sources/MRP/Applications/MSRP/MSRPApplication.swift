@@ -1280,10 +1280,18 @@ extension MSRPApplication {
       return
     }
 
+    // Find all active talkers by querying listeners on this port and finding their corresponding
+    // talkers
     var talkers: Set<MSRPTalkerAdvertiseValue> = await Set(participant.findAttributes(
-      attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
+      attributeType: MSRPAttributeType.listener.rawValue,
       matching: .matchAny
-    ).map { $0.1 as! MSRPTalkerAdvertiseValue })
+    ).asyncCompactMap {
+      let listener = $0.1 as! MSRPListenerValue
+      guard let talkerRegistration = await _findTalkerRegistration(for: listener.streamID),
+            let talkerAdvertise = talkerRegistration.1 as? MSRPTalkerAdvertiseValue
+      else { return nil }
+      return talkerAdvertise
+    })
 
     // Remove the specific talker stream that is the subject of this
     // registration or deregistration; we will add it back conditionally
