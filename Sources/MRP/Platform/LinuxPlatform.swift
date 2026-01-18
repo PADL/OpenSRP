@@ -907,6 +907,10 @@ extension LinuxBridge: MSRPAwareBridge {
       throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
     }
 
+    if ProcessInfo.processInfo.environment["CBS_DISABLE"] != nil {
+      return
+    }
+
     let removeShaper = hiCredit == 0 && loCredit == 0 && idleSlope == 0
     let parent = UInt32(_nlQDiscHandle) << 16 | UInt32(queue)
 
