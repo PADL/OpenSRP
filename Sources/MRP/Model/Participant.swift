@@ -188,8 +188,6 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   @Sendable
   private func _onLeaveAllTimerExpired() async throws {
     try await _handleLeaveAll(protocolEvent: .leavealltimer, eventSource: .leaveAllTimer)
-    // Table 10.5: Request opportunity to transmit on entry to the Active state
-    _requestTxOpportunity(eventSource: .leaveAll)
   }
 
   private func _apply(
@@ -522,7 +520,15 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     protocolEvent event: ProtocolEvent,
     eventSource: EventSource
   ) async throws {
-    switch _leaveAll.action(for: event) {
+    let oldState = _leaveAll.state
+    let action = _leaveAll.action(for: event) // may update state
+
+    if oldState == .Passive, _leaveAll.state == .Active {
+      // Table 10.5: Request opportunity to transmit on entry to the Active state
+      _requestTxOpportunity(eventSource: .leaveAll)
+    }
+
+    switch action {
     case .startLeaveAllTimer:
       _leaveAll.startLeaveAllTimer()
     case .sLA:
