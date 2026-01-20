@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2024-2025 PADL Software Pty Ltd
+// Copyright (c) 2024-2026 PADL Software Pty Ltd
 //
 // Licensed under the Apache License, Version 2.0 (the License);
 // you may not use this file except in compliance with the License.
@@ -257,11 +257,69 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   }
 
   private func _requestTxOpportunity(eventSource: EventSource) {
-    _logger.trace("\(self): \(eventSource) requested TX opportunity")
-
     guard let jointimer = _jointimer, !jointimer.isRunning else { return }
     guard let controller else { return }
     let joinTime = controller.timerConfiguration.joinTime
+
+    if _type == .pointToPoint {
+      _requestTxOpportunityPointToPoint(
+        eventSource: eventSource,
+        jointimer: jointimer,
+        joinTime: joinTime
+      )
+    } else {
+      _requestTxOpportunityShared(
+        eventSource: eventSource,
+        jointimer: jointimer,
+        joinTime: joinTime
+      )
+    }
+  }
+
+  // If operPointToPointMAC is TRUE, a request for a transmit opportunity should
+  // result in such an opportunity as soon as is practicable, given other system
+  // constraints, and shall occur within the value specified for JoinTime subject
+  // to not more than three such transmission opportunities occurring in any period
+  // of 1.5 × JoinTime.
+  private func _requestTxOpportunityPointToPoint(
+    eventSource: EventSource,
+    jointimer: Timer,
+    joinTime: Duration
+  ) {
+    _logger.trace("\(self): \(eventSource) requested TX opportunity (point-to-point)")
+
+    let rateLimit = joinTime * 1.5
+    let now = ContinuousClock.now
+
+    // Remove timestamps older than 1.5 × JoinTime
+    _transmissionOpportunityTimestamps.removeAll { now - $0 >= rateLimit }
+
+    // Rate limit: no more than 3 transmissions in any 1.5 × JoinTime period
+    if _transmissionOpportunityTimestamps.count >= 3 {
+      _logger
+        .trace(
+          "\(self): \(eventSource) rate limiting TX opportunity (3 transmissions in \(rateLimit))"
+        )
+      return
+    }
+
+    // Record this transmission opportunity request
+    _transmissionOpportunityTimestamps.append(now)
+
+    // Transmit as soon as practicable (minimal delay)
+    jointimer.start(interval: .zero)
+  }
+
+  // If operPointToPointMAC is FALSE, and there is no pending request, a transmit
+  // opportunity shall occur at a time value randomized between 0 and JoinTime
+  // seconds.
+  private func _requestTxOpportunityShared(
+    eventSource: EventSource,
+    jointimer: Timer,
+    joinTime: Duration
+  ) {
+    _logger.trace("\(self): \(eventSource) requested TX opportunity (shared)")
+
     let randomDelay = Duration
       .nanoseconds(Int64.random(in: 0..<joinTime.nanoseconds))
     jointimer.start(interval: randomDelay)
