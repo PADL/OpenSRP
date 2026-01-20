@@ -263,12 +263,14 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
       listener = await participant._getListeners()
       talker = await participant._getTalkers()
       talkerFailed = await participant._getTalkersFailed()
+      let activeStreamIDs = Set(listener.map(\.streamID))
+      let activeStreams = streams.filter { activeStreamIDs.contains($0.streamID) }
       srClass = SRclassID.allCases.reduce(into: [:]) { dict, classID in
         if let srClassInstance = SRClass(
           application: application,
           participant: participant,
           srClassID: classID,
-          streams: streams
+          streams: activeStreams
         ) {
           dict[classID.description.lowercased()] = srClassInstance
         }
