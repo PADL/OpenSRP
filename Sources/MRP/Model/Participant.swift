@@ -523,7 +523,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     eventSource: EventSource
   ) async throws {
     switch _leaveAll.action(for: event) {
-    case .leavealltimer:
+    case .startLeaveAllTimer:
       _leaveAll.startLeaveAllTimer()
     case .sLA:
       // a) The LeaveAll state machine associated with that instance of the

@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2024 PADL Software Pty Ltd
+// Copyright (c) 2024-2026 PADL Software Pty Ltd
 //
 // Licensed under the Apache License, Version 2.0 (the License);
 // you may not use this file except in compliance with the License.
@@ -23,7 +23,7 @@ final class LeaveAll: Sendable, CustomStringConvertible {
   }
 
   enum Action {
-    case leavealltimer
+    case startLeaveAllTimer
     case sLA
   }
 
@@ -78,20 +78,20 @@ private extension LeaveAll.State {
 
     switch event {
     case .Begin:
-      action = .leavealltimer
+      action = .startLeaveAllTimer
       self = .Passive
     case .Flush:
-      action = .leavealltimer
+      action = .startLeaveAllTimer
       self = .Passive
     case .tx:
       guard self == .Active else { return nil }
       action = .sLA
       self = .Passive
     case .rLA:
-      action = .leavealltimer
+      action = .startLeaveAllTimer
       self = .Passive
     case .leavealltimer:
-      action = .leavealltimer
+      action = .startLeaveAllTimer
       self = .Active
     default:
       return nil
