@@ -530,7 +530,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
             .debug(
               "\(self): \(eventSource) declared attribute \(attribute) with new subtype \(attributeSubtype); replacing"
             )
-          try? await attribute.rLvNow(eventSource: eventSource)
+          try? await attribute.rLvNow(eventSource: eventSource, suppressGC: true)
           attribute.attributeSubtype = attributeSubtype
         }
 
@@ -700,7 +700,7 @@ public extension Participant {
         "\(self): \(eventSource) declared attribute \(attribute) with new subtype \(attributeSubtype); replacing"
       )
 
-      try? await _handleAttributeValue(attribute, protocolEvent: .Lv, eventSource: eventSource)
+      try? await attribute.handle(protocolEvent: .Lv, eventSource: eventSource, suppressGC: true)
       attribute.attributeSubtype = attributeSubtype
     }
 
@@ -958,15 +958,17 @@ Sendable, Hashable, Equatable,
 
   fileprivate func handle(
     protocolEvent event: ProtocolEvent,
-    eventSource: EventSource
+    eventSource: EventSource,
+    suppressGC: Bool = false
   ) async throws {
     guard let participant else { throw MRPError.internalError }
-    try await _handle(protocolEvent: event, eventSource: eventSource, isolation: participant)
+    try await _handle(protocolEvent: event, eventSource: eventSource, suppressGC: suppressGC, isolation: participant)
   }
 
   private func _handle(
     protocolEvent event: ProtocolEvent,
     eventSource: EventSource,
+    suppressGC: Bool = false,
     isolation participant: isolated P
   ) async throws {
     let context = try _getEventContext(for: event, eventSource: eventSource, isolation: participant)
@@ -975,7 +977,7 @@ Sendable, Hashable, Equatable,
     try await _handleApplicant(context: context, isolation: context.participant)
 
     // remove attribute entirely if it is no longer declared or registered
-    if canGC { participant._gcAttributeValue(self) }
+    if !suppressGC, canGC { participant._gcAttributeValue(self) }
   }
 
   private func _handleApplicant(
@@ -1077,11 +1079,13 @@ Sendable, Hashable, Equatable,
   }
 
   fileprivate func rLvNow(
-    eventSource: EventSource
+    eventSource: EventSource,
+    suppressGC: Bool = false
   ) async throws {
     try await handle(
       protocolEvent: .rLvNow,
-      eventSource: eventSource
+      eventSource: eventSource,
+      suppressGC: suppressGC
     )
     precondition(!isRegistered)
   }
