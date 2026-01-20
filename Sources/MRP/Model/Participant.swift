@@ -962,7 +962,12 @@ Sendable, Hashable, Equatable,
     suppressGC: Bool = false
   ) async throws {
     guard let participant else { throw MRPError.internalError }
-    try await _handle(protocolEvent: event, eventSource: eventSource, suppressGC: suppressGC, isolation: participant)
+    try await _handle(
+      protocolEvent: event,
+      eventSource: eventSource,
+      suppressGC: suppressGC,
+      isolation: participant
+    )
   }
 
   private func _handle(
