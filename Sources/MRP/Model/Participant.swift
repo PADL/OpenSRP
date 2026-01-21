@@ -520,11 +520,9 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     protocolEvent event: ProtocolEvent,
     eventSource: EventSource
   ) async throws {
-    let oldState = _leaveAll.state
-    let action = _leaveAll.action(for: event) // may update state
+    let (action, txOpportunity) = _leaveAll.action(for: event) // may update state
 
-    if oldState == .Passive, _leaveAll.state == .Active {
-      // Table 10.5: Request opportunity to transmit on entry to the Active state
+    if txOpportunity {
       _requestTxOpportunity(eventSource: .leaveAll)
     }
 

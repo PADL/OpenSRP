@@ -1086,32 +1086,37 @@ final class MRPTests: XCTestCase {
     XCTAssertEqual(leaveAll.state, .Passive)
 
     // Test Begin event
-    let action1 = leaveAll.action(for: .Begin)
+    let (action1, tx1) = leaveAll.action(for: .Begin)
     XCTAssertEqual(action1, .startLeaveAllTimer)
     XCTAssertEqual(leaveAll.state, .Passive)
+    XCTAssertEqual(tx1, false)
 
     // Test startLeaveAllTimer event (timer expires) -> Active
-    let action2 = leaveAll.action(for: .leavealltimer)
+    let (action2, tx2) = leaveAll.action(for: .leavealltimer)
     XCTAssertEqual(action2, .startLeaveAllTimer)
     XCTAssertEqual(leaveAll.state, .Active)
+    XCTAssertEqual(tx2, true)
 
     // Test tx event from Active -> Passive with sLA action
-    let action3 = leaveAll.action(for: .tx)
+    let (action3, tx3) = leaveAll.action(for: .tx)
     XCTAssertEqual(action3, .sLA)
     XCTAssertEqual(leaveAll.state, .Passive)
+    XCTAssertEqual(tx3, false)
 
     // Test rLA event
-    let action4 = leaveAll.action(for: .rLA)
+    let (action4, tx4) = leaveAll.action(for: .rLA)
     XCTAssertEqual(action4, .startLeaveAllTimer)
     XCTAssertEqual(leaveAll.state, .Passive)
+    XCTAssertEqual(tx4, false)
 
     // Test Flush event
-    let action5 = leaveAll.action(for: .Flush)
+    let (action5, tx5) = leaveAll.action(for: .Flush)
     XCTAssertEqual(action5, .startLeaveAllTimer)
     XCTAssertEqual(leaveAll.state, .Passive)
+    XCTAssertEqual(tx5, false)
 
     // Test unknown event
-    XCTAssertNil(leaveAll.action(for: .New))
+    XCTAssertNil(leaveAll.action(for: .New).0)
   }
 
   func testApplicantLeaveAllTransitions() {
@@ -1196,8 +1201,9 @@ final class MRPTests: XCTestCase {
     // Initialize all state machines
     XCTAssertNil(applicant.action(for: .Begin, flags: normalFlags))
     XCTAssertNil(registrar.action(for: .Begin, flags: normalFlags))
-    let leaveAllAction = leaveAll.action(for: .Begin)
+    let (leaveAllAction, tx) = leaveAll.action(for: .Begin)
     XCTAssertEqual(leaveAllAction, .startLeaveAllTimer)
+    XCTAssertEqual(tx, false)
 
     XCTAssertEqual(applicant.description, "VO")
     XCTAssertEqual(registrar.state, .MT)
@@ -1233,9 +1239,10 @@ final class MRPTests: XCTestCase {
     XCTAssertNil(registrar.action(for: .rLA, flags: normalFlags))
     XCTAssertEqual(registrar.state, .LV) // IN -> LV on rLA
 
-    let leaveAllAction2 = leaveAll.action(for: .rLA)
+    let (leaveAllAction2, tx2) = leaveAll.action(for: .rLA)
     XCTAssertEqual(leaveAllAction2, .startLeaveAllTimer)
     XCTAssertEqual(leaveAll.state, .Passive)
+    XCTAssertEqual(tx2, false)
   }
 
   // MARK: - PTP Tests

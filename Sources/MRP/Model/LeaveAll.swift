@@ -42,7 +42,7 @@ final class LeaveAll: Sendable, CustomStringConvertible {
     }
   }
 
-  func action(for event: ProtocolEvent) -> Action? {
+  func action(for event: ProtocolEvent) -> (Action?, Bool) {
     _state.withLock { state in
       state.action(for: event)
     }
@@ -73,8 +73,9 @@ final class LeaveAll: Sendable, CustomStringConvertible {
 private extension LeaveAll.State {
   mutating func action(
     for event: ProtocolEvent
-  ) -> LeaveAll.Action? {
-    let action: LeaveAll.Action
+  ) -> (LeaveAll.Action?, Bool) {
+    let action: LeaveAll.Action?
+    var txOpportunity = false
 
     switch event {
     case .Begin:
@@ -84,7 +85,10 @@ private extension LeaveAll.State {
       action = .startLeaveAllTimer
       self = .Passive
     case .tx:
-      guard self == .Active else { return nil }
+      guard self == .Active else {
+        action = nil
+        break
+      }
       action = .sLA
       self = .Passive
     case .rLA:
@@ -92,11 +96,13 @@ private extension LeaveAll.State {
       self = .Passive
     case .leavealltimer:
       action = .startLeaveAllTimer
+      // 10-5: Request opportunity to transmit on entry to the Active state
+      txOpportunity = self == .Passive
       self = .Active
     default:
-      return nil
+      action = nil
     }
 
-    return action
+    return (action, txOpportunity)
   }
 }
