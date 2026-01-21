@@ -314,13 +314,9 @@ public struct MSRPDataFrameParameters: Value, Equatable, Hashable, CustomStringC
     vlanIdentifier = try VLAN(parsing: &input)
   }
 
-  private init(_ value: UInt64) throws {
-    destinationAddress = try value.asEUI48()
-    vlanIdentifier = SR_PVID
-  }
-
   init() {
-    try! self.init(0)
+    // set VLAN identifier to zero for correct Null value encoding
+    try! self.init(destinationAddress: UInt64(0).asEUI48(), vlanIdentifier: VLAN(vid: 0))
   }
 
   public func makeValue(relativeTo index: UInt64) throws -> Self {
