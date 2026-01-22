@@ -216,9 +216,9 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     }
   }
 
-  private func _tx() async throws {
+  private func _tx() async throws -> Bool {
     guard let application, let controller else { throw MRPError.internalError }
-    guard let pdu = try await _txDequeue() else { return }
+    guard let pdu = try await _txDequeue() else { return false }
     _debugLogPdu(pdu, direction: .tx)
     try await controller.bridge.tx(
       pdu: pdu,
@@ -227,6 +227,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       on: port,
       controller: controller
     )
+    return true
   }
 
   @Sendable
@@ -245,13 +246,30 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     case .Passive:
       try await _apply(protocolEvent: .tx, eventSource: eventSource)
     }
-    try await _tx()
+    let didTransmit = try await _tx()
+
+    // Record transmission timestamp for rate limiting (point-to-point only)
+    if didTransmit, _type == .pointToPoint {
+      _recordTransmission()
+    }
 
     // If events remain (e.g., arrived during TX processing or didn't fit in PDU),
     // request another TX opportunity
     if !_enqueuedEvents.isEmpty {
       _requestTxOpportunity(eventSource: eventSource)
     }
+  }
+
+  private func _recordTransmission() {
+    guard let controller else { return }
+    let now = ContinuousClock.now
+    _transmissionOpportunityTimestamps.append(now)
+    let joinTime = controller.timerConfiguration.joinTime
+    let rateLimit = joinTime * 1.5
+    _logger
+      .trace(
+        "\(self): recorded transmission (\(_transmissionOpportunityTimestamps.count) in last \(rateLimit))"
+      )
   }
 
   fileprivate func _requestTxOpportunity(eventSource: EventSource) {
@@ -286,6 +304,10 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   ) {
     _logger.trace("\(self): \(eventSource) requested TX opportunity (point-to-point)")
 
+    // If timer is already running, we're already processing a transmission
+    // opportunity, so don't start a new one
+    guard !jointimer.isRunning else { return }
+
     let rateLimit = joinTime * 1.5
     let now = ContinuousClock.now
 
@@ -301,10 +323,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       return
     }
 
-    // Record this transmission opportunity request
-    _transmissionOpportunityTimestamps.append(now)
-
     // Transmit as soon as practicable (minimal delay)
+    // Timestamp will be recorded after actual transmission completes
     jointimer.start(interval: .zero)
   }
 
