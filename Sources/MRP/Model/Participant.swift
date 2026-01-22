@@ -119,6 +119,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   private var _leaveAll: LeaveAll!
   private var _jointimer: Timer!
   private var _rxInProgress = false
+  private var _transmissionOpportunityTimestamps: [ContinuousClock.Instant] = []
   private nonisolated let _controller: Weak<MRPController<A.P>>
   private nonisolated let _application: Weak<A>
 
@@ -218,7 +219,6 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     }
   }
 
-  @discardableResult
   private func _tx() async throws -> Bool {
     guard let application, let controller else { throw MRPError.internalError }
     guard let pdu = try _txDequeue() else { return false }
@@ -233,6 +233,15 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     return true
   }
 
+  // If operPointToPointMAC is TRUE, a request for a transmit opportunity should
+  // result in such an opportunity as soon as is practicable, given other system
+  // constraints, and shall occur within the value specified for JoinTime subject
+  // to not more than three such transmission opportunities occurring in any period
+  // of 1.5 × JoinTime.
+  //
+  // If operPointToPointMAC is FALSE, and there is no pending request, a transmit
+  // opportunity shall occur at a time value randomized between 0 and JoinTime
+  // seconds.
   fileprivate func _requestTxOpportunity(eventSource: EventSource) {
     guard !_jointimer.isRunning else { return }
     _scheduleTxOpportunity(eventSource: eventSource)
@@ -242,9 +251,10 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     _logger.trace("\(self): \(eventSource) requests TX opportunity")
 
     guard let controller else { return }
-
     let joinTime = controller.timerConfiguration.joinTime
-    let interval = Duration.nanoseconds(Int64.random(in: 0..<joinTime.nanoseconds))
+    let interval: Duration = _type == .pointToPoint ? .zero :
+      .nanoseconds(Int64.random(in: 0..<joinTime.nanoseconds))
+
     _jointimer.start(interval: interval)
   }
 
@@ -257,6 +267,25 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       await Task.yield()
       _scheduleTxOpportunity(eventSource: eventSource)
       return
+    }
+
+    if _type == .pointToPoint, let controller {
+      let rateLimit = controller.timerConfiguration.joinTime * 1.5
+      let now = ContinuousClock.now
+
+      _transmissionOpportunityTimestamps.removeAll { now - $0 >= rateLimit }
+
+      if _transmissionOpportunityTimestamps.count >= 3 {
+        if let oldestTimestamp = _transmissionOpportunityTimestamps.first {
+          let timeUntilExpiry = rateLimit - (now - oldestTimestamp)
+          _logger
+            .trace(
+              "\(self): rate limit reached, retrying in \(timeUntilExpiry)"
+            )
+          _jointimer?.start(interval: timeUntilExpiry)
+        }
+        return
+      }
     }
 
     // this will send a .tx/.txLA event to all attributes which will then make
@@ -272,13 +301,19 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       try await _apply(protocolEvent: .tx, eventSource: eventSource)
     }
 
-    try await _tx()
+    let didTransmit = try await _tx()
 
     // If events remain (e.g., arrived during TX processing or didn't fit in PDU),
     // request another TX opportunity. Note: isRunning returns false at this point
     // because _fire() cleared the task reference before calling this callback, but
     // applicant state transitions may have already scheduled a new timer via
     // _requestTxOpportunity(). Only reschedule if we have pending work.
+    if didTransmit, _type == .pointToPoint {
+      _transmissionOpportunityTimestamps.append(ContinuousClock.now)
+    }
+
+    // if events remain (e.g., arrived during TX processing or didn't fit in PDU),
+    // request another TX opportunity
     if !_enqueuedEvents.isEmpty {
       _scheduleTxOpportunity(eventSource: eventSource)
     }
