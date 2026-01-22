@@ -233,6 +233,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   }
 
   fileprivate func _requestTxOpportunity(eventSource: EventSource) {
+    _logger.trace("\(self): \(eventSource) requests TX opportunity")
+
     guard let jointimer = _jointimer, !jointimer.isRunning else { return }
     guard let controller else { return }
 
