@@ -414,26 +414,42 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   {
     guard !attributeEvents.isEmpty else { return [] }
 
+    // Helper function to trim trailing optional events and add chunk if non-empty
+    func finalizeChunk(_ chunk: inout [EnqueuedEvent<A>.AttributeEvent]) {
+      // Optional events at the end don't reduce chunk count, so omit them
+      while !chunk.isEmpty && chunk.last!.encodingOptional {
+        chunk.removeLast()
+      }
+      if !chunk.isEmpty {
+        chunks.append(chunk)
+        chunk = []
+      }
+    }
+
     var chunks: [[EnqueuedEvent<A>.AttributeEvent]] = []
     var currentChunk: [EnqueuedEvent<A>.AttributeEvent] = []
     var expectedIndex = attributeEvents[0].attributeValue.index
 
     for attributeEvent in attributeEvents {
       if attributeEvent.attributeValue.index == expectedIndex {
+        // Event is sequential with current chunk, include it for now
         currentChunk.append(attributeEvent)
         expectedIndex += 1
       } else {
-        if !currentChunk.isEmpty {
-          chunks.append(currentChunk)
+        // Event would start a new chunk - finish current chunk first
+        finalizeChunk(&currentChunk)
+
+        // Start new chunk with this event (if not optional)
+        // Optional events that would start a new chunk are skipped entirely
+        if !attributeEvent.encodingOptional {
+          currentChunk = [attributeEvent]
+          expectedIndex = attributeEvent.attributeValue.index + 1
         }
-        currentChunk = [attributeEvent]
-        expectedIndex = attributeEvent.attributeValue.index + 1
       }
     }
 
-    if !currentChunk.isEmpty {
-      chunks.append(currentChunk)
-    }
+    // Handle the last chunk
+    finalizeChunk(&currentChunk)
 
     return chunks
   }
