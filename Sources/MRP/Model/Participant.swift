@@ -839,7 +839,7 @@ public extension Participant {
   }
 
   func periodic() async throws {
-    _requestTxOpportunity(eventSource: .periodicTimer)
+    try await _apply(protocolEvent: .periodic, eventSource: .periodicTimer)
   }
 }
 
