@@ -118,7 +118,6 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   private var _enqueuedEvents = EnqueuedEvents()
   private var _leaveAll: LeaveAll!
   private var _jointimer: Timer?
-  private var _transmissionOpportunityTimestamps: [ContinuousClock.Instant] = []
   private nonisolated let _controller: Weak<MRPController<A.P>>
   private nonisolated let _application: Weak<A>
 
