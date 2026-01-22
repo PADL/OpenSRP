@@ -246,11 +246,12 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     case .Passive:
       try await _apply(protocolEvent: .tx, eventSource: eventSource)
     }
+
     let didTransmit = try await _tx()
 
     // Record transmission timestamp for rate limiting (point-to-point only)
     if didTransmit, _type == .pointToPoint {
-      _recordTransmission()
+      _transmissionOpportunityTimestamps.append(ContinuousClock.now)
     }
 
     // If events remain (e.g., arrived during TX processing or didn't fit in PDU),
@@ -258,18 +259,6 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     if !_enqueuedEvents.isEmpty {
       _requestTxOpportunity(eventSource: eventSource)
     }
-  }
-
-  private func _recordTransmission() {
-    guard let controller else { return }
-    let now = ContinuousClock.now
-    _transmissionOpportunityTimestamps.append(now)
-    let joinTime = controller.timerConfiguration.joinTime
-    let rateLimit = joinTime * 1.5
-    _logger
-      .trace(
-        "\(self): recorded transmission (\(_transmissionOpportunityTimestamps.count) in last \(rateLimit))"
-      )
   }
 
   fileprivate func _requestTxOpportunity(eventSource: EventSource) {
