@@ -182,7 +182,7 @@ private extension Applicant.State {
       }
     case .rIn:
       // Ignored (no transition) if operPointToPointMAC is FALSE
-      if self == .QA, flags.contains(.operPointToPointMAC) { self = .AA }
+      if self == .AA, flags.contains(.operPointToPointMAC) { self = .QA }
     case .rJoinMt:
       fallthrough
     case .rMt:
