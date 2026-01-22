@@ -931,38 +931,44 @@ final class MRPTests: XCTestCase {
     XCTAssertEqual(applicant.description, "VO")
 
     // Test Begin event
-    XCTAssertNil(applicant.action(for: .Begin, flags: normalFlags))
+    XCTAssertNil(applicant.action(for: .Begin, flags: normalFlags).0)
     XCTAssertEqual(applicant.description, "VO")
 
     // Test New event from VO -> VN
-    XCTAssertNil(applicant.action(for: .New, flags: normalFlags))
+    let (newAction, newTxOpp) = applicant.action(for: .New, flags: normalFlags)
+    XCTAssertNil(newAction)
+    XCTAssertTrue(newTxOpp) // Entered VN state
     XCTAssertEqual(applicant.description, "VN")
 
     // Test tx event from VN -> AN with sN action
-    let action1 = applicant.action(for: .tx, flags: normalFlags)
+    let (action1, txOpp1) = applicant.action(for: .tx, flags: normalFlags)
     XCTAssertEqual(action1, .sN)
+    XCTAssertTrue(txOpp1) // Entered AN state
     XCTAssertEqual(applicant.description, "AN")
 
     // Test tx event from AN -> QA with sN action
-    let action2 = applicant.action(for: .tx, flags: normalFlags)
+    let (action2, txOpp2) = applicant.action(for: .tx, flags: normalFlags)
     XCTAssertEqual(action2, .sN)
+    XCTAssertFalse(txOpp2) // QA is not in the list
     XCTAssertEqual(applicant.description, "QA")
 
     // Test rJoinIn event from QA (no transition with point-to-point)
-    XCTAssertNil(applicant.action(for: .rJoinIn, flags: pointToPointFlags))
+    XCTAssertNil(applicant.action(for: .rJoinIn, flags: pointToPointFlags).0)
     XCTAssertEqual(applicant.description, "QA")
 
     // Test rJoinIn event from QA -> QA (no transition without point-to-point, different from AA
     // case)
-    XCTAssertNil(applicant.action(for: .rJoinIn, flags: normalFlags))
+    XCTAssertNil(applicant.action(for: .rJoinIn, flags: normalFlags).0)
     XCTAssertEqual(applicant.description, "QA")
 
     // Test Leave event
-    XCTAssertNil(applicant.action(for: .Lv, flags: normalFlags))
+    let (lvAction, lvTxOpp) = applicant.action(for: .Lv, flags: normalFlags)
+    XCTAssertNil(lvAction)
+    XCTAssertTrue(lvTxOpp) // Entered LA state
     XCTAssertEqual(applicant.description, "LA")
 
     // Test tx event from LA -> VO with sL action
-    let action3 = applicant.action(for: .tx, flags: normalFlags)
+    let (action3, _) = applicant.action(for: .tx, flags: normalFlags)
     XCTAssertEqual(action3, .sL)
     XCTAssertEqual(applicant.description, "VO")
   }
@@ -972,24 +978,29 @@ final class MRPTests: XCTestCase {
     let normalFlags: StateMachineHandlerFlags = []
 
     // Start from VO
-    XCTAssertNil(applicant.action(for: .Begin, flags: normalFlags))
+    XCTAssertNil(applicant.action(for: .Begin, flags: normalFlags).0)
     XCTAssertEqual(applicant.description, "VO")
 
     // Test Join event from VO -> VP
-    XCTAssertNil(applicant.action(for: .Join, flags: normalFlags))
+    let (joinAction, joinTxOpp) = applicant.action(for: .Join, flags: normalFlags)
+    XCTAssertNil(joinAction)
+    XCTAssertTrue(joinTxOpp) // Entered VP state
     XCTAssertEqual(applicant.description, "VP")
 
     // Test tx event from VP -> AA with sJ action
-    let action = applicant.action(for: .tx, flags: normalFlags)
+    let (action, txOpp) = applicant.action(for: .tx, flags: normalFlags)
     XCTAssertEqual(action, .sJ)
+    XCTAssertTrue(txOpp) // Entered AA state
     XCTAssertEqual(applicant.description, "AA")
 
     // Test rJoinIn from AA -> QA
-    XCTAssertNil(applicant.action(for: .rJoinIn, flags: normalFlags))
+    XCTAssertNil(applicant.action(for: .rJoinIn, flags: normalFlags).0)
     XCTAssertEqual(applicant.description, "QA")
 
     // Test periodic from QA -> AA
-    XCTAssertNil(applicant.action(for: .periodic, flags: normalFlags))
+    let (periodicAction, periodicTxOpp) = applicant.action(for: .periodic, flags: normalFlags)
+    XCTAssertNil(periodicAction)
+    XCTAssertTrue(periodicTxOpp) // Entered AA state
     XCTAssertEqual(applicant.description, "AA")
   }
 
@@ -1130,12 +1141,14 @@ final class MRPTests: XCTestCase {
     XCTAssertEqual(applicant.description, "QA")
 
     // Test txLA event from QA -> QA with sJ action
-    let action1 = applicant.action(for: .txLA, flags: normalFlags)
+    let (action1, _) = applicant.action(for: .txLA, flags: normalFlags)
     XCTAssertEqual(action1, .sJ)
     XCTAssertEqual(applicant.description, "QA")
 
     // Test txLAF event from QA -> VP
-    XCTAssertNil(applicant.action(for: .txLAF, flags: normalFlags))
+    let (txLAFAction, txLAFTxOpp) = applicant.action(for: .txLAF, flags: normalFlags)
+    XCTAssertNil(txLAFAction)
+    XCTAssertTrue(txLAFTxOpp) // Entered VP state
     XCTAssertEqual(applicant.description, "VP")
   }
 
@@ -1199,7 +1212,7 @@ final class MRPTests: XCTestCase {
     let normalFlags: StateMachineHandlerFlags = []
 
     // Initialize all state machines
-    XCTAssertNil(applicant.action(for: .Begin, flags: normalFlags))
+    XCTAssertNil(applicant.action(for: .Begin, flags: normalFlags).0)
     XCTAssertNil(registrar.action(for: .Begin, flags: normalFlags))
     let (leaveAllAction, tx) = leaveAll.action(for: .Begin)
     XCTAssertEqual(leaveAllAction, .startLeaveAllTimer)
@@ -1210,11 +1223,13 @@ final class MRPTests: XCTestCase {
     XCTAssertEqual(leaveAll.state, .Passive)
 
     // Application wants to make a new declaration
-    XCTAssertNil(applicant.action(for: .New, flags: normalFlags))
+    let (newAction, newTxOpp) = applicant.action(for: .New, flags: normalFlags)
+    XCTAssertNil(newAction)
+    XCTAssertTrue(newTxOpp) // Entered VN state
     XCTAssertEqual(applicant.description, "VN")
 
     // Transmission opportunity arrives
-    let applicantAction = applicant.action(for: .tx, flags: normalFlags)
+    let (applicantAction, _) = applicant.action(for: .tx, flags: normalFlags)
     XCTAssertEqual(applicantAction, .sN)
     XCTAssertEqual(applicant.description, "AN")
 
@@ -1224,16 +1239,18 @@ final class MRPTests: XCTestCase {
     XCTAssertEqual(registrar.state, .IN)
 
     // Another transmission opportunity
-    let applicantAction2 = applicant.action(for: .tx, flags: normalFlags)
+    let (applicantAction2, _) = applicant.action(for: .tx, flags: normalFlags)
     XCTAssertEqual(applicantAction2, .sN)
     XCTAssertEqual(applicant.description, "QA")
 
     // Receive JoinIn from another participant
-    XCTAssertNil(applicant.action(for: .rJoinIn, flags: normalFlags))
+    XCTAssertNil(applicant.action(for: .rJoinIn, flags: normalFlags).0)
     XCTAssertEqual(applicant.description, "QA") // No change for QA on rJoinIn
 
     // Later, receive a Leave All
-    XCTAssertNil(applicant.action(for: .rLA, flags: normalFlags))
+    let (rLAAction, rLATxOpp) = applicant.action(for: .rLA, flags: normalFlags)
+    XCTAssertNil(rLAAction)
+    XCTAssertTrue(rLATxOpp) // Entered VP state (QA->VP on rLA)
     XCTAssertEqual(applicant.description, "VP") // QA -> VP on rLA
 
     XCTAssertNil(registrar.action(for: .rLA, flags: normalFlags))

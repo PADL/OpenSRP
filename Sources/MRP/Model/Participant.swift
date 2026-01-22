@@ -254,7 +254,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     }
   }
 
-  private func _requestTxOpportunity(eventSource: EventSource) {
+  fileprivate func _requestTxOpportunity(eventSource: EventSource) {
     guard let jointimer = _jointimer, !jointimer.isRunning else { return }
     guard let controller else { return }
     let joinTime = controller.timerConfiguration.joinTime
@@ -1053,8 +1053,16 @@ Sendable, Hashable, Equatable,
   ) throws {
     participant._logger.trace("\(context.participant): handling applicant \(context)")
 
-    guard let applicantAction = applicant.action(for: context.event, flags: context.smFlags)
-    else { return }
+    let (applicantAction, txOpportunity) = applicant.action(
+      for: context.event,
+      flags: context.smFlags
+    )
+
+    if txOpportunity, applicantAction == nil {
+      participant._requestTxOpportunity(eventSource: context.eventSource)
+    }
+
+    guard let applicantAction else { return }
 
     participant._logger
       .trace(

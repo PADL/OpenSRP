@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2024 PADL Software Pty Ltd
+// Copyright (c) 2024-2026 PADL Software Pty Ltd
 //
 // Licensed under the Apache License, Version 2.0 (the License);
 // you may not use this file except in compliance with the License.
@@ -99,7 +99,7 @@ final class Applicant: Sendable, CustomStringConvertible {
   // initializing _state to .VO is equivalent to handling the .Begin event
   private let _state = Mutex(State.VO)
 
-  func action(for event: ProtocolEvent, flags: StateMachineHandlerFlags) -> Action? {
+  func action(for event: ProtocolEvent, flags: StateMachineHandlerFlags) -> (Action?, Bool) {
     _state.withLock { $0.action(for: event, flags: flags) }
   }
 
@@ -116,8 +116,9 @@ private extension Applicant.State {
   mutating func action(
     for event: ProtocolEvent,
     flags: StateMachineHandlerFlags
-  ) -> Applicant.Action? {
+  ) -> (Applicant.Action?, Bool) {
     var action: Applicant.Action?
+    let oldState = self
 
     switch event {
     case .Begin:
@@ -316,6 +317,10 @@ private extension Applicant.State {
       break
     }
 
-    return action
+    let txOpportunity = (oldState != self) && // we actually transitioned state
+      (self == .VN || self == .AN || self == .AA || self == .LA || self == .VP || self == .AP ||
+        self == .LO)
+
+    return (action, txOpportunity)
   }
 }
