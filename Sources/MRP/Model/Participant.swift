@@ -153,6 +153,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
 
     _logger = controller.logger
     await _initTimers()
+    _logger.trace("\(self): initialized participant type \(_type)")
   }
 
   public nonisolated var description: String {
