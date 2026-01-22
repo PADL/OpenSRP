@@ -37,6 +37,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
   let logger: Logger
   var ports: Set<P> { Set(_ports.values) }
   let timerConfiguration: MRPTimerConfiguration
+  let forceFullParticipant: Bool
 
   private var _applications = [UInt16: any Application<P>]()
   private var _ports = [P.ID: P]()
@@ -54,7 +55,8 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
     logger: Logger,
     timerConfiguration: MRPTimerConfiguration = .init(),
     portExclusions: Set<String> = [],
-    restServerPort: UInt16? = nil
+    restServerPort: UInt16? = nil,
+    forceFullParticipant: Bool = false
   ) async throws {
     logger
       .debug(
@@ -63,6 +65,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
     self.bridge = bridge
     self.logger = logger
     self.timerConfiguration = timerConfiguration
+    self.forceFullParticipant = forceFullParticipant
     _rxPackets = try bridge.rxPackets
     _portExclusions = portExclusions
     #if canImport(FlyingFox)

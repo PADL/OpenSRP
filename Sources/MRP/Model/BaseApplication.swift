@@ -147,7 +147,8 @@ extension BaseApplication {
           controller: controller,
           application: self,
           port: port,
-          contextIdentifier: contextIdentifier
+          contextIdentifier: contextIdentifier,
+          type: controller.forceFullParticipant ? .full : nil
         )
         try add(participant: participant)
       }

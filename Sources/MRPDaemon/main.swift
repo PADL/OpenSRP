@@ -109,6 +109,9 @@ private final class MRPDaemon: AsyncParsableCommand {
   @Flag(name: .long, help: .hidden)
   var enableSRP: Bool = false
 
+  @Flag(name: .long, help: .hidden)
+  var forceFullParticipant: Bool = false
+
   @Option(name: .long, help: "PTP management client domain socket path")
   var pmcUdsPath: String? = nil
 
@@ -147,6 +150,7 @@ private final class MRPDaemon: AsyncParsableCommand {
     case enableMVRP
     case enableMSRP
     case enableSRP
+    case forceFullParticipant
     case pmcUdsPath
     case joinTime
     case leaveTime
@@ -186,7 +190,8 @@ private final class MRPDaemon: AsyncParsableCommand {
       logger: logger,
       timerConfiguration: timerConfiguration,
       portExclusions: Set(excludeIface),
-      restServerPort: restServerPort
+      restServerPort: restServerPort,
+      forceFullParticipant: forceFullParticipant
     )
     if enableSRP {
       enableMMRP = false
