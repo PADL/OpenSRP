@@ -1033,7 +1033,7 @@ Sendable, Hashable, Equatable,
         "\(context.participant): applicant action for event \(context.event): \(applicantAction)"
       )
 
-    var attributeEvent: AttributeEvent?
+    let attributeEvent: AttributeEvent
 
     switch applicantAction {
     case .sN:
@@ -1048,9 +1048,7 @@ Sendable, Hashable, Equatable,
       // starting a new one, makes for more optimal encoding; i.e.,
       // transmitting the value is not necessary for correct protocol
       // operation.
-      // TODO: the text is difficult to parse, are we implementing correctly?
-      guard let registrar else { break }
-      attributeEvent = (registrar.state == .IN) ? .JoinIn : .JoinMt
+      attributeEvent = (registrar?.state == .IN) ? .JoinIn : .JoinMt
     case .sL:
       fallthrough
     case .sL_:
@@ -1058,18 +1056,15 @@ Sendable, Hashable, Equatable,
     case .s:
       fallthrough
     case .s_:
-      guard let registrar else { break }
-      attributeEvent = (registrar.state == .IN) ? .In : .Mt
+      attributeEvent = (registrar?.state == .IN) ? .In : .Mt
     }
 
-    if let attributeEvent {
-      participant._txEnqueue(
-        attributeEvent: attributeEvent,
-        attributeValue: self,
-        encodingOptional: applicantAction.encodingOptional,
-        eventSource: context.eventSource
-      )
-    }
+    participant._txEnqueue(
+      attributeEvent: attributeEvent,
+      attributeValue: self,
+      encodingOptional: applicantAction.encodingOptional,
+      eventSource: context.eventSource
+    )
 
     counters.withLock { $0.count(context: context, attributeEvent: attributeEvent) }
   }
