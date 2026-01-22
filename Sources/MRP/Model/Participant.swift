@@ -453,7 +453,6 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     } else {
       _enqueuedEvents[event.attributeType] = [event]
     }
-    _requestTxOpportunity(eventSource: eventSource)
   }
 
   fileprivate func _txEnqueue(
@@ -1022,53 +1021,51 @@ Sendable, Hashable, Equatable,
       flags: context.smFlags
     )
 
-    guard let applicantAction else {
-      if txOpportunity {
-        participant._requestTxOpportunity(eventSource: context.eventSource)
+    if let applicantAction {
+      participant._logger
+        .trace(
+          "\(context.participant): applicant action for event \(context.event): \(applicantAction)"
+        )
+
+      let attributeEvent: AttributeEvent
+
+      switch applicantAction {
+      case .sN:
+        // The AttributeEvent value New is encoded in the Vector as specified in
+        // 10.7.6.1.
+        attributeEvent = .New
+      case .sJ:
+        fallthrough
+      case .sJ_:
+        // The [sJ] variant indicates that the action is only necessary in cases
+        // where transmitting the value, rather than terminating a vector and
+        // starting a new one, makes for more optimal encoding; i.e.,
+        // transmitting the value is not necessary for correct protocol
+        // operation.
+        attributeEvent = (registrar?.state == .IN) ? .JoinIn : .JoinMt
+      case .sL:
+        fallthrough
+      case .sL_:
+        attributeEvent = .Lv
+      case .s:
+        fallthrough
+      case .s_:
+        attributeEvent = (registrar?.state == .IN) ? .In : .Mt
       }
 
-      return
-    }
-
-    participant._logger
-      .trace(
-        "\(context.participant): applicant action for event \(context.event): \(applicantAction)"
+      participant._txEnqueue(
+        attributeEvent: attributeEvent,
+        attributeValue: self,
+        encodingOptional: applicantAction.encodingOptional,
+        eventSource: context.eventSource
       )
 
-    let attributeEvent: AttributeEvent
-
-    switch applicantAction {
-    case .sN:
-      // The AttributeEvent value New is encoded in the Vector as specified in
-      // 10.7.6.1.
-      attributeEvent = .New
-    case .sJ:
-      fallthrough
-    case .sJ_:
-      // The [sJ] variant indicates that the action is only necessary in cases
-      // where transmitting the value, rather than terminating a vector and
-      // starting a new one, makes for more optimal encoding; i.e.,
-      // transmitting the value is not necessary for correct protocol
-      // operation.
-      attributeEvent = (registrar?.state == .IN) ? .JoinIn : .JoinMt
-    case .sL:
-      fallthrough
-    case .sL_:
-      attributeEvent = .Lv
-    case .s:
-      fallthrough
-    case .s_:
-      attributeEvent = (registrar?.state == .IN) ? .In : .Mt
+      counters.withLock { $0.count(context: context, attributeEvent: attributeEvent) }
     }
 
-    participant._txEnqueue(
-      attributeEvent: attributeEvent,
-      attributeValue: self,
-      encodingOptional: applicantAction.encodingOptional,
-      eventSource: context.eventSource
-    )
-
-    counters.withLock { $0.count(context: context, attributeEvent: attributeEvent) }
+    if txOpportunity {
+      participant._requestTxOpportunity(eventSource: context.eventSource)
+    }
   }
 
   private func _handleRegistrar(
