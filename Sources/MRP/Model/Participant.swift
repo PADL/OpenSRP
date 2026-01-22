@@ -165,7 +165,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     // instance of this timer is required on a per-Port, per-MRP Participant
     // basis. The value of JoinTime used to initialize this timer is determined
     // in accordance with 10.7.11.
-    _jointimer = Timer(label: "jointimer", onExpiry: _onJoinTimerExpired)
+    _jointimer = Timer(label: "jointimer", onExpiry: _onTxOpportunity)
 
     // The Leave All Period Timer, leavealltimer, controls the frequency with
     // which the LeaveAll state machine generates LeaveAll PDUs. The timer is
@@ -244,7 +244,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   }
 
   @Sendable
-  private func _onJoinTimerExpired() async throws {
+  private func _onTxOpportunity() async throws {
     let eventSource = EventSource.joinTimer
 
     // this will send a .tx/.txLA event to all attributes which will then make
