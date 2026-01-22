@@ -117,7 +117,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   private var _attributes = [AttributeType: Set<_AttributeValue<A>>]()
   private var _enqueuedEvents = EnqueuedEvents()
   private var _leaveAll: LeaveAll!
-  private var _jointimer: Timer?
+  private var _jointimer: Timer!
   private nonisolated let _controller: Weak<MRPController<A.P>>
   private nonisolated let _application: Weak<A>
 
@@ -235,12 +235,12 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   fileprivate func _requestTxOpportunity(eventSource: EventSource) {
     _logger.trace("\(self): \(eventSource) requests TX opportunity")
 
-    guard let jointimer = _jointimer, !jointimer.isRunning else { return }
+    guard !_jointimer.isRunning else { return }
     guard let controller else { return }
 
     let joinTime = controller.timerConfiguration.joinTime
     let interval = Duration.nanoseconds(Int64.random(in: 0..<joinTime.nanoseconds))
-    jointimer.start(interval: interval)
+    _jointimer.start(interval: interval)
   }
 
   @Sendable
