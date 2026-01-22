@@ -207,6 +207,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     protocolEvent event: ProtocolEvent,
     eventSource: EventSource
   ) async throws {
+    _logger.trace("\(self): apply protocolEvent \(event), eventSource: \(eventSource)")
     try await _apply { attributeValue in
       try await _handleAttributeValue(
         attributeValue,
@@ -772,6 +773,7 @@ public extension Participant {
   }
 
   func periodic() async throws {
+    _logger.trace("\(self): running periodic")
     try await _apply(protocolEvent: .periodic, eventSource: .periodicTimer)
     // timer is restarted by the caller
   }
