@@ -283,8 +283,8 @@ private extension Applicant.State {
           action = .s_
         } else {
           action = .s
-          self = .VO
         }
+        self = .VO
       }
     case .txLAF:
       switch self {
