@@ -41,7 +41,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
 
   private var _applications = [UInt16: any Application<P>]()
   private var _ports = [P.ID: P]()
-  private var _periodicTimers = [P.ID: Timer]()
+  private var _periodicTimer: Timer?
   private var _administrativeControl = AdministrativeControl.normalParticipant
   private var _taskGroup: ThrowingTaskGroup<(), Error>?
   private let _rxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)>
@@ -241,7 +241,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
   private func _didAdd(port: P) async throws {
     logger.debug("added port \(port.id): \(port)")
 
-    if timerConfiguration.periodicTime != .zero { _startPeriodicTimer(port: port) }
+    if timerConfiguration.periodicTime != .zero { _startPeriodicTimer() }
 
     try await _applyContextIdentifierChanges(beforeAddingOrUpdating: port, isNewPort: true)
     _ports[port.id] = port
@@ -250,10 +250,10 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
   private func _didRemove(port: P) throws {
     logger.debug("removed port \(port.id): \(port)")
 
-    if timerConfiguration.periodicTime != .zero { _stopPeriodicTimer(port: port) }
-
     try _applyContextIdentifierChanges(beforeRemoving: port)
     _ports[port.id] = nil
+
+    if timerConfiguration.periodicTime != .zero { _stopPeriodicTimer() }
   }
 
   private func _didUpdate(port: P) async throws {
@@ -305,12 +305,12 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
 
   func periodicEnabled() {
     logger.trace("enabled periodic timer")
-    _periodicTimers.forEach { $0.value.start(interval: timerConfiguration.periodicTime) }
+    _periodicTimer?.start(interval: timerConfiguration.periodicTime)
   }
 
   func periodicDisabled() {
     logger.trace("disabled periodic timer")
-    _periodicTimers.forEach { $0.value.stop() }
+    _periodicTimer?.stop()
   }
 
   typealias MADApplyFunction = (any Application<P>) throws -> ()
@@ -409,31 +409,30 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
     }
   }
 
-  private func _startPeriodicTimer(port: P) {
+  private func _startPeriodicTimer() {
     precondition(timerConfiguration.periodicTime != .zero)
-    logger.debug("controller starting periodic timer on port \(port)")
-    var periodicTimer = _periodicTimers[port.id]
-    if periodicTimer == nil {
-      periodicTimer = Timer(label: "periodictimer") { [weak self] in
-        guard let self else { return }
-        try await _apply { @Sendable application in
-          try await application.periodic()
-        }
-        await _restartPeriodicTimer(port: port)
+    guard _periodicTimer == nil else { return }
+    logger.debug("controller starting periodic timer")
+    _periodicTimer = Timer(label: "periodictimer") { [weak self] in
+      guard let self else { return }
+      try await _apply { @Sendable application in
+        try await application.periodic()
       }
-      _periodicTimers[port.id] = periodicTimer
+      await _restartPeriodicTimer()
     }
-    periodicTimer!.start(interval: timerConfiguration.periodicTime)
+    _periodicTimer!.start(interval: timerConfiguration.periodicTime)
   }
 
-  private func _restartPeriodicTimer(port: P) {
-    _periodicTimers[port.id]?.start(interval: timerConfiguration.periodicTime)
+  private func _restartPeriodicTimer() {
+    _periodicTimer?.start(interval: timerConfiguration.periodicTime)
   }
 
-  private func _stopPeriodicTimer(port: P) {
+  private func _stopPeriodicTimer() {
     precondition(timerConfiguration.periodicTime != .zero)
-    logger.debug("controller stopping periodic timer on port \(port)")
-    _periodicTimers[port.id]?.stop()
+    guard _ports.isEmpty else { return }
+    logger.debug("controller stopping periodic timer")
+    _periodicTimer?.stop()
+    _periodicTimer = nil
   }
 
   public func application<T: Application>(for etherType: UInt16) throws -> T {
