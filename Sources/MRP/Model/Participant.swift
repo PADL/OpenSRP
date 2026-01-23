@@ -338,19 +338,6 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     )
   }
 
-  private func _leaveAll(
-    eventSource: EventSource,
-    attributeType leaveAllAttributeType: AttributeType
-  ) async throws {
-    try await _apply(attributeType: leaveAllAttributeType) { attributeValue in
-      try await _handleAttributeValue(
-        attributeValue,
-        protocolEvent: .rLA,
-        eventSource: eventSource
-      )
-    }
-  }
-
   private func _chunkAttributeEvents(_ attributeEvents: [EnqueuedEvent<A>.AttributeEvent])
     -> [[EnqueuedEvent<A>.AttributeEvent]]
   {
@@ -529,7 +516,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     for vectorAttribute in message.attributeList {
       // 10.6 Protocol operation: process LeaveAll first.
       if vectorAttribute.leaveAllEvent == .LeaveAll {
-        try await _leaveAll(eventSource: eventSource, attributeType: message.attributeType)
+        try await _apply(protocolEvent: .rLA, eventSource: eventSource)
         leaveAll = true
       }
 
