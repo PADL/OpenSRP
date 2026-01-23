@@ -2081,6 +2081,91 @@ final class MRPTests: XCTestCase {
     XCTAssertEqual(padded.count, 5)
     XCTAssertEqual(padded, [1, 2, 255, 255, 255])
   }
+
+  func testTimerReschedulingFromCallback() async throws {
+    // Test that a timer can reschedule itself from within its own callback
+    // without losing the task reference. This verifies the fix where _task
+    // is cleared before calling the callback, allowing isRunning to return
+    // false and permitting new timer starts.
+
+    actor CallbackTracker {
+      var callCount = 0
+      var shouldReschedule = false
+      var timer: MRP.Timer?
+
+      func recordCall() {
+        callCount += 1
+      }
+
+      func getCallCount() -> Int {
+        callCount
+      }
+
+      func setShouldReschedule(_ value: Bool) {
+        shouldReschedule = value
+      }
+
+      func getShouldReschedule() -> Bool {
+        shouldReschedule
+      }
+
+      func setTimer(_ t: MRP.Timer) {
+        timer = t
+      }
+
+      func reschedule() {
+        timer?.start(interval: Duration.milliseconds(10))
+      }
+
+      func isTimerRunning() -> Bool {
+        timer?.isRunning ?? false
+      }
+
+      func stopTimer() {
+        timer?.stop()
+      }
+    }
+
+    let tracker = CallbackTracker()
+
+    let timer = MRP.Timer(label: "test") {
+      await tracker.recordCall()
+
+      // Try to reschedule from within the callback
+      if await tracker.getShouldReschedule() {
+        await tracker.setShouldReschedule(false)
+        await tracker.reschedule()
+      }
+    }
+
+    await tracker.setTimer(timer)
+
+    // Enable rescheduling
+    await tracker.setShouldReschedule(true)
+
+    // Start the timer
+    timer.start(interval: Duration.milliseconds(10))
+
+    // Wait for first callback
+    try await Task.sleep(for: Duration.milliseconds(50))
+
+    // Should have been called twice: once from initial start, once from reschedule
+    let count = await tracker.getCallCount()
+    XCTAssertGreaterThanOrEqual(
+      count,
+      2,
+      "Timer should have fired at least twice (initial + rescheduled)"
+    )
+
+    // Verify isRunning works correctly
+    let isRunning = await tracker.isTimerRunning()
+    XCTAssertFalse(
+      isRunning,
+      "Timer should not be running after callback completes without rescheduling"
+    )
+
+    await tracker.stopTimer()
+  }
 }
 
 private final class AttributeValue<A: Application>: @unchecked Sendable, Equatable {
