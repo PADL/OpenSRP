@@ -267,8 +267,10 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     try await _tx()
 
     // If events remain (e.g., arrived during TX processing or didn't fit in PDU),
-    // request another TX opportunity. Use _scheduleTxOpportunity directly to bypass
-    // the isRunning check, since we're still inside the timer callback.
+    // request another TX opportunity. Note: isRunning returns false at this point
+    // because _fire() cleared the task reference before calling this callback, but
+    // applicant state transitions may have already scheduled a new timer via
+    // _requestTxOpportunity(). Only reschedule if we have pending work.
     if !_enqueuedEvents.isEmpty {
       _scheduleTxOpportunity(eventSource: eventSource)
     }

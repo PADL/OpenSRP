@@ -65,9 +65,12 @@ final class Timer: CustomStringConvertible, Sendable {
   }
 
   private func _fire(interval: Duration) async throws {
-    try await _onExpiry()
-    // don't need to cancel task because we are about to return
+    // Clear task reference before calling callback, so isRunning returns false
+    // during the callback execution
     _task.withLock { $0 = nil }
+
+    // Now call the callback - if it calls start(), a new task will be created
+    try await _onExpiry()
   }
 
   func stop() {
