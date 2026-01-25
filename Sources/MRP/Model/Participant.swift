@@ -220,7 +220,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   @discardableResult
   private func _tx() async throws -> Bool {
     guard let application, let controller else { throw MRPError.internalError }
-    guard let pdu = try await _txDequeue() else { return false }
+    guard let pdu = try _txDequeue() else { return false }
     _debugLogPdu(pdu, direction: .tx)
     try await controller.bridge.tx(
       pdu: pdu,
@@ -499,7 +499,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     }
   }
 
-  private func _txDequeue() async throws -> MRPDU? {
+  private func _txDequeue() throws -> MRPDU? {
     guard let application else { throw MRPError.internalError }
     let enqueuedMessages = try _packMessages(with: _enqueuedEvents)
     _enqueuedEvents.removeAll()
