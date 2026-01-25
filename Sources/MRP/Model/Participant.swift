@@ -118,6 +118,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   private var _enqueuedEvents = EnqueuedEvents()
   private var _leaveAll: LeaveAll!
   private var _jointimer: Timer!
+  private var _rxInProgress = false
   private nonisolated let _controller: Weak<MRPController<A.P>>
   private nonisolated let _application: Weak<A>
 
@@ -250,6 +251,13 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   @Sendable
   private func _onTxOpportunity() async throws {
     let eventSource = EventSource.joinTimer
+
+    // Suppress TX opportunities while RX is processing to prevent interleaving
+    if _rxInProgress {
+      await Task.yield()
+      _scheduleTxOpportunity(eventSource: eventSource)
+      return
+    }
 
     // this will send a .tx/.txLA event to all attributes which will then make
     // the appropriate state transitions, potentially triggering the encoding
@@ -562,6 +570,9 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
 
   func rx(pdu: MRPDU, sourceMacAddress: EUI48) async throws {
     _debugLogPdu(pdu, direction: .rx)
+    _rxInProgress = true
+    defer { _rxInProgress = false }
+
     var leaveAll = false
     let eventSource: EventSource = _isEqualMacAddress(
       sourceMacAddress,
