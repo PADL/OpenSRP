@@ -90,6 +90,8 @@ public protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
     attributeValue: some Value,
     eventSource: EventSource
   ) async throws
+
+  func periodic(for contextIdentifier: MAPContextIdentifier?) async throws
 }
 
 public extension Application {
@@ -105,12 +107,6 @@ public extension Application {
 extension Application {
   typealias ParticipantSpecificApplyFunction<T> = (Participant<Self>) -> (T) throws -> ()
   typealias AsyncParticipantSpecificApplyFunction<T> = (Participant<Self>) -> (T) async throws -> ()
-
-  func periodic(for contextIdentifier: MAPContextIdentifier? = nil) async throws {
-    try await apply(for: contextIdentifier) { participant in
-      try await participant.periodic()
-    }
-  }
 
   private func apply<T>(
     for contextIdentifier: MAPContextIdentifier,

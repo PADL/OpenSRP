@@ -30,7 +30,7 @@
 * TODO: check MSRP attributes propagated within 1.5s
 * TODO: check always declare SR A/B domain
 * DONE: include VLAN tag in bandwidth calculation
-* TODO: check periodic state machine disabled per 5.4.4 in 802.1Q
+* bd82611a: check periodic state machine disabled per 5.4.4 in 802.1Q
 * TODO: proxy MSRP Talker leave requests from listener to talker
 
 ## 9.2 Instantaneous transition from IN to MT
