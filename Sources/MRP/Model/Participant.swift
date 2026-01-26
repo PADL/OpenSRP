@@ -1056,9 +1056,10 @@ Sendable, Hashable, Equatable,
   ) throws {
     participant._logger.trace("\(context.participant): handling applicant \(context)")
 
+    let isRegistered = registrar?.state.isRegistered ?? false
     let (applicantAction, txOpportunity) = applicant.action(
       for: context.event,
-      flags: context.smFlags
+      flags: context.smFlags.union(isRegistered ? .isRegistered : [])
     )
 
     if let applicantAction {

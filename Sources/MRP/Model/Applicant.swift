@@ -217,7 +217,14 @@ private extension Applicant.State {
       case .AO:
         fallthrough
       case .QO:
-        self = flags.contains(.applicantOnlyParticipant) ? .VO : .LO
+        if event == .rLA, !flags.contains(.isRegistered) {
+          // Avnu ProAV Bridge specification 8.3: ignore state transition on
+          // rLA! event if registrar state is MT and applicant state VO, AO, QO
+        } else if flags.contains(.applicantOnlyParticipant) {
+          self = .VO
+        } else {
+          self = .LO
+        }
       case .AP:
         fallthrough
       case .QP:
@@ -240,7 +247,7 @@ private extension Applicant.State {
       switch self {
       case .VO:
         action = .s_
-        if event == .txLA { self = .LO }
+        if event == .txLA, flags.contains(.isRegistered) { self = .LO }
       case .VP:
         action = event == .txLA ? .s : .sJ
         self = .AA
@@ -258,7 +265,7 @@ private extension Applicant.State {
       case .LA:
         if event == .txLA {
           action = .s_
-          self = .LO
+          if flags.contains(.isRegistered) { self = .LO }
         } else {
           action = .sL
           self = .VO
@@ -267,7 +274,7 @@ private extension Applicant.State {
         fallthrough
       case .QO:
         action = .s_
-        if event == .txLA { self = .LO }
+        if event == .txLA, flags.contains(.isRegistered) { self = .LO }
       case .AP:
         action = .sJ
         self = .QA
@@ -288,8 +295,6 @@ private extension Applicant.State {
       }
     case .txLAF:
       switch self {
-      case .VO:
-        self = .LO
       case .VP:
         self = .VP
       case .VN:
@@ -301,11 +306,13 @@ private extension Applicant.State {
       case .QA:
         self = .VP
       case .LA:
+        self = .LO
+      case .VO:
         fallthrough
       case .AO:
         fallthrough
       case .QO:
-        self = .LO
+        if flags.contains(.isRegistered) { self = .LO }
       case .AP:
         fallthrough
       case .QP:

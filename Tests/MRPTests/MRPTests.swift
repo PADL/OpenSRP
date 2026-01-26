@@ -2166,6 +2166,320 @@ final class MRPTests: XCTestCase {
 
     await tracker.stopTimer()
   }
+
+  // MARK: - 802.1Q Table 10-3 Registrar State Tests
+
+  func testApplicantLOSuppressionWhenUnregistered_rLA() {
+    // Test 802.1Q Table 10-3: When registrar state is MT (unregistered),
+    // LO transition should be suppressed for VO/AO/QO states on rLA! event
+    let applicant = Applicant()
+    let unregisteredFlags: StateMachineHandlerFlags = [] // No .isRegistered flag
+
+    // Test VO state with rLA! when unregistered
+    XCTAssertEqual(applicant.description, "VO")
+    let (action1, _) = applicant.action(for: .rLA, flags: unregisteredFlags)
+    XCTAssertNil(action1)
+    XCTAssertEqual(applicant.description, "VO", "VO should stay in VO on rLA! when unregistered")
+
+    // Set up to AO state: VO -> rJoinIn -> AO
+    _ = applicant.action(for: .rJoinIn, flags: unregisteredFlags) // VO -> AO
+    XCTAssertEqual(applicant.description, "AO")
+
+    // Test AO state with rLA! when unregistered
+    let (action2, _) = applicant.action(for: .rLA, flags: unregisteredFlags)
+    XCTAssertNil(action2)
+    XCTAssertEqual(applicant.description, "AO", "AO should stay in AO on rLA! when unregistered")
+
+    // Set up to QO state: AO -> rJoinIn -> QO
+    _ = applicant.action(for: .rJoinIn, flags: unregisteredFlags) // AO -> QO
+    XCTAssertEqual(applicant.description, "QO")
+
+    // Test QO state with rLA! when unregistered
+    let (action3, _) = applicant.action(for: .rLA, flags: unregisteredFlags)
+    XCTAssertNil(action3)
+    XCTAssertEqual(applicant.description, "QO", "QO should stay in QO on rLA! when unregistered")
+  }
+
+  func testApplicantLOTransitionWhenRegistered_rLA() {
+    // Test that when registrar is registered (IN or LV state),
+    // original behavior is preserved: VO/AO/QO -> LO on rLA!
+    let applicant = Applicant()
+    let registeredFlags: StateMachineHandlerFlags = [.isRegistered]
+
+    // Test VO state with rLA! when registered
+    XCTAssertEqual(applicant.description, "VO")
+    let (action1, txOpp1) = applicant.action(for: .rLA, flags: registeredFlags)
+    XCTAssertNil(action1)
+    XCTAssertTrue(txOpp1)
+    XCTAssertEqual(
+      applicant.description,
+      "LO",
+      "VO should transition to LO on rLA! when registered"
+    )
+
+    // Reset and set up to AO state
+    let applicant2 = Applicant()
+    _ = applicant2.action(for: .rJoinIn, flags: registeredFlags) // VO -> AO
+    XCTAssertEqual(applicant2.description, "AO")
+
+    // Test AO state with rLA! when registered
+    let (action2, txOpp2) = applicant2.action(for: .rLA, flags: registeredFlags)
+    XCTAssertNil(action2)
+    XCTAssertTrue(txOpp2)
+    XCTAssertEqual(
+      applicant2.description,
+      "LO",
+      "AO should transition to LO on rLA! when registered"
+    )
+
+    // Reset and set up to QO state
+    let applicant3 = Applicant()
+    _ = applicant3.action(for: .rJoinIn, flags: registeredFlags) // VO -> AO
+    _ = applicant3.action(for: .rJoinIn, flags: registeredFlags) // AO -> QO
+    XCTAssertEqual(applicant3.description, "QO")
+
+    // Test QO state with rLA! when registered
+    let (action3, txOpp3) = applicant3.action(for: .rLA, flags: registeredFlags)
+    XCTAssertNil(action3)
+    XCTAssertTrue(txOpp3)
+    XCTAssertEqual(
+      applicant3.description,
+      "LO",
+      "QO should transition to LO on rLA! when registered"
+    )
+  }
+
+  func testApplicantLOSuppressionWhenUnregistered_txLA() {
+    // Test 802.1Q Table 10-3: When registrar state is MT (unregistered),
+    // LO transition should be suppressed for VO/AO/QO states on txLA! event
+    let applicant = Applicant()
+    let unregisteredFlags: StateMachineHandlerFlags = []
+
+    // Test VO state with txLA! when unregistered
+    XCTAssertEqual(applicant.description, "VO")
+    let (action1, _) = applicant.action(for: .txLA, flags: unregisteredFlags)
+    XCTAssertEqual(action1, .s_)
+    XCTAssertEqual(applicant.description, "VO", "VO should stay in VO on txLA! when unregistered")
+
+    // Set up to AO state
+    _ = applicant.action(for: .rJoinIn, flags: unregisteredFlags) // VO -> AO
+    XCTAssertEqual(applicant.description, "AO")
+
+    // Test AO state with txLA! when unregistered
+    let (action2, _) = applicant.action(for: .txLA, flags: unregisteredFlags)
+    XCTAssertEqual(action2, .s_)
+    XCTAssertEqual(applicant.description, "AO", "AO should stay in AO on txLA! when unregistered")
+
+    // Set up to QO state
+    _ = applicant.action(for: .rJoinIn, flags: unregisteredFlags) // AO -> QO
+    XCTAssertEqual(applicant.description, "QO")
+
+    // Test QO state with txLA! when unregistered
+    let (action3, _) = applicant.action(for: .txLA, flags: unregisteredFlags)
+    XCTAssertEqual(action3, .s_)
+    XCTAssertEqual(applicant.description, "QO", "QO should stay in QO on txLA! when unregistered")
+  }
+
+  func testApplicantLOTransitionWhenRegistered_txLA() {
+    // Test that when registrar is registered, VO/AO/QO -> LO on txLA!
+    let unregisteredFlags: StateMachineHandlerFlags = []
+    let registeredFlags: StateMachineHandlerFlags = [.isRegistered]
+
+    // Test VO state with txLA! when registered
+    let applicant1 = Applicant()
+    XCTAssertEqual(applicant1.description, "VO")
+    let (action1, _) = applicant1.action(for: .txLA, flags: registeredFlags)
+    XCTAssertEqual(action1, .s_)
+    XCTAssertEqual(
+      applicant1.description,
+      "LO",
+      "VO should transition to LO on txLA! when registered"
+    )
+
+    // Test AO state with txLA! when registered
+    let applicant2 = Applicant()
+    _ = applicant2.action(for: .rJoinIn, flags: unregisteredFlags) // VO -> AO
+    XCTAssertEqual(applicant2.description, "AO")
+
+    let (action2, _) = applicant2.action(for: .txLA, flags: registeredFlags)
+    XCTAssertEqual(action2, .s_)
+    XCTAssertEqual(
+      applicant2.description,
+      "LO",
+      "AO should transition to LO on txLA! when registered"
+    )
+
+    // Test QO state with txLA! when registered
+    let applicant3 = Applicant()
+    _ = applicant3.action(for: .rJoinIn, flags: unregisteredFlags) // VO -> AO
+    _ = applicant3.action(for: .rJoinIn, flags: unregisteredFlags) // AO -> QO
+    XCTAssertEqual(applicant3.description, "QO")
+
+    let (action3, _) = applicant3.action(for: .txLA, flags: registeredFlags)
+    XCTAssertEqual(action3, .s_)
+    XCTAssertEqual(
+      applicant3.description,
+      "LO",
+      "QO should transition to LO on txLA! when registered"
+    )
+  }
+
+  func testApplicantLOSuppressionWhenUnregistered_txLAF() {
+    // Test 802.1Q Table 10-3: When registrar state is MT (unregistered),
+    // LO transition should be suppressed for VO/AO/QO states on txLAF! event
+    let unregisteredFlags: StateMachineHandlerFlags = []
+
+    // Test VO state with txLAF! when unregistered
+    let applicant1 = Applicant()
+    XCTAssertEqual(applicant1.description, "VO")
+    let (action1, txOpp1) = applicant1.action(for: .txLAF, flags: unregisteredFlags)
+    XCTAssertNil(action1)
+    XCTAssertFalse(txOpp1)
+    XCTAssertEqual(applicant1.description, "VO", "VO should stay in VO on txLAF! when unregistered")
+
+    // Test AO state with txLAF! when unregistered
+    let applicant2 = Applicant()
+    _ = applicant2.action(for: .rJoinIn, flags: unregisteredFlags) // VO -> AO
+    XCTAssertEqual(applicant2.description, "AO")
+
+    let (action2, txOpp2) = applicant2.action(for: .txLAF, flags: unregisteredFlags)
+    XCTAssertNil(action2)
+    XCTAssertFalse(txOpp2)
+    XCTAssertEqual(applicant2.description, "AO", "AO should stay in AO on txLAF! when unregistered")
+
+    // Test QO state with txLAF! when unregistered
+    let applicant3 = Applicant()
+    _ = applicant3.action(for: .rJoinIn, flags: unregisteredFlags) // VO -> AO
+    _ = applicant3.action(for: .rJoinIn, flags: unregisteredFlags) // AO -> QO
+    XCTAssertEqual(applicant3.description, "QO")
+
+    let (action3, txOpp3) = applicant3.action(for: .txLAF, flags: unregisteredFlags)
+    XCTAssertNil(action3)
+    XCTAssertFalse(txOpp3)
+    XCTAssertEqual(applicant3.description, "QO", "QO should stay in QO on txLAF! when unregistered")
+  }
+
+  func testApplicantLOTransitionWhenRegistered_txLAF() {
+    // Test that when registrar is registered, VO/AO/QO -> LO on txLAF!
+    let unregisteredFlags: StateMachineHandlerFlags = []
+    let registeredFlags: StateMachineHandlerFlags = [.isRegistered]
+
+    // Test VO state with txLAF! when registered
+    let applicant1 = Applicant()
+    XCTAssertEqual(applicant1.description, "VO")
+    let (action1, txOpp1) = applicant1.action(for: .txLAF, flags: registeredFlags)
+    XCTAssertNil(action1)
+    XCTAssertTrue(txOpp1)
+    XCTAssertEqual(
+      applicant1.description,
+      "LO",
+      "VO should transition to LO on txLAF! when registered"
+    )
+
+    // Test AO state with txLAF! when registered
+    let applicant2 = Applicant()
+    _ = applicant2.action(for: .rJoinIn, flags: unregisteredFlags) // VO -> AO
+    XCTAssertEqual(applicant2.description, "AO")
+
+    let (action2, txOpp2) = applicant2.action(for: .txLAF, flags: registeredFlags)
+    XCTAssertNil(action2)
+    XCTAssertTrue(txOpp2)
+    XCTAssertEqual(
+      applicant2.description,
+      "LO",
+      "AO should transition to LO on txLAF! when registered"
+    )
+
+    // Test QO state with txLAF! when registered
+    let applicant3 = Applicant()
+    _ = applicant3.action(for: .rJoinIn, flags: unregisteredFlags) // VO -> AO
+    _ = applicant3.action(for: .rJoinIn, flags: unregisteredFlags) // AO -> QO
+    XCTAssertEqual(applicant3.description, "QO")
+
+    let (action3, txOpp3) = applicant3.action(for: .txLAF, flags: registeredFlags)
+    XCTAssertNil(action3)
+    XCTAssertTrue(txOpp3)
+    XCTAssertEqual(
+      applicant3.description,
+      "LO",
+      "QO should transition to LO on txLAF! when registered"
+    )
+  }
+
+  func testApplicantLA_txLAF_AlwaysTransitionsToLO() {
+    // Test that LA state always transitions to LO on txLAF! regardless of registrar state
+    // (LA is not in the spec's list of states to suppress)
+    let unregisteredFlags: StateMachineHandlerFlags = []
+    let registeredFlags: StateMachineHandlerFlags = [.isRegistered]
+
+    // Test LA with txLAF! when unregistered
+    let applicant1 = Applicant()
+    _ = applicant1.action(for: .New, flags: unregisteredFlags) // VO -> VN
+    _ = applicant1.action(for: .tx, flags: unregisteredFlags) // VN -> AN
+    _ = applicant1.action(for: .tx, flags: unregisteredFlags) // AN -> QA
+    _ = applicant1.action(for: .Lv, flags: unregisteredFlags) // QA -> LA
+    XCTAssertEqual(applicant1.description, "LA")
+
+    let (action1, txOpp1) = applicant1.action(for: .txLAF, flags: unregisteredFlags)
+    XCTAssertNil(action1)
+    XCTAssertTrue(txOpp1)
+    XCTAssertEqual(
+      applicant1.description,
+      "LO",
+      "LA should transition to LO on txLAF! even when unregistered"
+    )
+
+    // Test LA with txLAF! when registered
+    let applicant2 = Applicant()
+    _ = applicant2.action(for: .New, flags: registeredFlags) // VO -> VN
+    _ = applicant2.action(for: .tx, flags: registeredFlags) // VN -> AN
+    _ = applicant2.action(for: .tx, flags: registeredFlags) // AN -> QA
+    _ = applicant2.action(for: .Lv, flags: registeredFlags) // QA -> LA
+    XCTAssertEqual(applicant2.description, "LA")
+
+    let (action2, txOpp2) = applicant2.action(for: .txLAF, flags: registeredFlags)
+    XCTAssertNil(action2)
+    XCTAssertTrue(txOpp2)
+    XCTAssertEqual(
+      applicant2.description,
+      "LO",
+      "LA should transition to LO on txLAF! when registered"
+    )
+  }
+
+  func testApplicantLA_txLA_TransitionDependsOnRegistrarState() {
+    // Test that LA state on txLA! transitions based on registrar state
+    let unregisteredFlags: StateMachineHandlerFlags = []
+    let registeredFlags: StateMachineHandlerFlags = [.isRegistered]
+
+    // Test LA with txLA! when unregistered - should stay in LA
+    let applicant1 = Applicant()
+    _ = applicant1.action(for: .New, flags: unregisteredFlags) // VO -> VN
+    _ = applicant1.action(for: .tx, flags: unregisteredFlags) // VN -> AN
+    _ = applicant1.action(for: .tx, flags: unregisteredFlags) // AN -> QA
+    _ = applicant1.action(for: .Lv, flags: unregisteredFlags) // QA -> LA
+    XCTAssertEqual(applicant1.description, "LA")
+
+    let (action1, _) = applicant1.action(for: .txLA, flags: unregisteredFlags)
+    XCTAssertEqual(action1, .s_)
+    XCTAssertEqual(applicant1.description, "LA", "LA should stay in LA on txLA! when unregistered")
+
+    // Test LA with txLA! when registered - should transition to LO
+    let applicant2 = Applicant()
+    _ = applicant2.action(for: .New, flags: registeredFlags) // VO -> VN
+    _ = applicant2.action(for: .tx, flags: registeredFlags) // VN -> AN
+    _ = applicant2.action(for: .tx, flags: registeredFlags) // AN -> QA
+    _ = applicant2.action(for: .Lv, flags: registeredFlags) // QA -> LA
+    XCTAssertEqual(applicant2.description, "LA")
+
+    let (action2, _) = applicant2.action(for: .txLA, flags: registeredFlags)
+    XCTAssertEqual(action2, .s_)
+    XCTAssertEqual(
+      applicant2.description,
+      "LO",
+      "LA should transition to LO on txLA! when registered"
+    )
+  }
 }
 
 private final class AttributeValue<A: Application>: @unchecked Sendable, Equatable {
