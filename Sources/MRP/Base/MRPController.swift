@@ -416,7 +416,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
     _periodicTimer = Timer(label: "periodictimer") { [weak self] in
       guard let self else { return }
       try await _apply { @Sendable application in
-        try await application.periodic()
+        try await application.periodic(for: nil)
       }
       await _restartPeriodicTimer()
     }

@@ -153,6 +153,12 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationEve
       for: MAPBaseSpanningTreeContext
     )
   }
+
+  public func periodic(for contextIdentifier: MAPContextIdentifier? = nil) async throws {
+    try await apply(for: contextIdentifier) { participant in
+      try await participant.periodic()
+    }
+  }
 }
 
 extension MMRPApplication {

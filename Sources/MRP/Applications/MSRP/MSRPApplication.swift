@@ -528,6 +528,11 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
       )
     }
   }
+
+  public func periodic(for contextIdentifier: MAPContextIdentifier? = nil) async throws {
+    // 5.4.4 the Periodic Transmission state machine (10.7.10) is specifically
+    // excluded from MSRP
+  }
 }
 
 extension MSRPApplication {

@@ -136,6 +136,14 @@ public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationEve
       for: MAPBaseSpanningTreeContext
     )
   }
+
+  public func periodic(for contextIdentifier: MAPContextIdentifier?) async throws {
+    // 5.4.4 the Periodic Transmission state machine (10.7.10) is specifically
+    // excluded from MSRP
+    try await apply(for: contextIdentifier) { participant in
+      try await participant.periodic()
+    }
+  }
 }
 
 extension MVRPApplication {
