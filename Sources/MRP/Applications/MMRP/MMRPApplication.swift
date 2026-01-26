@@ -60,6 +60,8 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationEve
 
   public var hasAttributeListLength: Bool { false }
 
+  public var rLvLeavesImmediately: Bool { false }
+
   let _controller: Weak<MRPController<P>>
 
   public var controller: MRPController<P>? { _controller.object }

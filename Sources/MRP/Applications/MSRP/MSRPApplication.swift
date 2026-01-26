@@ -157,6 +157,8 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
 
   public var hasAttributeListLength: Bool { true }
 
+  public var rLvLeavesImmediately: Bool { true }
+
   let _controller: Weak<MRPController<P>>
 
   public var controller: MRPController<P>? { _controller.object }

@@ -1024,22 +1024,14 @@ final class MRPTests: XCTestCase {
     XCTAssertNil(registrar.action(for: .rJoinIn, flags: normalFlags))
     XCTAssertEqual(registrar.state, .IN)
 
+    // Test standard rLv event from IN -> LV (starts leave timer, no immediate action)
     let action2 = registrar.action(for: .rLv, flags: normalFlags)
-    #if AVNU
-    // Test rLv event from IN -> MT with Lv action (per Avnu ProAV Bridge Specification)
-    XCTAssertEqual(action2, .Lv)
-    XCTAssertEqual(registrar.state, .MT)
-    #else
-    XCTAssertEqual(action2, nil)
-    XCTAssertEqual(registrar.state, .LV)
-    #endif
-    // Test rJoinIn from MT -> IN with Join action
+    XCTAssertNil(action2, "Standard rLv should not produce immediate action")
+    XCTAssertEqual(registrar.state, .LV, "Standard rLv should transition to LV state")
+
+    // Test rJoinIn from LV -> IN (stops leave timer, no action)
     let action3 = registrar.action(for: .rJoinIn, flags: normalFlags)
-    #if AVNU
-    XCTAssertEqual(action3, .Join)
-    #else
-    XCTAssertEqual(action3, nil)
-    #endif
+    XCTAssertNil(action3)
     XCTAssertEqual(registrar.state, .IN)
 
     // Test rLA event from IN -> LV (starts leave timer)
@@ -1088,6 +1080,78 @@ final class MRPTests: XCTestCase {
     let action = registrar.action(for: .leavetimer, flags: pointToPointFlags)
     XCTAssertEqual(action, .Lv)
     XCTAssertEqual(registrar.state, .MT)
+  }
+
+  // MARK: - Avnu ProAV Bridge Specification 9.2 Tests
+
+  func testRegistrarInstantTransitionINtoMT_rLvNow() {
+    // Test Avnu ProAV Bridge Specification 9.2: Instantaneous transition from IN to MT
+    // For MSRP applications: IN / rLvNow! → (Lv) → MT (instead of IN / rLv! → LV)
+    let registrar = Registrar(onLeaveTimerExpired: {})
+    let normalFlags: StateMachineHandlerFlags = []
+
+    // Set up IN state
+    let action1 = registrar.action(for: .rNew, flags: normalFlags)
+    XCTAssertEqual(action1, .New)
+    XCTAssertEqual(registrar.state, .IN)
+
+    // Test rLvNow causes instant transition to MT with Lv action
+    let action2 = registrar.action(for: .rLvNow, flags: normalFlags)
+    XCTAssertEqual(action2, .Lv, "rLvNow should send Lv action immediately")
+    XCTAssertEqual(registrar.state, .MT, "rLvNow should transition instantly to MT, not LV")
+  }
+
+  func testRegistrarInstantTransitionLVtoMT_rLvNow() {
+    // Test that rLvNow also works from LV state
+    let registrar = Registrar(onLeaveTimerExpired: {})
+    let normalFlags: StateMachineHandlerFlags = []
+
+    // Set up LV state: MT -> IN -> LV
+    _ = registrar.action(for: .rNew, flags: normalFlags)
+    _ = registrar.action(for: .rLA, flags: normalFlags)
+    XCTAssertEqual(registrar.state, .LV)
+
+    // Test rLvNow from LV -> MT with Lv action
+    let action = registrar.action(for: .rLvNow, flags: normalFlags)
+    XCTAssertEqual(action, .Lv, "rLvNow should send Lv action immediately from LV state")
+    XCTAssertEqual(registrar.state, .MT, "rLvNow should transition instantly to MT from LV state")
+  }
+
+  func testRegistrarRLvNowIgnoredInMT() {
+    // Test that rLvNow is ignored when already in MT state
+    let registrar = Registrar(onLeaveTimerExpired: {})
+    let normalFlags: StateMachineHandlerFlags = []
+
+    // Verify initial state is MT
+    XCTAssertEqual(registrar.state, .MT)
+
+    // Test rLvNow in MT state does nothing
+    let action = registrar.action(for: .rLvNow, flags: normalFlags)
+    XCTAssertNil(action, "rLvNow should produce no action when already in MT state")
+    XCTAssertEqual(registrar.state, .MT, "State should remain MT")
+  }
+
+  func testRegistrarStandardVsInstantLeave() {
+    // Test comparison between standard rLv and instant rLvNow behavior
+    let normalFlags: StateMachineHandlerFlags = []
+
+    // Test standard rLv behavior
+    let registrar1 = Registrar(onLeaveTimerExpired: {})
+    _ = registrar1.action(for: .rNew, flags: normalFlags)
+    XCTAssertEqual(registrar1.state, .IN)
+
+    let actionStandard = registrar1.action(for: .rLv, flags: normalFlags)
+    XCTAssertNil(actionStandard, "Standard rLv should not produce immediate Lv action")
+    XCTAssertEqual(registrar1.state, .LV, "Standard rLv should transition to LV state")
+
+    // Test instant rLvNow behavior
+    let registrar2 = Registrar(onLeaveTimerExpired: {})
+    _ = registrar2.action(for: .rNew, flags: normalFlags)
+    XCTAssertEqual(registrar2.state, .IN)
+
+    let actionInstant = registrar2.action(for: .rLvNow, flags: normalFlags)
+    XCTAssertEqual(actionInstant, .Lv, "rLvNow should produce immediate Lv action")
+    XCTAssertEqual(registrar2.state, .MT, "rLvNow should transition directly to MT state")
   }
 
   func testLeaveAllStateMachine() {

@@ -558,6 +558,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   }
 
   private func rx(message: Message, eventSource: EventSource, leaveAll: inout Bool) async throws {
+    guard let application else { return }
+
     for vectorAttribute in message.attributeList {
       // 10.6 Protocol operation: process LeaveAll first.
       if vectorAttribute.leaveAllEvent == .LeaveAll {
@@ -594,9 +596,16 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
           attribute.attributeSubtype = attributeSubtype
         }
 
+        // the Avnu ProAV Bridge specification modifies the behavior of rLv for
+        // the MSRP application only, so that on receipt of a rLv! event the
+        // attribute is immediately expired. Use the existing internal .rLvNow
+        // event to handle this.
+        var protocolEvent = attributeEvent.protocolEvent
+        if application.rLvLeavesImmediately, protocolEvent == .rLv { protocolEvent = .rLvNow }
+
         try await _handleAttributeValue(
           attribute,
-          protocolEvent: attributeEvent.protocolEvent,
+          protocolEvent: protocolEvent,
           eventSource: eventSource
         )
       }
