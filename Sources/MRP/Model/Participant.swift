@@ -206,11 +206,12 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   }
 
   private func _apply(
+    attributeType: AttributeType? = nil,
     protocolEvent event: ProtocolEvent,
     eventSource: EventSource
   ) async throws {
     _logger.trace("\(self): apply protocolEvent \(event), eventSource: \(eventSource)")
-    try await _apply { attributeValue in
+    try await _apply(attributeType: attributeType) { attributeValue in
       try await _handleAttributeValue(
         attributeValue,
         protocolEvent: event,
@@ -561,7 +562,11 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     for vectorAttribute in message.attributeList {
       // 10.6 Protocol operation: process LeaveAll first.
       if vectorAttribute.leaveAllEvent == .LeaveAll {
-        try await _apply(protocolEvent: .rLA, eventSource: eventSource)
+        try await _apply(
+          attributeType: message.attributeType,
+          protocolEvent: .rLA,
+          eventSource: eventSource
+        )
         leaveAll = true
       }
 
