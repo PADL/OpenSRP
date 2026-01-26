@@ -1,5 +1,9 @@
 # Avnu ProAV Bridge Specification compliance items
 
+Note: some of the git hashes may have changed owing to rebasing during
+development. However if you see a git hash, you can assume the item has been
+completed.
+
 # 8 MRP
 
 ## 8.1 General
@@ -15,7 +19,7 @@
 
 ## 8.3 Applicant State Machine
 
-* TODO: ignore transition to LO from VO/AO/QO when receiving rLA!, txLA!, or txLAF!
+* de2848e0: ignore transition to LO from VO/AO/QO when receiving rLA!, txLA!, or txLAF!
 
 ## 8.4: Registrar State Machine
 
@@ -30,12 +34,12 @@
 * TODO: check MSRP attributes propagated within 1.5s
 * TODO: check always declare SR A/B domain
 * DONE: include VLAN tag in bandwidth calculation
-* bd82611a: check periodic state machine disabled per 5.4.4 in 802.1Q
+* 80272d31: check periodic state machine disabled per 5.4.4 in 802.1Q
 * TODO: proxy MSRP Talker leave requests from listener to talker
 
 ## 9.2 Instantaneous transition from IN to MT
 
-* TODO: transition IN / rLv! → (Lv) → MT
+* TODO: transition IN / rLv! → (Lv) → MT (this seems risky to implement with short leave times? not all bridges use the Avnu 5 second leave time)
 
 ## 9.3 Talker attribute registration
 
