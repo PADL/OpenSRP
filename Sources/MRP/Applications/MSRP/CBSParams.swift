@@ -189,7 +189,13 @@ extension MSRPAwareBridge {
 }
 
 func calcFrameSize(_ tSpec: MSRPTSpec) -> UInt16 {
-  tSpec.maxFrameSize + VLAN_OVERHEAD + L2_OVERHEAD + L1_OVERHEAD
+  // Avnu ProAV Bridge specification Section 9.1:
+  // transport overhead must include minimum frame size of 68 bytes
+  var frameSize = tSpec.maxFrameSize + VLAN_OVERHEAD + L2_OVERHEAD
+  if frameSize < 68 {
+    frameSize = 68
+  }
+  return frameSize + L1_OVERHEAD
 }
 
 func calculateBandwidthUsed(
