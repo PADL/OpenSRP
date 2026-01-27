@@ -273,14 +273,14 @@ public enum PTP {
     }
 
     public init(eui48: EUI48) {
-      id.0 = eui48.0
-      id.1 = eui48.1
-      id.2 = eui48.2
+      id.0 = eui48[0]
+      id.1 = eui48[1]
+      id.2 = eui48[2]
       id.3 = 0xFF
       id.4 = 0xFE
-      id.5 = eui48.3
-      id.6 = eui48.4
-      id.7 = eui48.5
+      id.5 = eui48[3]
+      id.6 = eui48[4]
+      id.7 = eui48[5]
     }
 
     public func serialize(into serializationContext: inout IEEE802.SerializationContext) throws {

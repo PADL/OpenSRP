@@ -50,7 +50,7 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
 
   var vlans: Set<MRP.VLAN> { [] }
 
-  var macAddress: EUI48 { (0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF) }
+  var macAddress: EUI48 { [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF] }
 
   var mtu: UInt { 1500 }
 
@@ -137,7 +137,7 @@ extension MockBridge: MSRPAwareBridge {
 
 final class MRPTests: XCTestCase {
   func testEUI48() async throws {
-    let eui48: EUI48 = (0, 0, 0, 0, 0x1, 0xFF)
+    let eui48: EUI48 = [0, 0, 0, 0, 0x1, 0xFF]
     XCTAssertEqual(UInt64(eui48: eui48), 0x1FF)
     XCTAssertTrue(try! _isEqualMacAddress(eui48, UInt64(0x1FF).asEUI48()))
   }
@@ -368,7 +368,7 @@ final class MRPTests: XCTestCase {
     XCTAssertEqual(deserializedServiceReq, .allGroups)
 
     // Test MAC value serialization
-    let macValue = MMRPMACValue(macAddress: (0x01, 0x80, 0xC2, 0x00, 0x00, 0x0E))
+    let macValue = MMRPMACValue(macAddress: [0x01, 0x80, 0xC2, 0x00, 0x00, 0x0E])
     serializationContext = SerializationContext()
     try macValue.serialize(into: &serializationContext)
 
@@ -388,7 +388,7 @@ final class MRPTests: XCTestCase {
     // Also verify that the MAC address itself is correctly preserved
     XCTAssertTrue(_isEqualMacAddress(
       deserializedMAC.macAddress,
-      (0x01, 0x80, 0xC2, 0x00, 0x00, 0x0E)
+      [0x01, 0x80, 0xC2, 0x00, 0x00, 0x0E]
     ))
   }
 
@@ -473,9 +473,9 @@ final class MRPTests: XCTestCase {
     XCTAssertNotEqual(av8, av10)
 
     // Test with MAC values
-    let mac1 = MMRPMACValue(macAddress: (0x01, 0x80, 0xC2, 0x00, 0x00, 0x21))
-    let mac2 = MMRPMACValue(macAddress: (0x01, 0x80, 0xC2, 0x00, 0x00, 0x21))
-    let mac3 = MMRPMACValue(macAddress: (0x01, 0x80, 0xC2, 0x00, 0x00, 0x22))
+    let mac1 = MMRPMACValue(macAddress: [0x01, 0x80, 0xC2, 0x00, 0x00, 0x21])
+    let mac2 = MMRPMACValue(macAddress: [0x01, 0x80, 0xC2, 0x00, 0x00, 0x21])
+    let mac3 = MMRPMACValue(macAddress: [0x01, 0x80, 0xC2, 0x00, 0x00, 0x22])
 
     let av11 = AttributeValue<MSRPApplication<MockPort>>(
       type: 4,
@@ -581,7 +581,7 @@ final class MRPTests: XCTestCase {
     ]
     let streamID = MSRPStreamID(0x0001_F2FE_D2A4_0000)
     let dataFrameParams = MSRPDataFrameParameters(
-      destinationAddress: (0x91, 0xE0, 0xF0, 0x00, 0xB3, 0x68),
+      destinationAddress: [0x91, 0xE0, 0xF0, 0x00, 0xB3, 0x68],
       vlanIdentifier: 2
     )
     let tSpec = MSRPTSpec(maxFrameSize: 224, maxIntervalFrames: 1)
@@ -604,7 +604,7 @@ final class MRPTests: XCTestCase {
   func testMSRPEquality() {
     let streamID = MSRPStreamID(0x0001_F2FE_D2A4_0000)
     let dataFrameParams = MSRPDataFrameParameters(
-      destinationAddress: (0x91, 0xE0, 0xF0, 0x00, 0x01, 0x02),
+      destinationAddress: [0x91, 0xE0, 0xF0, 0x00, 0x01, 0x02],
       vlanIdentifier: 2
     )
     let tSpec = MSRPTSpec(maxFrameSize: 224, maxIntervalFrames: 1)
@@ -844,9 +844,9 @@ final class MRPTests: XCTestCase {
     let relativeServiceReq = try serviceReq.makeValue(relativeTo: 1)
     XCTAssertEqual(relativeServiceReq, .allUnregisteredGroups)
 
-    let macValue = MMRPMACValue(macAddress: (0x01, 0x80, 0xC2, 0x00, 0x00, 0x10))
+    let macValue = MMRPMACValue(macAddress: [0x01, 0x80, 0xC2, 0x00, 0x00, 0x10])
     let relativeMac = try macValue.makeValue(relativeTo: 0x05)
-    XCTAssertTrue(_isEqualMacAddress(relativeMac.macAddress, (0x01, 0x80, 0xC2, 0x00, 0x00, 0x15)))
+    XCTAssertTrue(_isEqualMacAddress(relativeMac.macAddress, [0x01, 0x80, 0xC2, 0x00, 0x00, 0x15]))
   }
 
   func testSerializationErrorHandling() {
@@ -908,7 +908,7 @@ final class MRPTests: XCTestCase {
   }
 
   func testEUI48Serialization() throws {
-    let eui48: EUI48 = (0x01, 0x80, 0xC2, 0x00, 0x00, 0x21)
+    let eui48: EUI48 = [0x01, 0x80, 0xC2, 0x00, 0x00, 0x21]
 
     var serializationContext = SerializationContext()
     serializationContext.serialize(eui48: eui48)
@@ -1311,7 +1311,7 @@ final class MRPTests: XCTestCase {
   }
 
   func testPTPClockIdentityFromEUI48() throws {
-    let eui48: EUI48 = (0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF)
+    let eui48: EUI48 = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]
     let clockId = PTP.ClockIdentity(eui48: eui48)
 
     var serializationContext = SerializationContext()
@@ -1940,7 +1940,7 @@ final class MRPTests: XCTestCase {
     // Create a TalkerFailed message for a stream that has no listener configured.
     let streamID = MSRPStreamID(0x0001_F2FE_D2A4_0002)
     let dataFrameParams = MSRPDataFrameParameters(
-      destinationAddress: (0x91, 0xE0, 0xF0, 0x00, 0xB3, 0x6A),
+      destinationAddress: [0x91, 0xE0, 0xF0, 0x00, 0xB3, 0x6A],
       vlanIdentifier: 2
     )
     let tSpec = MSRPTSpec(maxFrameSize: 224, maxIntervalFrames: 1)
@@ -2001,7 +2001,7 @@ final class MRPTests: XCTestCase {
     // and should continue to work after the fix.
 
     let dataFrameParams = MSRPDataFrameParameters(
-      destinationAddress: (0x91, 0xE0, 0xF0, 0x00, 0xB3, 0x68),
+      destinationAddress: [0x91, 0xE0, 0xF0, 0x00, 0xB3, 0x68],
       vlanIdentifier: 2
     )
     let tSpec = MSRPTSpec(maxFrameSize: 224, maxIntervalFrames: 1)

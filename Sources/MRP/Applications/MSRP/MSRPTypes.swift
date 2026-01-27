@@ -294,12 +294,12 @@ public struct MSRPDataFrameParameters: Value, Equatable, Hashable, CustomStringC
 
   public func serialize(into serializationContext: inout SerializationContext) throws {
     serializationContext.serialize([
-      destinationAddress.0,
-      destinationAddress.1,
-      destinationAddress.2,
-      destinationAddress.3,
-      destinationAddress.4,
-      destinationAddress.5,
+      destinationAddress[0],
+      destinationAddress[1],
+      destinationAddress[2],
+      destinationAddress[3],
+      destinationAddress[4],
+      destinationAddress[5],
     ])
     try vlanIdentifier.serialize(into: &serializationContext)
   }

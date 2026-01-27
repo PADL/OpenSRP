@@ -86,7 +86,7 @@ public struct SerializationContext {
   }
 
   public mutating func serialize(eui48: EUI48, at index: Int? = nil) {
-    let bytes = [eui48.0, eui48.1, eui48.2, eui48.3, eui48.4, eui48.5]
+    let bytes = [eui48[0], eui48[1], eui48[2], eui48[3], eui48[4], eui48[5]]
     serialize(bytes, at: index)
   }
 
@@ -116,14 +116,14 @@ package func _bytesToHex(_ bytes: [UInt8], uppercase: Bool = false) -> String {
 // MARK: - Helper function for EUI48
 
 package func _eui48(parsing input: inout ParserSpan) throws -> EUI48 {
-  try (
+  try [
     UInt8(parsing: &input),
     UInt8(parsing: &input),
     UInt8(parsing: &input),
     UInt8(parsing: &input),
     UInt8(parsing: &input),
-    UInt8(parsing: &input)
-  )
+    UInt8(parsing: &input),
+  ]
 }
 
 extension FixedWidthInteger {

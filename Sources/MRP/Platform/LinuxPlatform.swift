@@ -81,12 +81,12 @@ private func _makeLinkLayerAddress(
   sll.sll_pkttype = packetType
   if let macAddress {
     sll.sll_halen = UInt8(ETH_ALEN)
-    sll.sll_addr.0 = macAddress.0
-    sll.sll_addr.1 = macAddress.1
-    sll.sll_addr.2 = macAddress.2
-    sll.sll_addr.3 = macAddress.3
-    sll.sll_addr.4 = macAddress.4
-    sll.sll_addr.5 = macAddress.5
+    sll.sll_addr.0 = macAddress[0]
+    sll.sll_addr.1 = macAddress[1]
+    sll.sll_addr.2 = macAddress[2]
+    sll.sll_addr.3 = macAddress[3]
+    sll.sll_addr.4 = macAddress[4]
+    sll.sll_addr.5 = macAddress[5]
   }
   return sll
 }
@@ -334,7 +334,8 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
   }
 
   public var macAddress: EUI48 {
-    _rtnl.address
+    let addr = _rtnl.address
+    return [addr.0, addr.1, addr.2, addr.3, addr.4, addr.5]
   }
 
   public var pvid: UInt16? {
@@ -774,32 +775,48 @@ fileprivate final class FilterRegistration: Equatable, Hashable, Sendable, Custo
 extension LinuxBridge: MMRPAwareBridge {
   func register(macAddress: EUI48, vlan: VLAN?, on ports: Set<P>) async throws {
     guard let rtnl = bridgePort._rtnl as? RTNLLinkBridge else { throw Errno.noSuchAddressOrDevice }
+    let macTuple = (
+      macAddress[0],
+      macAddress[1],
+      macAddress[2],
+      macAddress[3],
+      macAddress[4],
+      macAddress[5]
+    )
     for port in ports {
       if _isMulticast(macAddress: macAddress) {
         try await rtnl.add(
           link: port._rtnl,
-          groupAddresses: [macAddress],
+          groupAddresses: [macTuple],
           vlanID: vlan?.vid,
           socket: _nlLinkSocket
         )
       } else {
-        try await rtnl.add(link: port._rtnl, fdbEntry: macAddress, socket: _nlLinkSocket)
+        try await rtnl.add(link: port._rtnl, fdbEntry: macTuple, socket: _nlLinkSocket)
       }
     }
   }
 
   func deregister(macAddress: EUI48, vlan: VLAN?, from ports: Set<P>) async throws {
     guard let rtnl = bridgePort._rtnl as? RTNLLinkBridge else { throw Errno.noSuchAddressOrDevice }
+    let macTuple = (
+      macAddress[0],
+      macAddress[1],
+      macAddress[2],
+      macAddress[3],
+      macAddress[4],
+      macAddress[5]
+    )
     for port in ports {
       if _isMulticast(macAddress: macAddress) {
         try await rtnl.remove(
           link: port._rtnl,
-          groupAddresses: [macAddress],
+          groupAddresses: [macTuple],
           vlanID: vlan?.vid,
           socket: _nlLinkSocket
         )
       } else {
-        try await rtnl.remove(link: port._rtnl, fdbEntry: macAddress, socket: _nlLinkSocket)
+        try await rtnl.remove(link: port._rtnl, fdbEntry: macTuple, socket: _nlLinkSocket)
       }
     }
   }
