@@ -100,7 +100,9 @@ private enum EnqueuedEvent<A: Application>: Equatable, CustomStringConvertible {
   }
 }
 
-public final actor Participant<A: Application>: Equatable, Hashable, CustomStringConvertible {
+public final class Participant<A: Application>: Equatable, Hashable, CustomStringConvertible,
+  @unchecked Sendable
+{
   public static func == (lhs: Participant<A>, rhs: Participant<A>) -> Bool {
     lhs.application == rhs.application && lhs.port == rhs.port && lhs.contextIdentifier == rhs
       .contextIdentifier
@@ -116,10 +118,11 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
 
   private var _attributes = [AttributeType: Set<_AttributeValue<A>>]()
   private var _enqueuedEvents = EnqueuedEvents()
-  private var _leaveAll: LeaveAll!
-  private var _jointimer: Timer!
+  private nonisolated(unsafe) var _leaveAll: LeaveAll!
+  private nonisolated(unsafe) var _jointimer: Timer!
   private var _rxInProgress = false
   private var _transmissionOpportunityTimestamps: [ContinuousClock.Instant] = []
+
   private nonisolated let _controller: Weak<MRPController<A.P>>
   private nonisolated let _application: Weak<A>
 
@@ -137,7 +140,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     port: A.P,
     contextIdentifier: MAPContextIdentifier,
     type: ParticipantType? = nil
-  ) async {
+  ) {
     _controller = Weak(controller)
     _application = Weak(application)
     self.contextIdentifier = contextIdentifier
@@ -157,6 +160,10 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     _logger.trace("\(self): initialized participant type \(_type)")
   }
 
+  private func _assertIsolatedToApplication() {
+    application?.assertIsolated("MRP Participant must be called from Application isolation")
+  }
+
   public nonisolated var description: String {
     "\(application!.name)@\(port.name)"
   }
@@ -167,7 +174,10 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     // instance of this timer is required on a per-Port, per-MRP Participant
     // basis. The value of JoinTime used to initialize this timer is determined
     // in accordance with 10.7.11.
-    _jointimer = Timer(label: "jointimer", onExpiry: _onTxOpportunity)
+    _jointimer = Timer(label: "jointimer") { @Sendable [self] in
+      guard let application else { return }
+      try await _onTxOpportunity(isolation: application)
+    }
 
     // The Leave All Period Timer, leavealltimer, controls the frequency with
     // which the LeaveAll state machine generates LeaveAll PDUs. The timer is
@@ -176,10 +186,12 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     // All Period Timer is set to a random value, T, in the range LeaveAllTime
     // < T < 1.5 × LeaveAllTime when it is started. LeaveAllTime is defined in
     // Table 10-7.
-    _leaveAll = LeaveAll(
-      interval: controller!.timerConfiguration.leaveAllTime,
-      onLeaveAllTimerExpired: _onLeaveAllTimerExpired
-    )
+    _leaveAll = LeaveAll(interval: controller!.timerConfiguration
+      .leaveAllTime)
+    { @Sendable [self] in
+      guard let application else { return }
+      try await _onLeaveAllTimerExpired(isolation: application)
+    }
   }
 
   deinit {
@@ -187,20 +199,21 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     _leaveAll?.stopLeaveAllTimer()
   }
 
-  @Sendable
-  private func _onLeaveAllTimerExpired() async throws {
-    try await _handleLeaveAll(protocolEvent: .leavealltimer, eventSource: .leaveAllTimer)
+  private func _onLeaveAllTimerExpired(isolation: isolated A) throws {
+    try _handleLeaveAll(protocolEvent: .leavealltimer, eventSource: .leaveAllTimer)
   }
 
   private func _apply(
     attributeType: AttributeType? = nil,
     matching filter: AttributeValueFilter = .matchAny,
-    _ block: AsyncParticipantApplyFunction<A>
-  ) async rethrows {
+    _ block: ParticipantApplyFunction<A>
+  ) rethrows {
+    _assertIsolatedToApplication()
+
     for attribute in _attributes {
       for attributeValue in attribute.value {
         if !attributeValue.matches(attributeType: attributeType, matching: filter) { continue }
-        try await block(attributeValue)
+        try block(attributeValue)
       }
     }
   }
@@ -209,10 +222,10 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     attributeType: AttributeType? = nil,
     protocolEvent event: ProtocolEvent,
     eventSource: EventSource
-  ) async throws {
+  ) throws {
     _logger.trace("\(self): apply protocolEvent \(event), eventSource: \(eventSource)")
-    try await _apply(attributeType: attributeType) { attributeValue in
-      try await _handleAttributeValue(
+    try _apply(attributeType: attributeType) { attributeValue in
+      try _handleAttributeValue(
         attributeValue,
         protocolEvent: event,
         eventSource: eventSource
@@ -259,8 +272,9 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     _jointimer.start(interval: interval)
   }
 
-  @Sendable
-  private func _onTxOpportunity() async throws {
+  private func _onTxOpportunity(isolation: isolated A) async throws {
+    _assertIsolatedToApplication()
+
     let eventSource = EventSource.joinTimer
 
     // Suppress TX opportunities while RX is processing to prevent interleaving
@@ -295,11 +309,11 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     switch _leaveAll.state {
     case .Active:
       // encode attributes first with current registrar states, then process LeaveAll
-      try await _apply(protocolEvent: .txLA, eventSource: eventSource)
+      try _apply(protocolEvent: .txLA, eventSource: eventSource)
       // sets LeaveAll to passive and emits sLA action
-      try await _handleLeaveAll(protocolEvent: .tx, eventSource: eventSource)
+      try _handleLeaveAll(protocolEvent: .tx, eventSource: eventSource)
     case .Passive:
-      try await _apply(protocolEvent: .tx, eventSource: eventSource)
+      try _apply(protocolEvent: .tx, eventSource: eventSource)
     }
 
     let didTransmit = try await _tx()
@@ -326,6 +340,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     matching filter: AttributeValueFilter,
     createIfMissing: Bool
   ) throws -> _AttributeValue<A> {
+    _assertIsolatedToApplication()
+
     if let attributeValue = _attributes[attributeType]?
       .first(where: { $0.matches(attributeType: attributeType, matching: filter) })
     {
@@ -358,13 +374,17 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     attributeType: AttributeType,
     matching filter: AttributeValueFilter = .matchAny
   ) -> [_AttributeValue<A>] {
-    (_attributes[attributeType] ?? [])
+    _assertIsolatedToApplication()
+
+    return (_attributes[attributeType] ?? [])
       .filter {
         $0.matches(attributeType: attributeType, matching: filter) && $0.isRegistered
       }
   }
 
   fileprivate func _gcAttributeValue(_ attributeValue: _AttributeValue<A>) {
+    _assertIsolatedToApplication()
+
     if let index = _attributes.index(forKey: attributeValue.attributeType) {
       _attributes.values[index].remove(attributeValue)
       if _attributes.values[index].isEmpty {
@@ -377,8 +397,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     _ attributeValue: _AttributeValue<A>,
     protocolEvent: ProtocolEvent,
     eventSource: EventSource
-  ) async throws {
-    try await attributeValue.handle(
+  ) throws {
+    try attributeValue.handle(
       protocolEvent: protocolEvent,
       eventSource: eventSource
     )
@@ -480,6 +500,8 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   }
 
   private func _txEnqueue(_ event: EnqueuedEvent<A>, eventSource: EventSource) {
+    _assertIsolatedToApplication()
+
     if let index = _enqueuedEvents.index(forKey: event.attributeType) {
       if let eventIndex = _enqueuedEvents.values[index]
         .firstIndex(where: { $0 == event })
@@ -518,7 +540,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   private func _handleLeaveAll(
     protocolEvent event: ProtocolEvent,
     eventSource: EventSource
-  ) async throws {
+  ) throws {
     let (action, txOpportunity) = _leaveAll.action(for: event) // may update state
 
     if txOpportunity {
@@ -536,7 +558,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       // the rLA! event is responsible for starting the leave timer on
       // registered attributes (Table 10-4), as well as requesting the
       // applicant to redeclare attributes (Table 10-3).
-      try await _apply(protocolEvent: .rLA, eventSource: eventSource)
+      try _apply(protocolEvent: .rLA, eventSource: eventSource)
       try _txEnqueueLeaveAllEvents(eventSource: eventSource)
     default:
       break
@@ -544,7 +566,10 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
   }
 
   private func _txDequeue() throws -> MRPDU? {
+    _assertIsolatedToApplication()
+
     guard let application else { throw MRPError.internalError }
+
     let enqueuedMessages = try _packMessages(with: _enqueuedEvents)
     _enqueuedEvents.removeAll()
 
@@ -558,11 +583,11 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     return pdu
   }
 
-  private func rx(message: Message, eventSource: EventSource, leaveAll: inout Bool) async throws {
+  private func rx(message: Message, eventSource: EventSource, leaveAll: inout Bool) throws {
     for vectorAttribute in message.attributeList {
       // 10.6 Protocol operation: process LeaveAll first.
       if vectorAttribute.leaveAllEvent == .LeaveAll {
-        try await _apply(
+        try _apply(
           attributeType: message.attributeType,
           protocolEvent: .rLA,
           eventSource: eventSource
@@ -595,11 +620,11 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
             .debug(
               "\(self): \(eventSource) declared attribute \(attribute) with new subtype \(attributeSubtype); replacing"
             )
-          try? await attribute.rLvNow(eventSource: eventSource, suppressGC: true)
+          try? attribute.rLvNow(eventSource: eventSource, suppressGC: true)
           attribute.attributeSubtype = attributeSubtype
         }
 
-        try await _handleAttributeValue(
+        try _handleAttributeValue(
           attribute,
           protocolEvent: attributeEvent.protocolEvent,
           eventSource: eventSource
@@ -608,8 +633,11 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     }
   }
 
-  func rx(pdu: MRPDU, sourceMacAddress: EUI48) async throws {
+  func rx(pdu: MRPDU, sourceMacAddress: EUI48) throws {
+    _assertIsolatedToApplication()
+
     _debugLogPdu(pdu, direction: .rx)
+
     _rxInProgress = true
     defer { _rxInProgress = false }
 
@@ -619,10 +647,10 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       port.macAddress
     ) ? .local : .peer
     for message in pdu.messages {
-      try await rx(message: message, eventSource: eventSource, leaveAll: &leaveAll)
+      try rx(message: message, eventSource: eventSource, leaveAll: &leaveAll)
     }
     if leaveAll {
-      try await _handleLeaveAll(protocolEvent: .rLA, eventSource: eventSource)
+      try _handleLeaveAll(protocolEvent: .rLA, eventSource: eventSource)
     }
   }
 
@@ -731,9 +759,9 @@ public extension Participant {
   // associated with a given Port and spanning tree instance, this event is
   // generated when the Port Role changes from either Root Port or Alternate
   // Port to Designated Port.
-  func flush() async throws {
-    try await _apply(protocolEvent: .Flush, eventSource: .internal)
-    try await _handleLeaveAll(protocolEvent: .Flush, eventSource: .internal)
+  func flush() throws {
+    try _apply(protocolEvent: .Flush, eventSource: .internal)
+    try _handleLeaveAll(protocolEvent: .Flush, eventSource: .internal)
   }
 
   // A Re-declare! event signals to the Applicant and Registrar state machines
@@ -745,8 +773,8 @@ public extension Participant {
   // Registrar state machines associated with a given Port and spanning tree
   // instance, this event is generated when the Port Role changes from
   // Designated Port to either Root Port or Alternate Port.
-  func redeclare() async throws {
-    try await _apply(protocolEvent: .ReDeclare, eventSource: .internal)
+  func redeclare() throws {
+    try _apply(protocolEvent: .ReDeclare, eventSource: .internal)
   }
 
   func join(
@@ -755,7 +783,7 @@ public extension Participant {
     attributeValue: some Value,
     isNew: Bool,
     eventSource: EventSource
-  ) async throws {
+  ) throws {
     let attribute = try _findOrCreateAttribute(
       attributeType: attributeType,
       attributeSubtype: attributeSubtype,
@@ -768,11 +796,11 @@ public extension Participant {
         "\(self): \(eventSource) declared attribute \(attribute) with new subtype \(attributeSubtype); replacing"
       )
 
-      try? await attribute.handle(protocolEvent: .Lv, eventSource: eventSource, suppressGC: true)
+      try? attribute.handle(protocolEvent: .Lv, eventSource: eventSource, suppressGC: true)
       attribute.attributeSubtype = attributeSubtype
     }
 
-    try await _handleAttributeValue(
+    try _handleAttributeValue(
       attribute,
       protocolEvent: isNew ? .New : .Join,
       eventSource: eventSource
@@ -784,7 +812,7 @@ public extension Participant {
     attributeSubtype: AttributeSubtype? = nil,
     attributeValue: some Value,
     eventSource: EventSource
-  ) async throws {
+  ) throws {
     let attribute = try _findOrCreateAttribute(
       attributeType: attributeType,
       attributeSubtype: attributeSubtype,
@@ -792,7 +820,7 @@ public extension Participant {
       createIfMissing: false
     )
 
-    try await _handleAttributeValue(
+    try _handleAttributeValue(
       attribute,
       protocolEvent: .Lv,
       eventSource: eventSource
@@ -803,7 +831,7 @@ public extension Participant {
     attributeType: AttributeType,
     attributeValue: some Value,
     eventSource: EventSource
-  ) async throws {
+  ) throws {
     let attribute = try _findOrCreateAttribute(
       attributeType: attributeType,
       attributeSubtype: nil,
@@ -811,16 +839,16 @@ public extension Participant {
       createIfMissing: false
     )
 
-    try await _handleAttributeValue(
+    try _handleAttributeValue(
       attribute,
       protocolEvent: .rLvNow,
       eventSource: eventSource
     )
   }
 
-  func periodic() async throws {
+  func periodic() throws {
     _logger.trace("\(self): running periodic")
-    try await _apply(protocolEvent: .periodic, eventSource: .periodicTimer)
+    try _apply(protocolEvent: .periodic, eventSource: .periodicTimer)
     // timer is restarted by the caller
   }
 }
@@ -828,10 +856,13 @@ public extension Participant {
 // MARK: - for use by REST APIs
 
 extension Participant {
-  func findAllAttributes(
-    matching filter: AttributeValueFilter = .matchAny
+  private func findAllAttributesUnchecked(
+    matching filter: AttributeValueFilter,
+    isolation: isolated A
   ) -> [AttributeValue] {
-    _attributes.values.flatMap { $0 }
+    _assertIsolatedToApplication()
+
+    return _attributes.values.flatMap { $0 }
       .map { AttributeValue(
         attributeType: $0.attributeType,
         attributeSubtype: $0.attributeSubtype,
@@ -842,10 +873,20 @@ extension Participant {
   }
 
   func findAllAttributes(
-    attributeType: AttributeType,
     matching filter: AttributeValueFilter = .matchAny
+  ) async -> [AttributeValue] {
+    guard let application else { return [] }
+    return await findAllAttributesUnchecked(matching: filter, isolation: application)
+  }
+
+  func findAllAttributesUnchecked(
+    attributeType: AttributeType,
+    matching filter: AttributeValueFilter,
+    isolation: isolated A
   ) -> [AttributeValue] {
-    (_attributes[attributeType] ?? [])
+    _assertIsolatedToApplication()
+
+    return (_attributes[attributeType] ?? [])
       .filter { $0.matches(attributeType: attributeType, matching: filter) }
       .map { AttributeValue(
         attributeType: attributeType,
@@ -855,10 +896,19 @@ extension Participant {
         registrarState: $0.registrarState
       ) }
   }
-}
 
-private typealias AsyncParticipantApplyFunction<A: Application> =
-  @Sendable (_AttributeValue<A>) async throws -> ()
+  func findAllAttributes(
+    attributeType: AttributeType,
+    matching filter: AttributeValueFilter = .matchAny
+  ) async -> [AttributeValue] {
+    guard let application else { return [] }
+    return await findAllAttributesUnchecked(
+      attributeType: attributeType,
+      matching: filter,
+      isolation: application
+    )
+  }
+}
 
 private typealias ParticipantApplyFunction<A: Application> =
   @Sendable (_AttributeValue<A>) throws -> ()
@@ -958,10 +1008,12 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
     _attributeSubtype = .init(subtype)
     self.value = AnyValue(value)
     if participant._type != .applicantOnly {
-      registrar = Registrar(
-        leaveTime: participant.controller!.timerConfiguration.leaveTime,
-        onLeaveTimerExpired: _onLeaveTimerExpired
-      )
+      registrar = Registrar(leaveTime: participant.controller!.timerConfiguration
+        .leaveTime)
+      { @Sendable [self] in
+        guard let application = participant.application else { return }
+        try await _onLeaveTimerExpired(isolation: application)
+      }
     }
   }
 
@@ -969,9 +1021,8 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
     registrar?.stopLeaveTimer()
   }
 
-  @Sendable
-  private func _onLeaveTimerExpired() async throws {
-    try await handle(
+  private func _onLeaveTimerExpired(isolation: isolated A) throws {
+    try handle(
       protocolEvent: .leavetimer,
       eventSource: .leaveTimer
     )
@@ -1011,7 +1062,7 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
   private func _getEventContext(
     for event: ProtocolEvent,
     eventSource: EventSource,
-    isolation participant: isolated P
+    participant: P
   ) throws -> EventContext<A> {
     try EventContext(
       participant: participant,
@@ -1030,13 +1081,13 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
     protocolEvent event: ProtocolEvent,
     eventSource: EventSource,
     suppressGC: Bool = false
-  ) async throws {
+  ) throws {
     guard let participant else { throw MRPError.internalError }
-    try await _handle(
+    try _handle(
       protocolEvent: event,
       eventSource: eventSource,
       suppressGC: suppressGC,
-      isolation: participant
+      participant: participant
     )
   }
 
@@ -1044,12 +1095,16 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
     protocolEvent event: ProtocolEvent,
     eventSource: EventSource,
     suppressGC: Bool = false,
-    isolation participant: isolated P
-  ) async throws {
-    let context = try _getEventContext(for: event, eventSource: eventSource, isolation: participant)
+    participant: P
+  ) throws {
+    let context = try _getEventContext(
+      for: event,
+      eventSource: eventSource,
+      participant: participant
+    )
 
-    try await _handleRegistrar(context: context, isolation: context.participant)
-    try await _handleApplicant(context: context, isolation: context.participant)
+    try _handleRegistrar(context: context, participant: context.participant)
+    try _handleApplicant(context: context, participant: context.participant)
 
     // remove attribute entirely if it is no longer declared or registered
     if !suppressGC, canGC { participant._gcAttributeValue(self) }
@@ -1057,7 +1112,7 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
 
   private func _handleApplicant(
     context: EventContext<A>,
-    isolation participant: isolated P
+    participant: P
   ) throws {
     participant._logger.trace("\(context.participant): handling applicant \(context)")
 
@@ -1116,8 +1171,8 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
 
   private func _handleRegistrar(
     context: EventContext<A>,
-    isolation participant: isolated P
-  ) async throws {
+    participant: P
+  ) throws {
     context.participant._logger.trace("\(context.participant): handling registrar \(context)")
 
     guard let registrarAction = context.registrar?
@@ -1132,36 +1187,39 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
       )
 
     guard let application = context.participant.application else { throw MRPError.internalError }
-    switch registrarAction {
-    case .New:
-      fallthrough
-    case .Join:
-      try await application.joinIndicated(
-        contextIdentifier: context.participant.contextIdentifier,
-        port: context.participant.port,
-        attributeType: context.attributeType,
-        attributeSubtype: context.attributeSubtype,
-        attributeValue: context.attributeValue,
-        isNew: registrarAction == .New,
-        eventSource: context.eventSource
-      )
-    case .Lv:
-      try await application.leaveIndicated(
-        contextIdentifier: context.participant.contextIdentifier,
-        port: context.participant.port,
-        attributeType: context.attributeType,
-        attributeSubtype: context.attributeSubtype,
-        attributeValue: context.attributeValue,
-        eventSource: context.eventSource
-      )
+
+    Task { @Sendable in
+      switch registrarAction {
+      case .New:
+        fallthrough
+      case .Join:
+        try await application.joinIndicated(
+          contextIdentifier: context.participant.contextIdentifier,
+          port: context.participant.port,
+          attributeType: context.attributeType,
+          attributeSubtype: context.attributeSubtype,
+          attributeValue: context.attributeValue,
+          isNew: registrarAction == .New,
+          eventSource: context.eventSource
+        )
+      case .Lv:
+        try await application.leaveIndicated(
+          contextIdentifier: context.participant.contextIdentifier,
+          port: context.participant.port,
+          attributeType: context.attributeType,
+          attributeSubtype: context.attributeSubtype,
+          attributeValue: context.attributeValue,
+          eventSource: context.eventSource
+        )
+      }
     }
   }
 
   fileprivate func rLvNow(
     eventSource: EventSource,
     suppressGC: Bool = false
-  ) async throws {
-    try await handle(
+  ) throws {
+    try handle(
       protocolEvent: .rLvNow,
       eventSource: eventSource,
       suppressGC: suppressGC

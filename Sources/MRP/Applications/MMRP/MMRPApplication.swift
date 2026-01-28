@@ -38,34 +38,32 @@ protocol MMRPAwareBridge<P>: Bridge where P: Port {
   ) async throws
 }
 
-public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationEventObserver,
-  CustomStringConvertible,
-  Sendable where P == P
+public actor MMRPApplication<P: Port>: BaseApplication, BaseApplicationEventObserver, Sendable,
+  CustomStringConvertible where P == P
 {
   // for now, we only operate in the Base Spanning Tree Context
-  public var nonBaseContextsSupported: Bool { false }
+  public nonisolated var nonBaseContextsSupported: Bool { false }
 
-  public var validAttributeTypes: ClosedRange<AttributeType> {
+  public nonisolated var validAttributeTypes: ClosedRange<AttributeType> {
     MMRPAttributeType.validAttributeTypes
   }
 
   // 10.12.1.3 MMRP application address
-  public var groupAddress: EUI48 { CustomerBridgeMRPGroupAddress }
+  public nonisolated var groupAddress: EUI48 { CustomerBridgeMRPGroupAddress }
 
   // 10.12.1.4 MMRP application EtherType
-  public var etherType: UInt16 { MMRPEtherType }
+  public nonisolated var etherType: UInt16 { MMRPEtherType }
 
   // 10.12.1.5 MMRP ProtocolVersion
-  public var protocolVersion: ProtocolVersion { 0 }
+  public nonisolated var protocolVersion: ProtocolVersion { 0 }
 
-  public var hasAttributeListLength: Bool { false }
+  public nonisolated var hasAttributeListLength: Bool { false }
 
   let _controller: Weak<MRPController<P>>
 
-  public var controller: MRPController<P>? { _controller.object }
+  public nonisolated var controller: MRPController<P>? { _controller.object }
 
-  let _participants =
-    Mutex<[MAPContextIdentifier: Set<Participant<MMRPApplication<P>>>]>([:])
+  var _participants: [MAPContextIdentifier: Set<Participant<MMRPApplication<P>>>] = [:]
   let _logger: Logger
 
   public init(controller: MRPController<P>) async throws {
@@ -74,14 +72,13 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationEve
     try await controller.register(application: self)
   }
 
-  public var description: String {
-    let participants: String = _participants.withLock { String(describing: $0) }
-    return "MMRPApplication(controller: \(controller!), participants: \(participants))"
+  public nonisolated var description: String {
+    "MMRPApplication(controller: \(controller!))"
   }
 
-  public var name: String { "MMRP" }
+  public nonisolated var name: String { "MMRP" }
 
-  public func deserialize(
+  public nonisolated func deserialize(
     attributeOfType attributeType: AttributeType,
     from input: inout ParserSpan
   ) throws -> any Value {
@@ -95,7 +92,7 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationEve
     }
   }
 
-  public func makeNullValue(for attributeType: AttributeType) throws -> any Value {
+  public nonisolated func makeNullValue(for attributeType: AttributeType) throws -> any Value {
     guard let attributeType = MMRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }
     switch attributeType {
@@ -106,18 +103,18 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationEve
     }
   }
 
-  public func hasAttributeSubtype(for: AttributeType) -> Bool {
+  public nonisolated func hasAttributeSubtype(for: AttributeType) -> Bool {
     false
   }
 
-  public func administrativeControl(for attributeType: AttributeType) throws
+  public nonisolated func administrativeControl(for attributeType: AttributeType) throws
     -> AdministrativeControl
   {
     .normalParticipant
   }
 
-  public func register(macAddress: EUI48) async throws {
-    try await join(
+  public func register(macAddress: EUI48) throws {
+    try join(
       attributeType: MMRPAttributeType.mac.rawValue,
       attributeValue: MMRPMACValue(macAddress: macAddress),
       isNew: false,
@@ -125,8 +122,8 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationEve
     )
   }
 
-  public func deregister(macAddress: EUI48) async throws {
-    try await leave(
+  public func deregister(macAddress: EUI48) throws {
+    try leave(
       attributeType: MMRPAttributeType.mac.rawValue,
       attributeValue: MMRPMACValue(macAddress: macAddress),
       for: MAPBaseSpanningTreeContext
@@ -135,8 +132,8 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationEve
 
   public func register(
     serviceRequirement requirementSpecification: MMRPServiceRequirementValue
-  ) async throws {
-    try await join(
+  ) throws {
+    try join(
       attributeType: MMRPAttributeType.serviceRequirement.rawValue,
       attributeValue: requirementSpecification,
       isNew: false,
@@ -146,8 +143,8 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationEve
 
   public func deregister(
     serviceRequirement requirementSpecification: MMRPServiceRequirementValue
-  ) async throws {
-    try await leave(
+  ) throws {
+    try leave(
       attributeType: MMRPAttributeType.serviceRequirement.rawValue,
       attributeValue: requirementSpecification,
       for: MAPBaseSpanningTreeContext
@@ -155,8 +152,8 @@ public final class MMRPApplication<P: Port>: BaseApplication, BaseApplicationEve
   }
 
   public func periodic(for contextIdentifier: MAPContextIdentifier? = nil) async throws {
-    try await apply(for: contextIdentifier) { participant in
-      try await participant.periodic()
+    try apply(for: contextIdentifier) { participant in
+      try participant.periodic()
     }
   }
 }
