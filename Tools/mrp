@@ -1,0 +1,446 @@
+#!/usr/bin/env python3
+"""
+MRP CLI Tool - Command-line interface for interrogating mrpd REST APIs
+Supports MSRP, MVRP, and MMRP protocols
+"""
+
+import argparse
+import json
+import sys
+from typing import Optional, Dict, List, Any
+from urllib.parse import urljoin
+
+try:
+    import requests
+except ImportError:
+    print("Error: requests library not found. Install with: pip install requests", file=sys.stderr)
+    sys.exit(1)
+
+
+class MRPClient:
+    """Client for mrpd REST API"""
+
+    def __init__(self, host: str = "localhost", port: int = 80):
+        self.base_url = f"http://{host}:{port}/api/avb"
+
+    def _get(self, path: str) -> Any:
+        """Make a GET request to the API"""
+        url = urljoin(self.base_url + "/", path.lstrip("/"))
+        try:
+            response = requests.get(url, timeout=5)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            print(f"Error: Failed to connect to mrpd at {url}: {e}", file=sys.stderr)
+            sys.exit(1)
+        except json.JSONDecodeError as e:
+            print(f"Error: Invalid JSON response from {url}: {e}", file=sys.stderr)
+            sys.exit(1)
+
+
+class OutputFormatter:
+    """Format output data for display"""
+
+    @staticmethod
+    def format_json(data: Any, indent: int = 2) -> str:
+        """Format data as pretty JSON"""
+        return json.dumps(data, indent=indent)
+
+    @staticmethod
+    def format_table(headers: List[str], rows: List[List[str]]) -> str:
+        """Format data as a simple table"""
+        if not rows:
+            return "No data"
+
+        # Calculate column widths
+        col_widths = [len(h) for h in headers]
+        for row in rows:
+            for i, cell in enumerate(row):
+                col_widths[i] = max(col_widths[i], len(str(cell)))
+
+        # Build table
+        lines = []
+
+        # Header
+        header_line = " | ".join(h.ljust(col_widths[i]) for i, h in enumerate(headers))
+        lines.append(header_line)
+        lines.append("-" * len(header_line))
+
+        # Rows
+        for row in rows:
+            lines.append(" | ".join(str(cell).ljust(col_widths[i]) for i, cell in enumerate(row)))
+
+        return "\n".join(lines)
+
+
+class MSRPCommands:
+    """MSRP subcommand handlers"""
+
+    def __init__(self, client: MRPClient, formatter: OutputFormatter):
+        self.client = client
+        self.formatter = formatter
+
+    def list_ports(self, output_format: str):
+        """List all MSRP ports"""
+        data = self.client._get("/msrp/port")
+
+        if output_format == "json":
+            print(self.formatter.format_json(data))
+        else:
+            if isinstance(data, list):
+                headers = ["Port", "Port Number", "Enabled", "AS Capable", "Forwarding", "Transmit Rate (kbps)"]
+                rows = []
+                for port_data in data:
+                    rows.append([
+                        port_data.get("port_name", "N/A"),
+                        port_data.get("port_number", "N/A"),
+                        "Yes" if port_data.get("enabled") else "No",
+                        "Yes" if port_data.get("as_capable") else "No",
+                        "Yes" if port_data.get("forwarding") else "No",
+                        port_data.get("transmit_rate", "N/A")
+                    ])
+                print(self.formatter.format_table(headers, rows))
+
+    def show_port(self, port: str, output_format: str):
+        """Show detailed information about a specific port"""
+        data = self.client._get(f"/msrp/port/{port}")
+
+        if output_format == "json":
+            print(self.formatter.format_json(data))
+        else:
+            print(f"Port: {data.get('port_name', port)}")
+            print(f"Port Number: {data.get('port_number', 'N/A')}")
+            print(f"Enabled: {'Yes' if data.get('enabled') else 'No'}")
+            print(f"AS Capable: {'Yes' if data.get('as_capable') else 'No'}")
+            print(f"Forwarding: {'Yes' if data.get('forwarding') else 'No'}")
+            print(f"Transmit Rate: {data.get('transmit_rate', 'N/A')} kbps")
+            print()
+
+            # Talkers
+            talkers = data.get("talker", [])
+            if talkers:
+                print("Talker Streams:")
+                headers = ["Stream ID", "Destination", "Latency (μs)", "Registered", "Declared"]
+                rows = []
+                for talker in talkers:
+                    rows.append([
+                        talker.get("stream_id", ""),
+                        talker.get("destination", ""),
+                        talker.get("accumulated_latency", "N/A"),
+                        "Yes" if talker.get("registered") else "No",
+                        "Yes" if talker.get("declared") else "No"
+                    ])
+                print(self.formatter.format_table(headers, rows))
+                print()
+
+            # Failed Talkers
+            failed_talkers = data.get("talker_failed", [])
+            if failed_talkers:
+                print("Failed Talker Streams:")
+                headers = ["Stream ID", "Failure Code", "Reason", "Destination"]
+                rows = []
+                for talker in failed_talkers:
+                    rows.append([
+                        talker.get("stream_id", ""),
+                        talker.get("failure_code", "N/A"),
+                        talker.get("failure_reason", ""),
+                        talker.get("destination", "")
+                    ])
+                print(self.formatter.format_table(headers, rows))
+                print()
+
+            # Listeners
+            listeners = data.get("listener", [])
+            if listeners:
+                print("Listener Streams:")
+                headers = ["Stream ID", "Type", "Registered", "Declared"]
+                rows = []
+                for listener in listeners:
+                    rows.append([
+                        listener.get("stream_id", ""),
+                        listener.get("type", ""),
+                        "Yes" if listener.get("registered") else "No",
+                        "Yes" if listener.get("declared") else "No"
+                    ])
+                print(self.formatter.format_table(headers, rows))
+                print()
+
+            # SR Classes
+            sr_class = data.get("sr_class", {})
+            if sr_class:
+                print("SR Classes:")
+                for class_name in ["a", "b"]:
+                    class_data = sr_class.get(class_name)
+                    if class_data:
+                        print(f"  Class {class_name.upper()}:")
+                        print(f"    Present: {'Yes' if class_data.get('present') else 'No'}")
+                        print(f"    Priority: {class_data.get('priority', 'N/A')}")
+                        print(f"    VLAN ID: {class_data.get('vid', 'N/A')}")
+                        print(f"    Delta Bandwidth: {class_data.get('delta_bandwidth', 'N/A')}%")
+                        print(f"    Domain Boundary Port: {'Yes' if class_data.get('domain_boundary_port') else 'No'}")
+
+    def list_streams(self, output_format: str):
+        """List all MSRP streams"""
+        data = self.client._get("/msrp/stream")
+
+        if output_format == "json":
+            print(self.formatter.format_json(data))
+        else:
+            if isinstance(data, list):
+                if not data:
+                    print("No streams found")
+                    return
+
+                headers = ["Stream ID", "Destination", "VLAN", "Priority", "Bandwidth (kbps)", "Rank", "Talker Port"]
+                rows = []
+                for stream_data in data:
+                    talker = stream_data.get("talker", {})
+                    if talker:
+                        talker_port = talker.get("port_name") or str(talker.get("port_number", "N/A"))
+                    else:
+                        talker_port = "N/A"
+                    rows.append([
+                        stream_data.get("stream_id", "N/A"),
+                        stream_data.get("destination", ""),
+                        stream_data.get("vid", "N/A"),
+                        stream_data.get("priority", "N/A"),
+                        stream_data.get("bandwidth", "N/A"),
+                        stream_data.get("rank", ""),
+                        talker_port
+                    ])
+                print(self.formatter.format_table(headers, rows))
+
+    def show_stream(self, stream_id: str, output_format: str):
+        """Show detailed information about a specific stream"""
+        data = self.client._get(f"/msrp/stream/{stream_id}")
+
+        if output_format == "json":
+            print(self.formatter.format_json(data))
+        else:
+            print(f"Stream ID: {data.get('stream_id', stream_id)}")
+            print(f"Destination: {data.get('destination', 'N/A')}")
+            print(f"VLAN ID: {data.get('vid', 'N/A')}")
+            print(f"Priority: {data.get('priority', 'N/A')}")
+            print(f"Bandwidth: {data.get('bandwidth', 'N/A')} kbps")
+            print(f"Rank: {data.get('rank', 'N/A')}")
+            print()
+
+            # Talker
+            talker = data.get("talker")
+            if talker:
+                print("Talker:")
+                talker_port = talker.get("port_name") or str(talker.get("port_number", "N/A"))
+                print(f"  Port: {talker_port}")
+                print(f"  Type: {talker.get('type', 'N/A')}")
+                print()
+
+            # Listeners
+            listeners = data.get("listener", [])
+            if listeners:
+                print("Listeners:")
+                headers = ["Port", "Type", "Connected"]
+                rows = []
+                for listener in listeners:
+                    rows.append([
+                        listener.get("port_name", listener.get("port_number", "")),
+                        listener.get("type", ""),
+                        "Yes" if listener.get("connected") else "No"
+                    ])
+                print(self.formatter.format_table(headers, rows))
+
+
+class MVRPCommands:
+    """MVRP subcommand handlers"""
+
+    def __init__(self, client: MRPClient, formatter: OutputFormatter):
+        self.client = client
+        self.formatter = formatter
+
+    def list_ports(self, output_format: str):
+        """List all MVRP ports"""
+        data = self.client._get("/mvrp/port")
+
+        if output_format == "json":
+            print(self.formatter.format_json(data))
+        else:
+            if isinstance(data, list):
+                headers = ["Port", "Port Number", "Enabled", "VLANs"]
+                rows = []
+                for port_data in data:
+                    vlan_count = len(port_data.get("vlan", []))
+                    rows.append([
+                        port_data.get("port_name", "N/A"),
+                        port_data.get("port_number", "N/A"),
+                        "Yes" if port_data.get("enabled") else "No",
+                        vlan_count
+                    ])
+                print(self.formatter.format_table(headers, rows))
+
+    def show_port(self, port: str, output_format: str):
+        """Show VLANs on a specific port"""
+        data = self.client._get(f"/mvrp/port/{port}")
+
+        if output_format == "json":
+            print(self.formatter.format_json(data))
+        else:
+            print(f"Port: {data.get('port_name', port)}")
+            print(f"Enabled: {'Yes' if data.get('enabled') else 'No'}")
+            print()
+
+            vlans = data.get("vlan", [])
+            if vlans:
+                print("VLANs:")
+                headers = ["VLAN ID", "Registered", "Declared"]
+                rows = []
+                for vlan in vlans:
+                    rows.append([
+                        vlan.get("vid", ""),
+                        "Yes" if vlan.get("registered") else "No",
+                        "Yes" if vlan.get("declared") else "No"
+                    ])
+                print(self.formatter.format_table(headers, rows))
+            else:
+                print("No VLANs registered")
+
+
+class MMRPCommands:
+    """MMRP subcommand handlers"""
+
+    def __init__(self, client: MRPClient, formatter: OutputFormatter):
+        self.client = client
+        self.formatter = formatter
+
+    def list_ports(self, output_format: str):
+        """List all MMRP ports"""
+        data = self.client._get("/mmrp/port")
+
+        if output_format == "json":
+            print(self.formatter.format_json(data))
+        else:
+            if isinstance(data, list):
+                headers = ["Port", "Port Number", "Enabled", "MAC Addresses"]
+                rows = []
+                for port_data in data:
+                    mac_count = len(port_data.get("mac", []))
+                    rows.append([
+                        port_data.get("port_name", "N/A"),
+                        port_data.get("port_number", "N/A"),
+                        "Yes" if port_data.get("enabled") else "No",
+                        mac_count
+                    ])
+                print(self.formatter.format_table(headers, rows))
+
+    def show_port(self, port: str, output_format: str):
+        """Show MAC addresses on a specific port"""
+        data = self.client._get(f"/mmrp/port/{port}")
+
+        if output_format == "json":
+            print(self.formatter.format_json(data))
+        else:
+            print(f"Port: {data.get('port_name', port)}")
+            print(f"Enabled: {'Yes' if data.get('enabled') else 'No'}")
+            print()
+
+            macs = data.get("mac", [])
+            if macs:
+                print("MAC Addresses:")
+                headers = ["MAC Address", "Registered", "Declared"]
+                rows = []
+                for mac in macs:
+                    rows.append([
+                        mac.get("mac", ""),
+                        "Yes" if mac.get("registered") else "No",
+                        "Yes" if mac.get("declared") else "No"
+                    ])
+                print(self.formatter.format_table(headers, rows))
+            else:
+                print("No MAC addresses registered")
+
+
+def create_parser() -> argparse.ArgumentParser:
+    """Create the argument parser"""
+    parser = argparse.ArgumentParser(
+        description="MRP CLI - Interrogate mrpd REST APIs",
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+
+    parser.add_argument("--host", default="localhost", help="mrpd host (default: localhost)")
+    parser.add_argument("--port", type=int, default=80, help="mrpd REST API port (default: 80)")
+    parser.add_argument("--format", choices=["json", "table"], default="table",
+                       help="Output format (default: table)")
+
+    subparsers = parser.add_subparsers(dest="protocol", required=True, help="MRP protocol")
+
+    # MSRP subcommand
+    msrp_parser = subparsers.add_parser("msrp", help="MSRP (Multiple Stream Reservation Protocol)")
+    msrp_subparsers = msrp_parser.add_subparsers(dest="msrp_command", required=True)
+
+    # MSRP port commands
+    msrp_port_parser = msrp_subparsers.add_parser("port", help="Query MSRP ports")
+    msrp_port_parser.add_argument("port_id", nargs="?", help="Port identifier (optional)")
+
+    # MSRP stream commands
+    msrp_stream_parser = msrp_subparsers.add_parser("stream", help="Query MSRP streams")
+    msrp_stream_parser.add_argument("stream_id", nargs="?", help="Stream ID (optional)")
+
+    # MVRP subcommand
+    mvrp_parser = subparsers.add_parser("mvrp", help="MVRP (Multiple VLAN Registration Protocol)")
+    mvrp_subparsers = mvrp_parser.add_subparsers(dest="mvrp_command", required=True)
+
+    # MVRP port commands
+    mvrp_port_parser = mvrp_subparsers.add_parser("port", help="Query MVRP ports")
+    mvrp_port_parser.add_argument("port_id", nargs="?", help="Port identifier (optional)")
+
+    # MMRP subcommand
+    mmrp_parser = subparsers.add_parser("mmrp", help="MMRP (Multiple MAC Registration Protocol)")
+    mmrp_subparsers = mmrp_parser.add_subparsers(dest="mmrp_command", required=True)
+
+    # MMRP port commands
+    mmrp_port_parser = mmrp_subparsers.add_parser("port", help="Query MMRP ports")
+    mmrp_port_parser.add_argument("port_id", nargs="?", help="Port identifier (optional)")
+
+    return parser
+
+
+def main():
+    """Main entry point"""
+    parser = create_parser()
+    args = parser.parse_args()
+
+    # Create client and formatter
+    client = MRPClient(host=args.host, port=args.port)
+    formatter = OutputFormatter()
+
+    # Handle commands
+    if args.protocol == "msrp":
+        msrp = MSRPCommands(client, formatter)
+        if args.msrp_command == "port":
+            if args.port_id:
+                msrp.show_port(args.port_id, args.format)
+            else:
+                msrp.list_ports(args.format)
+        elif args.msrp_command == "stream":
+            if args.stream_id:
+                msrp.show_stream(args.stream_id, args.format)
+            else:
+                msrp.list_streams(args.format)
+
+    elif args.protocol == "mvrp":
+        mvrp = MVRPCommands(client, formatter)
+        if args.mvrp_command == "port":
+            if args.port_id:
+                mvrp.show_port(args.port_id, args.format)
+            else:
+                mvrp.list_ports(args.format)
+
+    elif args.protocol == "mmrp":
+        mmrp = MMRPCommands(client, formatter)
+        if args.mmrp_command == "port":
+            if args.port_id:
+                mmrp.show_port(args.port_id, args.format)
+            else:
+                mmrp.list_ports(args.format)
+
+
+if __name__ == "__main__":
+    main()
