@@ -70,7 +70,7 @@ struct MMRPHandler<P: Port>: Sendable, RestApiApplicationHandler {
       portNumber = port.id
       portName = port.name
       enabled = true
-      mac = await participant.findAllAttributes(
+      mac = participant.findAllAttributes(
         attributeType: MMRPAttributeType.mac.rawValue,
         matching: .matchAny
       ).map { MAC(attributeValue: $0) }

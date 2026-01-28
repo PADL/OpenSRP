@@ -137,32 +137,34 @@ struct MSRPPortState<P: AVBPort>: Sendable {
   }
 }
 
-public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventObserver,
-  BaseApplicationContextObserver, CustomStringConvertible, @unchecked Sendable where P == P
+public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventObserver,
+  BaseApplicationContextObserver, CustomStringConvertible where P == P
 {
   private typealias TalkerRegistration = (Participant<MSRPApplication>, any MSRPTalkerValue)
 
   // for now, we only operate in the Base Spanning Tree Context
-  public var nonBaseContextsSupported: Bool { false }
+  public nonisolated var nonBaseContextsSupported: Bool { false }
 
-  public var validAttributeTypes: ClosedRange<AttributeType> {
+  public nonisolated var validAttributeTypes: ClosedRange<AttributeType> {
     MSRPAttributeType.validAttributeTypes
   }
 
-  public var groupAddress: EUI48 { IndividualLANScopeGroupAddress }
+  public nonisolated var groupAddress: EUI48 { IndividualLANScopeGroupAddress }
 
-  public var etherType: UInt16 { MSRPEtherType }
+  public nonisolated var etherType: UInt16 { MSRPEtherType }
 
-  public var protocolVersion: ProtocolVersion { MSRPProtocolVersion.v0.rawValue }
+  public nonisolated var protocolVersion: ProtocolVersion { MSRPProtocolVersion.v0.rawValue }
 
-  public var hasAttributeListLength: Bool { true }
+  public nonisolated var hasAttributeListLength: Bool { true }
 
   let _controller: Weak<MRPController<P>>
 
-  public var controller: MRPController<P>? { _controller.object }
+  public nonisolated var controller: MRPController<P>? { _controller.object }
 
-  let _participants =
-    Mutex<[MAPContextIdentifier: Set<Participant<MSRPApplication<P>>>]>([:])
+  nonisolated(unsafe) var _participants: [
+    MAPContextIdentifier: Set<Participant<MSRPApplication<P>>>
+  ] =
+    [:]
   let _logger: Logger
   let _latencyMaxFrameSize: UInt16
   let _queues: [SRclassID: UInt]
@@ -174,15 +176,15 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
 
   fileprivate let _maxFanInPorts: Int
   fileprivate let _maxSRClass: SRclassID
-  fileprivate let _portStates = Mutex<[P.ID: MSRPPortState<P>]>([:])
+  fileprivate var _portStates: [P.ID: MSRPPortState<P>] = [:]
   fileprivate let _mmrp: MMRPApplication<P>?
   fileprivate var _priorityMapNotificationTask: Task<(), Error>?
 
   // Convenience accessors for flags
-  fileprivate var _forceAvbCapable: Bool { _flags.contains(.forceAvbCapable) }
-  fileprivate var _configureQueues: Bool { _flags.contains(.configureQueues) }
-  var _ignoreAsCapable: Bool { _flags.contains(.ignoreAsCapable) }
-  fileprivate var _talkerPruning: Bool { _flags.contains(.talkerPruning) }
+  fileprivate nonisolated var _forceAvbCapable: Bool { _flags.contains(.forceAvbCapable) }
+  fileprivate nonisolated var _configureQueues: Bool { _flags.contains(.configureQueues) }
+  nonisolated var _ignoreAsCapable: Bool { _flags.contains(.ignoreAsCapable) }
+  fileprivate nonisolated var _talkerPruning: Bool { _flags.contains(.talkerPruning) }
 
   public init(
     controller: MRPController<P>,
@@ -228,12 +230,10 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     port: P,
     _ body: (_: inout MSRPPortState<P>) throws -> T
   ) throws -> T {
-    try _portStates.withLock {
-      if let index = $0.index(forKey: port.id) {
-        return try body(&$0.values[index])
-      } else {
-        throw MRPError.portNotFound
-      }
+    if let index = _portStates.index(forKey: port.id) {
+      return try body(&_portStates.values[index])
+    } else {
+      throw MRPError.portNotFound
     }
   }
 
@@ -276,14 +276,12 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
       }
     }
 
-    try _portStates.withLock {
-      for port in context {
-        var portState = try MSRPPortState(msrp: self, port: port)
-        if let srClassPriorityMap = srClassPriorityMap[port.id] {
-          portState.srClassPriorityMap = srClassPriorityMap
-        }
-        $0[port.id] = portState
+    for port in context {
+      var portState = try MSRPPortState(msrp: self, port: port)
+      if let srClassPriorityMap = srClassPriorityMap[port.id] {
+        portState.srClassPriorityMap = srClassPriorityMap
       }
+      _portStates[port.id] = portState
     }
 
     for port in context {
@@ -299,14 +297,12 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     guard contextIdentifier == MAPBaseSpanningTreeContext else { return }
 
     if !_forceAvbCapable {
-      _portStates.withLock {
-        for port in context {
-          guard let index = $0.index(forKey: port.id) else { continue }
-          if $0.values[index].msrpPortEnabledStatus != port.isAvbCapable {
-            _logger.info("MSRP: port \(port) changed isAvbCapable, now \(port.isAvbCapable)")
-          }
-          $0.values[index].msrpPortEnabledStatus = port.isAvbCapable
+      for port in context {
+        guard let index = _portStates.index(forKey: port.id) else { continue }
+        if _portStates.values[index].msrpPortEnabledStatus != port.isAvbCapable {
+          _logger.info("MSRP: port \(port) changed isAvbCapable, now \(port.isAvbCapable)")
         }
+        _portStates.values[index].msrpPortEnabledStatus = port.isAvbCapable
       }
     }
 
@@ -338,23 +334,19 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
       }
     }
 
-    _portStates.withLock {
-      for port in context {
-        _logger.debug("MSRP: port \(port) disappeared, removing")
-        $0.removeValue(forKey: port.id)
-      }
+    for port in context {
+      _logger.debug("MSRP: port \(port) disappeared, removing")
+      _portStates.removeValue(forKey: port.id)
     }
   }
 
-  public var description: String {
-    let participants: String = _participants.withLock { String(describing: $0) }
-    let portStates: String = _portStates.withLock { String(describing: $0) }
-    return "MSRPApplication(controller: \(controller?.description ?? "<nil>"), participants: \(participants), portStates: \(portStates)"
+  public nonisolated var description: String {
+    "MSRPApplication"
   }
 
-  public var name: String { "MSRP" }
+  public nonisolated var name: String { "MSRP" }
 
-  public func deserialize(
+  public nonisolated func deserialize(
     attributeOfType attributeType: AttributeType,
     from input: inout ParserSpan
   ) throws -> any Value {
@@ -372,7 +364,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     }
   }
 
-  public func makeNullValue(for attributeType: AttributeType) throws -> any Value {
+  public nonisolated func makeNullValue(for attributeType: AttributeType) throws -> any Value {
     guard let attributeType = MSRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }
     switch attributeType {
@@ -387,11 +379,11 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     }
   }
 
-  public func hasAttributeSubtype(for attributeType: AttributeType) -> Bool {
+  public nonisolated func hasAttributeSubtype(for attributeType: AttributeType) -> Bool {
     attributeType == MSRPAttributeType.listener.rawValue
   }
 
-  public func administrativeControl(for attributeType: AttributeType) throws
+  public nonisolated func administrativeControl(for attributeType: AttributeType) throws
     -> AdministrativeControl
   {
     .normalParticipant
@@ -546,7 +538,7 @@ extension MSRPApplication {
     let oppositeType: MSRPAttributeType = declarationType == .talkerAdvertise ? .talkerFailed :
       .talkerAdvertise
 
-    let oppositeAttributes = await participant.findAttributes(
+    let oppositeAttributes = participant.findAttributes(
       attributeType: oppositeType.rawValue,
       matching: .matchAnyIndex(streamID.index)
     )
@@ -583,7 +575,7 @@ extension MSRPApplication {
 
     if _talkerPruning || portState.talkerPruning {
       if let mmrpParticipant = try? _mmrp?.findParticipant(port: port),
-         await mmrpParticipant.findAttribute(
+         mmrpParticipant.findAttribute(
            attributeType: MMRPAttributeType.mac.rawValue,
            matching: .matchEqual(MMRPMACValue(macAddress: dataFrameParameters.destinationAddress))
          ) == nil
@@ -607,8 +599,8 @@ extension MSRPApplication {
     var fanInCount = 0
 
     // calculate total number of ports with inbound reservations
-    await apply { participant in
-      if await participant.findAttribute(
+    apply { participant in
+      if participant.findAttribute(
         attributeType: MSRPAttributeType.listener.rawValue,
         matching: .matchAny
       ) != nil {
@@ -1136,7 +1128,7 @@ extension MSRPApplication {
     for streamID: MSRPStreamID,
     participant: Participant<MSRPApplication>
   ) async -> (MSRPListenerValue, MSRPAttributeSubtype)? {
-    guard let listenerAttribute = await participant.findAttribute(
+    guard let listenerAttribute = participant.findAttribute(
       attributeType: MSRPAttributeType.listener.rawValue,
       matching: .matchAnyIndex(streamID.index)
     ) else { return nil }
@@ -1156,12 +1148,12 @@ extension MSRPApplication {
     participant: Participant<MSRPApplication>
   ) async -> (any MSRPTalkerValue)? {
     // TalkerFailed takes precedence over TalkerAdvertise per spec
-    if let value = await participant.findAttribute(
+    if let value = participant.findAttribute(
       attributeType: MSRPAttributeType.talkerFailed.rawValue,
       matching: .matchAnyIndex(streamID.index)
     ) {
       value.1 as? (any MSRPTalkerValue)
-    } else if let value = await participant.findAttribute(
+    } else if let value = participant.findAttribute(
       attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
       matching: .matchAnyIndex(streamID.index)
     ) {
@@ -1201,14 +1193,14 @@ extension MSRPApplication {
     var listenerCount = mergedDeclarationType != nil ? 1 : 0
 
     // collect listener declarations from all other ports and merge declaration type
-    await apply(for: contextIdentifier) { participant in
+    apply(for: contextIdentifier) { participant in
       // exclude registering or leaving port
       guard participant.port != port else { return }
 
       // exclude talker port
       guard participant.port != talkerRegistration.0.port else { return }
 
-      for listenerAttribute in await participant.findAllAttributes(
+      for listenerAttribute in participant.findAllAttributes(
         attributeType: MSRPAttributeType.listener.rawValue,
         matching: .matchAnyIndex(streamID.id)
       ) {
@@ -1779,7 +1771,7 @@ extension MSRPApplication {
     }
   }
 
-  fileprivate var _allSRClassIDs: [SRclassID] {
+  fileprivate nonisolated var _allSRClassIDs: [SRclassID] {
     Array((_maxSRClass.rawValue...SRclassID.A.rawValue).map { SRclassID(rawValue: $0)! })
   }
 
@@ -1794,13 +1786,13 @@ extension MSRPApplication {
     get async {
       var numberOfTalkerAttributes = 0
 
-      await apply { participant in
-        numberOfTalkerAttributes += await participant.findAttributes(
+      apply { participant in
+        numberOfTalkerAttributes += participant.findAttributes(
           attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
           matching: .matchAny
         ).count
 
-        numberOfTalkerAttributes += await participant.findAttributes(
+        numberOfTalkerAttributes += participant.findAttributes(
           attributeType: MSRPAttributeType.talkerFailed.rawValue,
           matching: .matchAny
         ).count

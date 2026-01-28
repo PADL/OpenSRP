@@ -100,7 +100,9 @@ private enum EnqueuedEvent<A: Application>: Equatable, CustomStringConvertible {
   }
 }
 
-public final actor Participant<A: Application>: Equatable, Hashable, CustomStringConvertible {
+public final class Participant<A: Application>: Equatable, Hashable, CustomStringConvertible,
+  @unchecked Sendable
+{
   public static func == (lhs: Participant<A>, rhs: Participant<A>) -> Bool {
     lhs.application == rhs.application && lhs.port == rhs.port && lhs.contextIdentifier == rhs
       .contextIdentifier
@@ -137,7 +139,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     port: A.P,
     contextIdentifier: MAPContextIdentifier,
     type: ParticipantType? = nil
-  ) async {
+  ) {
     _controller = Weak(controller)
     _application = Weak(application)
     self.contextIdentifier = contextIdentifier
@@ -187,7 +189,6 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     _leaveAll?.stopLeaveAllTimer()
   }
 
-  @Sendable
   private func _onLeaveAllTimerExpired() async throws {
     try await _handleLeaveAll(protocolEvent: .leavealltimer, eventSource: .leaveAllTimer)
   }
@@ -201,6 +202,19 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
       for attributeValue in attribute.value {
         if !attributeValue.matches(attributeType: attributeType, matching: filter) { continue }
         try await block(attributeValue)
+      }
+    }
+  }
+
+  private func _apply(
+    attributeType: AttributeType? = nil,
+    matching filter: AttributeValueFilter = .matchAny,
+    _ block: ParticipantApplyFunction<A>
+  ) rethrows {
+    for attribute in _attributes {
+      for attributeValue in attribute.value {
+        if !attributeValue.matches(attributeType: attributeType, matching: filter) { continue }
+        try block(attributeValue)
       }
     }
   }
@@ -259,7 +273,6 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     _jointimer.start(interval: interval)
   }
 
-  @Sendable
   private func _onTxOpportunity() async throws {
     let eventSource = EventSource.joinTimer
 
@@ -969,7 +982,6 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
     registrar?.stopLeaveTimer()
   }
 
-  @Sendable
   private func _onLeaveTimerExpired() async throws {
     try await handle(
       protocolEvent: .leavetimer,
@@ -1011,7 +1023,7 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
   private func _getEventContext(
     for event: ProtocolEvent,
     eventSource: EventSource,
-    isolation participant: isolated P
+    participant: P
   ) throws -> EventContext<A> {
     try EventContext(
       participant: participant,
@@ -1036,7 +1048,7 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
       protocolEvent: event,
       eventSource: eventSource,
       suppressGC: suppressGC,
-      isolation: participant
+      participant: participant
     )
   }
 
@@ -1044,12 +1056,16 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
     protocolEvent event: ProtocolEvent,
     eventSource: EventSource,
     suppressGC: Bool = false,
-    isolation participant: isolated P
+    participant: P
   ) async throws {
-    let context = try _getEventContext(for: event, eventSource: eventSource, isolation: participant)
+    let context = try _getEventContext(
+      for: event,
+      eventSource: eventSource,
+      participant: participant
+    )
 
-    try await _handleRegistrar(context: context, isolation: context.participant)
-    try await _handleApplicant(context: context, isolation: context.participant)
+    try await _handleRegistrar(context: context, participant: context.participant)
+    try _handleApplicant(context: context, participant: context.participant)
 
     // remove attribute entirely if it is no longer declared or registered
     if !suppressGC, canGC { participant._gcAttributeValue(self) }
@@ -1057,7 +1073,7 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
 
   private func _handleApplicant(
     context: EventContext<A>,
-    isolation participant: isolated P
+    participant: P
   ) throws {
     participant._logger.trace("\(context.participant): handling applicant \(context)")
 
@@ -1116,7 +1132,7 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
 
   private func _handleRegistrar(
     context: EventContext<A>,
-    isolation participant: isolated P
+    participant: P
   ) async throws {
     context.participant._logger.trace("\(context.participant): handling registrar \(context)")
 

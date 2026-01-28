@@ -32,34 +32,35 @@ protocol MVRPAwareBridge<P>: Bridge where P: Port {
   func deregister(vlan: VLAN, from port: P) async throws
 }
 
-public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationEventObserver,
-  BaseApplicationContextObserver, CustomStringConvertible,
-  Sendable where P == P
+public actor MVRPApplication<P: Port>: BaseApplication, BaseApplicationEventObserver,
+  BaseApplicationContextObserver, CustomStringConvertible where P == P
 {
   // for now, we only operate in the Base Spanning Tree Context
-  public var nonBaseContextsSupported: Bool { false }
+  public nonisolated var nonBaseContextsSupported: Bool { false }
 
-  public var validAttributeTypes: ClosedRange<AttributeType> {
+  public nonisolated var validAttributeTypes: ClosedRange<AttributeType> {
     MVRPAttributeType.validAttributeTypes
   }
 
   // 10.12.1.3 MVRP application address
-  public var groupAddress: EUI48 { CustomerBridgeMRPGroupAddress }
+  public nonisolated var groupAddress: EUI48 { CustomerBridgeMRPGroupAddress }
 
   // 10.12.1.4 MVRP application EtherType
-  public var etherType: UInt16 { MVRPEtherType }
+  public nonisolated var etherType: UInt16 { MVRPEtherType }
 
   // 10.12.1.5 MVRP ProtocolVersion
-  public var protocolVersion: ProtocolVersion { 0 }
+  public nonisolated var protocolVersion: ProtocolVersion { 0 }
 
-  public var hasAttributeListLength: Bool { false }
+  public nonisolated var hasAttributeListLength: Bool { false }
 
   let _controller: Weak<MRPController<P>>
 
-  public var controller: MRPController<P>? { _controller.object }
+  public nonisolated var controller: MRPController<P>? { _controller.object }
 
-  let _participants =
-    Mutex<[MAPContextIdentifier: Set<Participant<MVRPApplication<P>>>]>([:])
+  nonisolated(unsafe) var _participants: [
+    MAPContextIdentifier: Set<Participant<MVRPApplication<P>>>
+  ] =
+    [:]
   let _logger: Logger
   let _vlanExclusions: Set<VLAN>
 
@@ -70,14 +71,13 @@ public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationEve
     try await controller.register(application: self)
   }
 
-  public var description: String {
-    let participants: String = _participants.withLock { String(describing: $0) }
-    return "MVRPApplication(controller: \(controller!), vlanExclusions: \(_vlanExclusions), participants: \(participants))"
+  public nonisolated var description: String {
+    "MVRPApplication"
   }
 
-  public var name: String { "MVRP" }
+  public nonisolated var name: String { "MVRP" }
 
-  public func deserialize(
+  public nonisolated func deserialize(
     attributeOfType attributeType: AttributeType,
     from input: inout ParserSpan
   ) throws -> any Value {
@@ -89,7 +89,7 @@ public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationEve
     }
   }
 
-  public func makeNullValue(for attributeType: AttributeType) throws -> any Value {
+  public nonisolated func makeNullValue(for attributeType: AttributeType) throws -> any Value {
     guard let attributeType = MVRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }
     switch attributeType {
@@ -98,11 +98,11 @@ public final class MVRPApplication<P: Port>: BaseApplication, BaseApplicationEve
     }
   }
 
-  public func hasAttributeSubtype(for: AttributeType) -> Bool {
+  public nonisolated func hasAttributeSubtype(for: AttributeType) -> Bool {
     false
   }
 
-  public func administrativeControl(for attributeType: AttributeType) throws
+  public nonisolated func administrativeControl(for attributeType: AttributeType) throws
     -> AdministrativeControl
   {
     .normalParticipant

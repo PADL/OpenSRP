@@ -133,9 +133,9 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
       participant: Participant<Application>,
       srClassID: SRclassID,
       streams: [Stream]
-    ) {
+    ) async {
       deltaBandwidth = application._deltaBandwidths[srClassID] ?? 0
-      guard let portState = try? application.withPortState(port: participant.port, { $0 })
+      guard let portState = try? await application.withPortState(port: participant.port, { $0 })
       else { return nil }
       guard let domain = portState.getDomain(for: srClassID, defaultSRPVid: application._srPVid)
       else { return nil }
@@ -176,7 +176,10 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
       let type: String
       let streamAge: UInt32
 
-      fileprivate init(participant: Participant<Application>, attributeValue: AttributeValue) {
+      fileprivate init(
+        participant: Participant<Application>,
+        attributeValue: AttributeValue
+      ) async {
         portNumber = participant.port.id
         portName = participant.port.name
 
@@ -200,7 +203,7 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
         let streamID = (attributeValue.attributeValue as! MSRPListenerValue).streamID
 
         streamAge = if let application = participant.application {
-          (try? application
+          await (try? application
             .withPortState(port: participant.port) { $0.getStreamAge(for: streamID) }) ?? 0
         } else {
           0
@@ -223,13 +226,13 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
       attributeValue: AttributeValue
     ) async throws {
       let talker = attributeValue.attributeValue as! any MSRPTalkerValue
-      let portState = try application.withPortState(port: participant.port) { $0 }
+      let portState = try await application.withPortState(port: participant.port) { $0 }
 
       streamID = talker.streamID.streamIDString
       vid = talker.dataFrameParameters.vlanIdentifier.vid
       priority = talker.priorityAndRank.dataFramePriority.rawValue
       if let talker = talker as? MSRPTalkerAdvertiseValue {
-        bandwidth = try application._calculateBandwidthUsed(
+        bandwidth = try await application._calculateBandwidthUsed(
           portState: portState,
           talker: talker,
           nominalBandwidth: false
@@ -262,23 +265,25 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
       let port = participant.port
       let streams = await application._getStreams()
 
-      enabled = (try? application
+      enabled = await (try? application
         .withPortState(port: participant.port) { $0.msrpPortEnabledStatus }) ?? false
-      listener = await participant._getListeners()
-      talker = await participant._getTalkers()
-      talkerFailed = await participant._getTalkersFailed()
+      listener = participant._getListeners()
+      talker = participant._getTalkers()
+      talkerFailed = participant._getTalkersFailed()
       let activeStreamIDs = Set(listener.map(\.streamID))
       let activeStreams = streams.filter { activeStreamIDs.contains($0.streamID) }
-      srClass = SRclassID.allCases.reduce(into: [:]) { dict, classID in
-        if let srClassInstance = SRClass(
+      var srClassDict: [String: SRClass] = [:]
+      for classID in SRclassID.allCases {
+        if let srClassInstance = await SRClass(
           application: application,
           participant: participant,
           srClassID: classID,
           streams: activeStreams
         ) {
-          dict[classID.description.lowercased()] = srClassInstance
+          srClassDict[classID.description.lowercased()] = srClassInstance
         }
       }
+      srClass = srClassDict
       portNumber = port.id
       portName = port.name
       asCapable = await (try? port.isAsCapable) ?? false
@@ -354,7 +359,7 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
   @JSONRoute("GET /api/avb/msrp/port/:port_number/listener", encoder: _getSnakeCaseJSONEncoder())
   func getListener(_ request: HTTPRequest) async throws -> Array<Listener> {
     let (_, _, participant) = try await getApplicationPortAndParticipant(from: request)
-    return await participant._getListeners()
+    return participant._getListeners()
   }
 
   @JSONRoute(
@@ -369,7 +374,7 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
       throw HTTPUnhandledError()
     }
 
-    guard let listener = await participant._getListener(streamID: streamID) else {
+    guard let listener = participant._getListener(streamID: streamID) else {
       throw HTTPUnhandledError()
     }
 
@@ -536,7 +541,7 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
       throw HTTPUnhandledError()
     }
 
-    return await participant._getTalkers()
+    return participant._getTalkers()
   }
 
   @JSONRoute(
@@ -551,7 +556,7 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
       throw HTTPUnhandledError()
     }
 
-    guard let talker = await participant._getTalker(streamID: streamID) else {
+    guard let talker = participant._getTalker(streamID: streamID) else {
       throw HTTPUnhandledError()
     }
 
@@ -570,7 +575,7 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
       throw HTTPUnhandledError()
     }
 
-    return await participant._getTalkersFailed()
+    return participant._getTalkersFailed()
   }
 
   @JSONRoute(
@@ -585,7 +590,7 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
       throw HTTPUnhandledError()
     }
 
-    guard let talkerFailed = await participant._getTalkerFailed(streamID: streamID) else {
+    guard let talkerFailed = participant._getTalkerFailed(streamID: streamID) else {
       throw HTTPUnhandledError()
     }
 
@@ -931,16 +936,19 @@ fileprivate extension Participant where A.P: AVBPort {
 }
 
 fileprivate extension Participant where A.P: AVBPort {
-  func _getStreamListener(streamID: MSRPStreamID) -> MSRPHandler<A.P>.Stream.Listener? {
-    findAllAttributes(
+  func _getStreamListener(streamID: MSRPStreamID) async -> MSRPHandler<A.P>.Stream.Listener? {
+    let attributes = findAllAttributes(
       attributeType: MSRPAttributeType.listener.rawValue,
       matching: .matchIndex(streamID)
-    )
-    .filter(\.isRegistered)
-    .map { MSRPHandler<A.P>.Stream.Listener(
-      participant: self as! Participant<MSRPApplication<A.P>>,
-      attributeValue: $0
-    ) }.first
+    ).filter(\.isRegistered)
+
+    for attribute in attributes {
+      return await MSRPHandler<A.P>.Stream.Listener(
+        participant: self as! Participant<MSRPApplication<A.P>>,
+        attributeValue: attribute
+      )
+    }
+    return nil
   }
 }
 

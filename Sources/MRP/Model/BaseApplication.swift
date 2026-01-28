@@ -17,22 +17,31 @@
 import Logging
 import Synchronization
 
+@preconcurrency
 protocol BaseApplication: Application where P == P {
   typealias MAPParticipantDictionary = [MAPContextIdentifier: Set<Participant<Self>>]
 
   var _controller: Weak<MRPController<P>> { get }
-  var _participants: Mutex<MAPParticipantDictionary> { get }
+  var _participants: MAPParticipantDictionary { get set }
 }
 
+@preconcurrency
 protocol BaseApplicationContextObserver<P>: BaseApplication {
   func onContextAdded(
     contextIdentifier: MAPContextIdentifier,
     with context: MAPContext<P>
   ) async throws
-  func onContextUpdated(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
-  func onContextRemoved(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
+  func onContextUpdated(
+    contextIdentifier: MAPContextIdentifier,
+    with context: MAPContext<P>
+  ) async throws
+  func onContextRemoved(
+    contextIdentifier: MAPContextIdentifier,
+    with context: MAPContext<P>
+  ) async throws
 }
 
+@preconcurrency
 protocol BaseApplicationEventObserver<P>: BaseApplication {
   func onJoinIndication(
     contextIdentifier: MAPContextIdentifier,
@@ -61,12 +70,10 @@ extension BaseApplication {
       nonBaseContextsSupported || participant
         .contextIdentifier == MAPBaseSpanningTreeContext
     )
-    _participants.withLock {
-      if let index = $0.index(forKey: participant.contextIdentifier) {
-        $0.values[index].insert(participant)
-      } else {
-        $0[participant.contextIdentifier] = Set([participant])
-      }
+    if let index = _participants.index(forKey: participant.contextIdentifier) {
+      _participants.values[index].insert(participant)
+    } else {
+      _participants[participant.contextIdentifier] = Set([participant])
     }
   }
 
@@ -77,9 +84,7 @@ extension BaseApplication {
       nonBaseContextsSupported || participant
         .contextIdentifier == MAPBaseSpanningTreeContext
     )
-    _ = _participants.withLock {
-      $0[participant.contextIdentifier]?.remove(participant)
-    }
+    _participants[participant.contextIdentifier]?.remove(participant)
   }
 
   @discardableResult
@@ -87,13 +92,10 @@ extension BaseApplication {
     for contextIdentifier: MAPContextIdentifier? = nil,
     _ block: AsyncApplyFunction<T>
   ) async rethrows -> [T] {
-    var participants: Set<Participant<Self>>?
-    _participants.withLock {
-      if let contextIdentifier {
-        participants = $0[contextIdentifier]
-      } else {
-        participants = Set($0.flatMap { Array($1) })
-      }
+    let participants: Set<Participant<Self>>? = if let contextIdentifier {
+      _participants[contextIdentifier]
+    } else {
+      Set(_participants.flatMap { Array($1) })
     }
     var ret = [T]()
     if let participants {
@@ -109,13 +111,10 @@ extension BaseApplication {
     for contextIdentifier: MAPContextIdentifier? = nil,
     _ block: ApplyFunction<T>
   ) rethrows -> [T] {
-    var participants: Set<Participant<Self>>?
-    _participants.withLock {
-      if let contextIdentifier {
-        participants = $0[contextIdentifier]
-      } else {
-        participants = Set($0.flatMap { Array($1) })
-      }
+    let participants: Set<Participant<Self>>? = if let contextIdentifier {
+      _participants[contextIdentifier]
+    } else {
+      Set(_participants.flatMap { Array($1) })
     }
     var ret = [T]()
     if let participants {
@@ -143,7 +142,7 @@ extension BaseApplication {
           throw MRPError.portAlreadyExists
         }
         guard let controller else { throw MRPError.internalError }
-        let participant = await Participant<Self>(
+        let participant = Participant<Self>(
           controller: controller,
           application: self,
           port: port,
@@ -164,7 +163,7 @@ extension BaseApplication {
   public func didUpdate(
     contextIdentifier: MAPContextIdentifier,
     with context: MAPContext<P>
-  ) throws {
+  ) async throws {
     if _isParticipantValid(contextIdentifier: contextIdentifier) {
       for port in context {
         let participant = try findParticipant(
@@ -177,19 +176,19 @@ extension BaseApplication {
     // also call this regardless of the value of nonBaseContextsSupported, so that
     // MVRP can be advised of VLAN changes on a port
     if let observer = self as? any BaseApplicationContextObserver<P> {
-      try observer.onContextUpdated(contextIdentifier: contextIdentifier, with: context)
+      try await observer.onContextUpdated(contextIdentifier: contextIdentifier, with: context)
     }
   }
 
   public func didRemove(
     contextIdentifier: MAPContextIdentifier,
     with context: MAPContext<P>
-  ) throws {
+  ) async throws {
     // call observer _before_ removing participants so it can do any other cleanup
     // also call this regardless of the value of nonBaseContextsSupported, so that
     // MVRP can be advised of VLAN changes on a port
     if let observer = self as? any BaseApplicationContextObserver<P> {
-      try observer.onContextRemoved(contextIdentifier: contextIdentifier, with: context)
+      try await observer.onContextRemoved(contextIdentifier: contextIdentifier, with: context)
     }
     if _isParticipantValid(contextIdentifier: contextIdentifier) {
       for port in context {

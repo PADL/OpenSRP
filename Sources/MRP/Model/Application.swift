@@ -45,8 +45,8 @@ public protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
   // if contextIdentifier is MAPBaseSpanningTreeContext, the ports are physical
   // ports on the bridge; otherwise, they are virtual ports managed by MVRP.
   func didAdd(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) async throws
-  func didUpdate(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
-  func didRemove(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
+  func didUpdate(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) async throws
+  func didRemove(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) async throws
 
   // apply for all participants. if contextIdentifier is nil, then all participants are called
   // regardless of contextIdentifier.

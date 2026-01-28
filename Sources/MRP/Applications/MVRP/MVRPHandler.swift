@@ -68,7 +68,7 @@ struct MVRPHandler<P: Port>: Sendable, RestApiApplicationHandler {
       portNumber = port.id
       portName = port.name
       enabled = true
-      vlan = await participant.findAllAttributes(
+      vlan = participant.findAllAttributes(
         attributeType: MVRPAttributeType.vid.rawValue,
         matching: .matchAny
       ).map { VLAN(attributeValue: $0) }

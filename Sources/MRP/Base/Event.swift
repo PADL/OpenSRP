@@ -67,7 +67,7 @@ public enum ProtocolEvent: Sendable {
   }
 }
 
-public struct EventContext<A: Application>: Sendable, CustomStringConvertible {
+public struct EventContext<A: Application>: CustomStringConvertible {
   public let participant: Participant<A>
   public let event: ProtocolEvent
   public let eventSource: EventSource
