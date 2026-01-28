@@ -684,7 +684,8 @@ extension MSRPApplication {
 
   func _calculateBandwidthUsed(
     portState: MSRPPortState<P>,
-    talker: MSRPTalkerAdvertiseValue
+    talker: MSRPTalkerAdvertiseValue,
+    nominalBandwidth: Bool
   ) throws -> Int {
     guard let srClassID = portState
       .reverseMapSrClassPriority(priority: talker.priorityAndRank.dataFramePriority)
@@ -695,7 +696,8 @@ extension MSRPApplication {
     let (_, bandwidthUsed) = try calculateBandwidthUsed(
       srClassID: srClassID,
       tSpec: talker.tSpec,
-      maxFrameSize: _latencyMaxFrameSize
+      maxFrameSize: _latencyMaxFrameSize,
+      nominalBandwidth: nominalBandwidth
     )
 
     return bandwidthUsed
@@ -720,7 +722,11 @@ extension MSRPApplication {
       else {
         continue
       }
-      let bw = try _calculateBandwidthUsed(portState: portState, talker: talker)
+      let bw = try _calculateBandwidthUsed(
+        portState: portState,
+        talker: talker,
+        nominalBandwidth: false
+      )
       if let index = bandwidthUsed.index(forKey: srClassID) {
         bandwidthUsed.values[index] += bw
       } else {

@@ -229,7 +229,11 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
       vid = talker.dataFrameParameters.vlanIdentifier.vid
       priority = talker.priorityAndRank.dataFramePriority.rawValue
       if let talker = talker as? MSRPTalkerAdvertiseValue {
-        bandwidth = try application._calculateBandwidthUsed(portState: portState, talker: talker)
+        bandwidth = try application._calculateBandwidthUsed(
+          portState: portState,
+          talker: talker,
+          nominalBandwidth: false
+        )
       } else {
         bandwidth = 0
       }

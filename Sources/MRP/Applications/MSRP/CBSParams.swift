@@ -202,7 +202,7 @@ func calculateBandwidthUsed(
   srClassID: SRclassID,
   tSpec: MSRPTSpec,
   maxFrameSize: UInt16,
-  nominalBandwidth: Bool = true
+  nominalBandwidth: Bool
 ) throws -> (UInt16, Int) {
   var frameSize = calcFrameSize(tSpec)
   if !nominalBandwidth { frameSize += 1 }
