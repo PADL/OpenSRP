@@ -1161,7 +1161,8 @@ final class MRPTests: XCTestCase {
     let (frameSize, bandwidthUsed) = try calculateBandwidthUsed(
       srClassID: srClassID,
       tSpec: tSpec,
-      maxFrameSize: maxFrameSize
+      maxFrameSize: maxFrameSize,
+      nominalBandwidth: true
     )
 
     // Calculate expected frame size with overhead
