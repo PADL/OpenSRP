@@ -137,32 +137,31 @@ struct MSRPPortState<P: AVBPort>: Sendable {
   }
 }
 
-public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventObserver,
-  BaseApplicationContextObserver, CustomStringConvertible, @unchecked Sendable where P == P
+public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventObserver, Sendable,
+  BaseApplicationContextObserver, CustomStringConvertible where P == P
 {
   private typealias TalkerRegistration = (Participant<MSRPApplication>, any MSRPTalkerValue)
 
   // for now, we only operate in the Base Spanning Tree Context
-  public var nonBaseContextsSupported: Bool { false }
+  public nonisolated var nonBaseContextsSupported: Bool { false }
 
-  public var validAttributeTypes: ClosedRange<AttributeType> {
+  public nonisolated var validAttributeTypes: ClosedRange<AttributeType> {
     MSRPAttributeType.validAttributeTypes
   }
 
-  public var groupAddress: EUI48 { IndividualLANScopeGroupAddress }
+  public nonisolated var groupAddress: EUI48 { IndividualLANScopeGroupAddress }
 
-  public var etherType: UInt16 { MSRPEtherType }
+  public nonisolated var etherType: UInt16 { MSRPEtherType }
 
-  public var protocolVersion: ProtocolVersion { MSRPProtocolVersion.v0.rawValue }
+  public nonisolated var protocolVersion: ProtocolVersion { MSRPProtocolVersion.v0.rawValue }
 
-  public var hasAttributeListLength: Bool { true }
+  public nonisolated var hasAttributeListLength: Bool { true }
 
   let _controller: Weak<MRPController<P>>
 
-  public var controller: MRPController<P>? { _controller.object }
+  public nonisolated var controller: MRPController<P>? { _controller.object }
 
-  let _participants =
-    Mutex<[MAPContextIdentifier: Set<Participant<MSRPApplication<P>>>]>([:])
+  var _participants: [MAPContextIdentifier: Set<Participant<MSRPApplication<P>>>] = [:]
   let _logger: Logger
   let _latencyMaxFrameSize: UInt16
   let _queues: [SRclassID: UInt]
@@ -174,15 +173,15 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
 
   fileprivate let _maxFanInPorts: Int
   fileprivate let _maxSRClass: SRclassID
-  fileprivate let _portStates = Mutex<[P.ID: MSRPPortState<P>]>([:])
+  fileprivate var _portStates: [P.ID: MSRPPortState<P>] = [:]
   fileprivate let _mmrp: MMRPApplication<P>?
   fileprivate var _priorityMapNotificationTask: Task<(), Error>?
 
   // Convenience accessors for flags
-  fileprivate var _forceAvbCapable: Bool { _flags.contains(.forceAvbCapable) }
-  fileprivate var _configureQueues: Bool { _flags.contains(.configureQueues) }
-  var _ignoreAsCapable: Bool { _flags.contains(.ignoreAsCapable) }
-  fileprivate var _talkerPruning: Bool { _flags.contains(.talkerPruning) }
+  fileprivate nonisolated var _forceAvbCapable: Bool { _flags.contains(.forceAvbCapable) }
+  fileprivate nonisolated var _configureQueues: Bool { _flags.contains(.configureQueues) }
+  nonisolated var _ignoreAsCapable: Bool { _flags.contains(.ignoreAsCapable) }
+  fileprivate nonisolated var _talkerPruning: Bool { _flags.contains(.talkerPruning) }
 
   public init(
     controller: MRPController<P>,
@@ -228,12 +227,10 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     port: P,
     _ body: (_: inout MSRPPortState<P>) throws -> T
   ) throws -> T {
-    try _portStates.withLock {
-      if let index = $0.index(forKey: port.id) {
-        return try body(&$0.values[index])
-      } else {
-        throw MRPError.portNotFound
-      }
+    if let index = _portStates.index(forKey: port.id) {
+      return try body(&_portStates.values[index])
+    } else {
+      throw MRPError.portNotFound
     }
   }
 
@@ -276,85 +273,73 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
       }
     }
 
-    try _portStates.withLock {
-      for port in context {
-        var portState = try MSRPPortState(msrp: self, port: port)
-        if let srClassPriorityMap = srClassPriorityMap[port.id] {
-          portState.srClassPriorityMap = srClassPriorityMap
-        }
-        $0[port.id] = portState
+    for port in context {
+      var portState = try MSRPPortState(msrp: self, port: port)
+      if let srClassPriorityMap = srClassPriorityMap[port.id] {
+        portState.srClassPriorityMap = srClassPriorityMap
       }
+      _portStates[port.id] = portState
     }
 
     for port in context {
       _logger.debug("MSRP: declaring domains for port \(port)")
-      try await _declareDomains(port: port)
+      try _declareDomains(port: port)
     }
   }
 
   func onContextUpdated(
     contextIdentifier: MAPContextIdentifier,
     with context: MAPContext<P>
-  ) throws {
+  ) async throws {
     guard contextIdentifier == MAPBaseSpanningTreeContext else { return }
 
     if !_forceAvbCapable {
-      _portStates.withLock {
-        for port in context {
-          guard let index = $0.index(forKey: port.id) else { continue }
-          if $0.values[index].msrpPortEnabledStatus != port.isAvbCapable {
-            _logger.info("MSRP: port \(port) changed isAvbCapable, now \(port.isAvbCapable)")
-          }
-          $0.values[index].msrpPortEnabledStatus = port.isAvbCapable
+      for port in context {
+        guard let index = _portStates.index(forKey: port.id) else { continue }
+        if _portStates.values[index].msrpPortEnabledStatus != port.isAvbCapable {
+          _logger.info("MSRP: port \(port) changed isAvbCapable, now \(port.isAvbCapable)")
         }
+        _portStates.values[index].msrpPortEnabledStatus = port.isAvbCapable
       }
     }
 
-    Task {
-      for port in context {
-        _logger.debug("MSRP: re-declaring domains for port \(port)")
-        try await _declareDomains(port: port)
-      }
+    for port in context {
+      _logger.debug("MSRP: re-declaring domains for port \(port)")
+      try _declareDomains(port: port)
     }
   }
 
   func onContextRemoved(
     contextIdentifier: MAPContextIdentifier,
     with context: MAPContext<P>
-  ) throws {
+  ) async throws {
     guard contextIdentifier == MAPBaseSpanningTreeContext else { return }
 
     if _configureQueues {
-      Task {
-        for port in context {
-          guard port.isAvbCapable,
-                let bridge = (controller?.bridge as? any MSRPAwareBridge<P>) else { continue }
-          do {
-            try await bridge.unconfigureQueues(port: port)
-          } catch {
-            _logger.error("MSRP: failed to unconfigure queues for port \(port): \(error)")
-          }
+      for port in context {
+        guard port.isAvbCapable,
+              let bridge = (controller?.bridge as? any MSRPAwareBridge<P>) else { continue }
+        do {
+          try await bridge.unconfigureQueues(port: port)
+        } catch {
+          _logger.error("MSRP: failed to unconfigure queues for port \(port): \(error)")
         }
       }
     }
 
-    _portStates.withLock {
-      for port in context {
-        _logger.debug("MSRP: port \(port) disappeared, removing")
-        $0.removeValue(forKey: port.id)
-      }
+    for port in context {
+      _logger.debug("MSRP: port \(port) disappeared, removing")
+      _portStates.removeValue(forKey: port.id)
     }
   }
 
-  public var description: String {
-    let participants: String = _participants.withLock { String(describing: $0) }
-    let portStates: String = _portStates.withLock { String(describing: $0) }
-    return "MSRPApplication(controller: \(controller?.description ?? "<nil>"), participants: \(participants), portStates: \(portStates)"
+  public nonisolated var description: String {
+    "MSRPApplication(controller: \(controller!))"
   }
 
-  public var name: String { "MSRP" }
+  public nonisolated var name: String { "MSRP" }
 
-  public func deserialize(
+  public nonisolated func deserialize(
     attributeOfType attributeType: AttributeType,
     from input: inout ParserSpan
   ) throws -> any Value {
@@ -372,7 +357,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     }
   }
 
-  public func makeNullValue(for attributeType: AttributeType) throws -> any Value {
+  public nonisolated func makeNullValue(for attributeType: AttributeType) throws -> any Value {
     guard let attributeType = MSRPAttributeType(rawValue: attributeType)
     else { throw MRPError.unknownAttributeType }
     switch attributeType {
@@ -387,11 +372,11 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     }
   }
 
-  public func hasAttributeSubtype(for attributeType: AttributeType) -> Bool {
+  public nonisolated func hasAttributeSubtype(for attributeType: AttributeType) -> Bool {
     attributeType == MSRPAttributeType.listener.rawValue
   }
 
-  public func administrativeControl(for attributeType: AttributeType) throws
+  public nonisolated func administrativeControl(for attributeType: AttributeType) throws
     -> AdministrativeControl
   {
     .normalParticipant
@@ -411,7 +396,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     priorityAndRank: MSRPPriorityAndRank,
     accumulatedLatency: UInt32,
     failureInformation: MSRPFailure? = nil
-  ) async throws {
+  ) throws {
     let attributeValue: any Value
 
     switch declarationType {
@@ -447,7 +432,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
       throw MRPError.invalidMSRPDeclarationType
     }
 
-    try await join(
+    try join(
       attributeType: (
         failureInformation != nil ? MSRPAttributeType.talkerFailed : MSRPAttributeType
           .talkerAdvertise
@@ -465,8 +450,8 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
   // were in the associated REGISTER_STREAM.request primitive.
   public func deregisterStream(
     streamID: MSRPStreamID
-  ) async throws {
-    guard let talkerRegistration = await _findTalkerRegistration(for: streamID) else {
+  ) throws {
+    guard let talkerRegistration = _findTalkerRegistration(for: streamID) else {
       throw MRPError.participantNotFound
     }
     let declarationType: MSRPDeclarationType = if talkerRegistration.1 is MSRPTalkerAdvertiseValue {
@@ -474,7 +459,7 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     } else {
       .talkerFailed
     }
-    try await leave(
+    try leave(
       attributeType: declarationType.attributeType.rawValue,
       attributeValue: MSRPListenerValue(streamID: streamID),
       for: MAPBaseSpanningTreeContext
@@ -490,10 +475,10 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
     streamID: MSRPStreamID,
     declarationType: MSRPDeclarationType,
     on port: P? = nil
-  ) async throws {
-    try await apply { participant in
+  ) throws {
+    try apply { participant in
       if let port, port != participant.port { return }
-      try await join(
+      try join(
         attributeType: MSRPAttributeType.listener.rawValue,
         attributeSubtype: declarationType.attributeSubtype?.rawValue,
         attributeValue: MSRPListenerValue(streamID: streamID),
@@ -511,16 +496,16 @@ public final class MSRPApplication<P: AVBPort>: BaseApplication, BaseApplication
   public func deregisterAttach(
     streamID: MSRPStreamID,
     on port: P? = nil
-  ) async throws {
-    try await apply { participant in
+  ) throws {
+    try apply { participant in
       if let port, port != participant.port { return }
 
-      guard let listenerRegistration = await _findListenerRegistration(
+      guard let listenerRegistration = _findListenerRegistration(
         for: streamID,
         participant: participant
       ) else { return }
 
-      try await leave(
+      try leave(
         attributeType: MSRPAttributeType.listener.rawValue,
         attributeSubtype: listenerRegistration.1.rawValue,
         attributeValue: listenerRegistration.0,
@@ -542,24 +527,24 @@ extension MSRPApplication {
     declarationType: MSRPDeclarationType,
     streamID: MSRPStreamID,
     eventSource: EventSource
-  ) async throws {
+  ) throws {
     let oppositeType: MSRPAttributeType = declarationType == .talkerAdvertise ? .talkerFailed :
       .talkerAdvertise
 
-    let oppositeAttributes = await participant.findAttributes(
+    let oppositeAttributes = participant.findAttributes(
       attributeType: oppositeType.rawValue,
       matching: .matchAnyIndex(streamID.index)
     )
 
     for (_, attributeValue) in oppositeAttributes {
       if eventSource == .map {
-        try? await participant.leave(
+        try? participant.leave(
           attributeType: oppositeType.rawValue,
           attributeValue: attributeValue,
           eventSource: eventSource
         )
       } else {
-        try? await participant.deregister(
+        try? participant.deregister(
           attributeType: oppositeType.rawValue,
           attributeValue: attributeValue,
           eventSource: eventSource
@@ -582,8 +567,8 @@ extension MSRPApplication {
     guard let portState = try? withPortState(port: port, { $0 }) else { return true }
 
     if _talkerPruning || portState.talkerPruning {
-      if let mmrpParticipant = try? _mmrp?.findParticipant(port: port),
-         await mmrpParticipant.findAttribute(
+      if let mmrpParticipant = try? await _mmrp?.findParticipant(port: port),
+         mmrpParticipant.findAttribute(
            attributeType: MMRPAttributeType.mac.rawValue,
            matching: .matchEqual(MMRPMACValue(macAddress: dataFrameParameters.destinationAddress))
          ) == nil
@@ -599,7 +584,7 @@ extension MSRPApplication {
     return false
   }
 
-  private func _isFanInPortLimitReached() async -> Bool {
+  private func _isFanInPortLimitReached() -> Bool {
     if _maxFanInPorts == 0 {
       return false
     }
@@ -607,8 +592,8 @@ extension MSRPApplication {
     var fanInCount = 0
 
     // calculate total number of ports with inbound reservations
-    await apply { participant in
-      if await participant.findAttribute(
+    apply { participant in
+      if participant.findAttribute(
         attributeType: MSRPAttributeType.listener.rawValue,
         matching: .matchAny
       ) != nil {
@@ -707,11 +692,11 @@ extension MSRPApplication {
     participant: Participant<MSRPApplication>,
     portState: MSRPPortState<P>,
     provisionalTalker: MSRPTalkerAdvertiseValue? = nil
-  ) async throws -> [SRclassID: Int] {
+  ) throws -> [SRclassID: Int] {
     var bandwidthUsed = [SRclassID: Int]()
 
     // Find all active talkers (those with listeners in ready or readyFailed state)
-    var talkers = await _findActiveTalkers(participant: participant)
+    var talkers = _findActiveTalkers(participant: participant)
 
     // Add provisional talker if provided (for bandwidth admission control check)
     if let provisionalTalker { talkers.insert(provisionalTalker) }
@@ -744,7 +729,7 @@ extension MSRPApplication {
     dataFrameParameters: MSRPDataFrameParameters,
     tSpec: MSRPTSpec,
     priorityAndRank: MSRPPriorityAndRank
-  ) async throws -> Bool {
+  ) throws -> Bool {
     let port = participant.port
     let provisionalTalker = MSRPTalkerAdvertiseValue(
       streamID: streamID,
@@ -754,7 +739,7 @@ extension MSRPApplication {
       accumulatedLatency: 0 // or this
     )
 
-    let bandwidthUsed = try await _calculateBandwidthUsed(
+    let bandwidthUsed = try _calculateBandwidthUsed(
       participant: participant,
       portState: portState,
       provisionalTalker: provisionalTalker
@@ -789,7 +774,7 @@ extension MSRPApplication {
     accumulatedLatency: UInt32,
     isNew: Bool,
     eventSource: EventSource
-  ) async throws {
+  ) throws {
     let port = participant.port
 
     do {
@@ -802,7 +787,7 @@ extension MSRPApplication {
         throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
       }
 
-      if let existingTalkerRegistration = await _findTalkerRegistration(
+      if let existingTalkerRegistration = _findTalkerRegistration(
         for: streamID,
         participant: participant
       ), existingTalkerRegistration.dataFrameParameters != dataFrameParameters {
@@ -822,7 +807,7 @@ extension MSRPApplication {
         throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
       }
 
-      guard await !_isFanInPortLimitReached() else {
+      guard !_isFanInPortLimitReached() else {
         _logger.error("MSRP: fan in port limit reached")
         throw MSRPFailure(systemID: port.systemID, failureCode: .fanInPortLimitReached)
       }
@@ -839,7 +824,7 @@ extension MSRPApplication {
         throw MSRPFailure(systemID: port.systemID, failureCode: .maxFrameSizeTooLargeForMedia)
       }
 
-      guard try await _checkAvailableBandwidth(
+      guard try _checkAvailableBandwidth(
         participant: participant,
         portState: portState,
         streamID: streamID,
@@ -890,7 +875,7 @@ extension MSRPApplication {
     // Deregister the opposite talker type from the peer to ensure mutual exclusion
     if eventSource == .peer {
       let sourceParticipant = try findParticipant(for: contextIdentifier, port: port)
-      try await _enforceTalkerMutualExclusion(
+      try _enforceTalkerMutualExclusion(
         participant: sourceParticipant,
         declarationType: declarationType,
         streamID: talkerValue.streamID,
@@ -938,7 +923,7 @@ extension MSRPApplication {
 
       // Leave the opposite talker declaration type to ensure mutual exclusion
       // (per spec, only one talker declaration type should exist per stream)
-      try await _enforceTalkerMutualExclusion(
+      try _enforceTalkerMutualExclusion(
         participant: participant,
         declarationType: declarationType,
         streamID: talkerValue.streamID,
@@ -947,7 +932,7 @@ extension MSRPApplication {
 
       if declarationType == .talkerAdvertise {
         do {
-          try await _canBridgeTalker(
+          try _canBridgeTalker(
             participant: participant,
             port: port,
             streamID: talkerValue.streamID,
@@ -970,7 +955,7 @@ extension MSRPApplication {
             .debug(
               "MSRP: propagating talker advertise \(talkerAdvertise) to port \(port)"
             )
-          try await participant.join(
+          try participant.join(
             attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
             attributeValue: talkerAdvertise,
             isNew: false,
@@ -990,7 +975,7 @@ extension MSRPApplication {
             .debug(
               "MSRP: propagating talker failed \(talkerFailed) on port \(port), error \(error)"
             )
-          try await participant.join(
+          try participant.join(
             attributeType: MSRPAttributeType.talkerFailed.rawValue,
             attributeValue: talkerFailed,
             isNew: true,
@@ -1012,7 +997,7 @@ extension MSRPApplication {
           .debug(
             "MSRP: propagating talker failed \(talkerFailed) to port \(port), transitive"
           )
-        try await participant.join(
+        try participant.join(
           attributeType: MSRPAttributeType.talkerFailed.rawValue,
           attributeValue: talkerFailed,
           isNew: false,
@@ -1042,7 +1027,7 @@ extension MSRPApplication {
     // _propagateListenerDeclarationToTalker() will examine all listeners and
     // return the merged declaration type, so there is no need to do this
     // within the apply() loop
-    guard let mergedDeclarationType = try? await _propagateListenerDeclarationToTalker(
+    guard let mergedDeclarationType = try? _propagateListenerDeclarationToTalker(
       contextIdentifier: contextIdentifier,
       listenerPort: nil,
       declarationType: nil,
@@ -1056,7 +1041,7 @@ extension MSRPApplication {
     // that didn't exist previously, we do need to update port parameters on
     // each talker port that matches the listener stream ID
     await apply(for: contextIdentifier) { participant in
-      guard let listenerRegistration = await _findListenerRegistration(
+      guard let listenerRegistration = _findListenerRegistration(
         for: talkerValue.streamID,
         participant: participant
       ) else {
@@ -1064,7 +1049,7 @@ extension MSRPApplication {
       }
 
       // verify talker still exists (guard against race with talker departure)
-      guard let currentTalker = await _findTalkerRegistration(
+      guard let currentTalker = _findTalkerRegistration(
         for: talkerValue.streamID,
         participant: talkerParticipant
       ), currentTalker.streamID == talkerValue.streamID else {
@@ -1135,8 +1120,8 @@ extension MSRPApplication {
   private func _findListenerRegistration(
     for streamID: MSRPStreamID,
     participant: Participant<MSRPApplication>
-  ) async -> (MSRPListenerValue, MSRPAttributeSubtype)? {
-    guard let listenerAttribute = await participant.findAttribute(
+  ) -> (MSRPListenerValue, MSRPAttributeSubtype)? {
+    guard let listenerAttribute = participant.findAttribute(
       attributeType: MSRPAttributeType.listener.rawValue,
       matching: .matchAnyIndex(streamID.index)
     ) else { return nil }
@@ -1154,14 +1139,14 @@ extension MSRPApplication {
   private func _findTalkerRegistration(
     for streamID: MSRPStreamID,
     participant: Participant<MSRPApplication>
-  ) async -> (any MSRPTalkerValue)? {
+  ) -> (any MSRPTalkerValue)? {
     // TalkerFailed takes precedence over TalkerAdvertise per spec
-    if let value = await participant.findAttribute(
+    if let value = participant.findAttribute(
       attributeType: MSRPAttributeType.talkerFailed.rawValue,
       matching: .matchAnyIndex(streamID.index)
     ) {
       value.1 as? (any MSRPTalkerValue)
-    } else if let value = await participant.findAttribute(
+    } else if let value = participant.findAttribute(
       attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
       matching: .matchAnyIndex(streamID.index)
     ) {
@@ -1173,11 +1158,11 @@ extension MSRPApplication {
 
   private func _findTalkerRegistration(
     for streamID: MSRPStreamID
-  ) async -> TalkerRegistration? {
+  ) -> TalkerRegistration? {
     var talkerRegistration: TalkerRegistration?
 
-    await apply { participant in
-      guard let participantTalker = await _findTalkerRegistration(
+    apply { participant in
+      guard let participantTalker = _findTalkerRegistration(
         for: streamID,
         participant: participant
       ), talkerRegistration == nil else {
@@ -1195,22 +1180,23 @@ extension MSRPApplication {
     declarationType: MSRPDeclarationType?,
     talkerRegistration: TalkerRegistration,
     isJoin: Bool
-  ) async throws -> MSRPDeclarationType? {
+  ) throws -> MSRPDeclarationType? {
     var mergedDeclarationType = isJoin ? declarationType : nil
     let streamID = talkerRegistration.1.streamID
     var listenerCount = mergedDeclarationType != nil ? 1 : 0
 
     // collect listener declarations from all other ports and merge declaration type
-    await apply(for: contextIdentifier) { participant in
+    apply(for: contextIdentifier) { participant in
       // exclude registering or leaving port
       guard participant.port != port else { return }
 
       // exclude talker port
       guard participant.port != talkerRegistration.0.port else { return }
 
-      for listenerAttribute in await participant.findAllAttributes(
+      for listenerAttribute in participant.findAllAttributesUnchecked(
         attributeType: MSRPAttributeType.listener.rawValue,
-        matching: .matchAnyIndex(streamID.id)
+        matching: .matchAnyIndex(streamID.id),
+        isolation: self
       ) {
         guard let declarationType = try? MSRPDeclarationType(attributeSubtype: listenerAttribute
           .attributeSubtype)
@@ -1275,19 +1261,19 @@ extension MSRPApplication {
 
   private func _findActiveTalkers(
     participant: Participant<MSRPApplication<P>>
-  ) async -> Set<MSRPTalkerAdvertiseValue> {
+  ) -> Set<MSRPTalkerAdvertiseValue> {
     // Find all active talkers by querying listeners on this port and finding their corresponding
     // talkers
-    await Set(participant.findAttributes(
+    Set(participant.findAttributes(
       attributeType: MSRPAttributeType.listener.rawValue,
       matching: .matchAny
-    ).asyncCompactMap {
+    ).compactMap {
       guard let attributeSubtype = $0.0,
             let attributeSubtype = MSRPAttributeSubtype(rawValue: attributeSubtype),
             attributeSubtype == .ready || attributeSubtype == .readyFailed else { return nil }
 
       let listener = $0.1 as! MSRPListenerValue
-      guard let talkerRegistration = await _findTalkerRegistration(for: listener.streamID),
+      guard let talkerRegistration = _findTalkerRegistration(for: listener.streamID),
             let talkerAdvertise = talkerRegistration.1 as? MSRPTalkerAdvertiseValue
       else { return nil }
       return talkerAdvertise
@@ -1310,7 +1296,7 @@ extension MSRPApplication {
       return
     }
 
-    var talkers = await _findActiveTalkers(participant: participant)
+    var talkers = _findActiveTalkers(participant: participant)
 
     // Remove the specific talker stream that is the subject of this
     // registration or deregistration; we will add it back conditionally
@@ -1417,7 +1403,7 @@ extension MSRPApplication {
     isNew: Bool,
     eventSource: EventSource,
     talkerRegistration: TalkerRegistration
-  ) async throws -> MSRPDeclarationType? {
+  ) throws -> MSRPDeclarationType? {
     // point-to-point talker registrations should not come from the same port as the listener
     if let port, port.isPointToPoint, talkerRegistration.0.port == port {
       _logger
@@ -1428,7 +1414,7 @@ extension MSRPApplication {
     }
 
     // TL;DR: propagate merged Listener declarations to _talker_ port
-    guard let mergedDeclarationType = try await _mergeListenerDeclarations(
+    guard let mergedDeclarationType = try _mergeListenerDeclarations(
       contextIdentifier: contextIdentifier,
       port: port,
       declarationType: declarationType,
@@ -1443,7 +1429,7 @@ extension MSRPApplication {
         "MSRP: propagating listener declaration streamID \(streamID) declarationType \(declarationType != nil ? String(describing: declarationType!) : "<nil>") -> \(mergedDeclarationType) to participant \(talkerRegistration.0)"
       )
 
-    try await talkerRegistration.0.join(
+    try talkerRegistration.0.join(
       attributeType: MSRPAttributeType.listener.rawValue,
       attributeSubtype: mergedDeclarationType.attributeSubtype!.rawValue,
       attributeValue: MSRPListenerValue(streamID: streamID),
@@ -1467,7 +1453,7 @@ extension MSRPApplication {
     isNew: Bool,
     eventSource: EventSource
   ) async throws {
-    guard let talkerRegistration = await _findTalkerRegistration(for: streamID) else {
+    guard let talkerRegistration = _findTalkerRegistration(for: streamID) else {
       // no listener attribute propagation if no talker (35.2.4.4.1)
       // this is an expected race condition - listener arrives before talker
       // when talker arrives, _updateExistingListeners() will process it
@@ -1478,7 +1464,7 @@ extension MSRPApplication {
       return
     }
 
-    guard let mergedDeclarationType = try await _propagateListenerDeclarationToTalker(
+    guard let mergedDeclarationType = try _propagateListenerDeclarationToTalker(
       contextIdentifier: contextIdentifier,
       listenerPort: port,
       declarationType: declarationType,
@@ -1606,11 +1592,11 @@ extension MSRPApplication {
       guard participant.port != port else { return } // don't propagate to source port
 
       // If this participant has active listeners, propagate a leave back to the talker
-      if let listenerRegistration = await _findListenerRegistration(
+      if let listenerRegistration = _findListenerRegistration(
         for: streamID,
         participant: participant
       ) {
-        try await talkerParticipant.leave(
+        try talkerParticipant.leave(
           attributeType: MSRPAttributeType.listener.rawValue,
           attributeSubtype: listenerRegistration.1.rawValue,
           attributeValue: listenerRegistration.0,
@@ -1628,7 +1614,7 @@ extension MSRPApplication {
       // 35.2.4.3: If no Talker attributes are registered for a StreamID then
       // no Talker attributes for that StreamID will be declared on any other
       // port of the Bridge. i.e. implement as ordinary attribute propagation
-      try await participant.leave(
+      try participant.leave(
         attributeType: talkerValue.declarationType!.attributeType.rawValue,
         attributeSubtype: nil,
         attributeValue: talkerValue,
@@ -1651,12 +1637,12 @@ extension MSRPApplication {
     // StreamID of the Declaration matches a Stream that the Talker is
     // transmitting, then the Talker shall stop the transmission for this
     // Stream, if it is transmitting.
-    guard let talkerRegistration = await _findTalkerRegistration(for: streamID) else {
+    guard let talkerRegistration = _findTalkerRegistration(for: streamID) else {
       return
     }
 
     // TL;DR: propagate merged Listener declarations to _talker_ port
-    let mergedDeclarationType = try await _mergeListenerDeclarations(
+    let mergedDeclarationType = try _mergeListenerDeclarations(
       contextIdentifier: contextIdentifier,
       port: port,
       declarationType: declarationType,
@@ -1670,7 +1656,7 @@ extension MSRPApplication {
       )
 
     if let mergedDeclarationType {
-      try await talkerRegistration.0.join(
+      try talkerRegistration.0.join(
         attributeType: MSRPAttributeType.listener.rawValue,
         attributeSubtype: mergedDeclarationType.attributeSubtype!.rawValue,
         attributeValue: MSRPListenerValue(streamID: streamID),
@@ -1678,7 +1664,7 @@ extension MSRPApplication {
         eventSource: .map
       )
     } else {
-      try await talkerRegistration.0.leave(
+      try talkerRegistration.0.leave(
         attributeType: MSRPAttributeType.listener.rawValue,
         attributeValue: MSRPListenerValue(streamID: streamID),
         eventSource: .map
@@ -1756,7 +1742,7 @@ extension MSRPApplication {
   private func _declareDomain(
     srClassID: SRclassID,
     on participant: Participant<MSRPApplication>
-  ) async throws {
+  ) throws {
     var domain: MSRPDomainValue?
 
     domain = try withPortState(port: participant.port) { portState in
@@ -1765,7 +1751,7 @@ extension MSRPApplication {
 
     if let domain {
       _logger.info("MSRP: declaring domain \(domain)")
-      try await participant.join(
+      try participant.join(
         attributeType: MSRPAttributeType.domain.rawValue,
         attributeValue: domain,
         isNew: true,
@@ -1779,14 +1765,14 @@ extension MSRPApplication {
     }
   }
 
-  fileprivate var _allSRClassIDs: [SRclassID] {
+  fileprivate nonisolated var _allSRClassIDs: [SRclassID] {
     Array((_maxSRClass.rawValue...SRclassID.A.rawValue).map { SRclassID(rawValue: $0)! })
   }
 
-  private func _declareDomains(port: P) async throws {
+  private func _declareDomains(port: P) throws {
     let participant = try findParticipant(port: port)
     for srClassID in _allSRClassIDs {
-      try await _declareDomain(srClassID: srClassID, on: participant)
+      try _declareDomain(srClassID: srClassID, on: participant)
     }
   }
 
@@ -1794,13 +1780,13 @@ extension MSRPApplication {
     get async {
       var numberOfTalkerAttributes = 0
 
-      await apply { participant in
-        numberOfTalkerAttributes += await participant.findAttributes(
+      apply { participant in
+        numberOfTalkerAttributes += participant.findAttributes(
           attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
           matching: .matchAny
         ).count
 
-        numberOfTalkerAttributes += await participant.findAttributes(
+        numberOfTalkerAttributes += participant.findAttributes(
           attributeType: MSRPAttributeType.talkerFailed.rawValue,
           matching: .matchAny
         ).count

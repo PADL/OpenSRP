@@ -116,7 +116,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
     #endif
     try? await bridge.shutdown(controller: self)
     for port in ports {
-      try? _didRemove(port: port)
+      try? await _didRemove(port: port)
     }
   }
 
@@ -206,13 +206,13 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
       )
 
     for contextIdentifier in removedContextIdentifiers {
-      try _didRemove(contextIdentifier: contextIdentifier, with: [port])
+      try await _didRemove(contextIdentifier: contextIdentifier, with: [port])
     }
 
     for contextIdentifier in updatedContextIdentifiers
       .union(isNewPort ? [] : [MAPBaseSpanningTreeContext])
     {
-      try _didUpdate(contextIdentifier: contextIdentifier, with: [port])
+      try await _didUpdate(contextIdentifier: contextIdentifier, with: [port])
     }
 
     for contextIdentifier in addedContextIdentifiers
@@ -222,7 +222,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
     }
   }
 
-  private func _applyContextIdentifierChanges(beforeRemoving port: P) throws {
+  private func _applyContextIdentifierChanges(beforeRemoving port: P) async throws {
     let removedContextIdentifiers: Set<MAPContextIdentifier>
 
     guard let existingPort = ports.first(where: { $0.id == port.id }) else { return }
@@ -234,7 +234,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
       )
 
     for contextIdentifier in [MAPBaseSpanningTreeContext] + removedContextIdentifiers {
-      try _didRemove(contextIdentifier: contextIdentifier, with: [port])
+      try await _didRemove(contextIdentifier: contextIdentifier, with: [port])
     }
   }
 
@@ -247,10 +247,10 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
     _ports[port.id] = port
   }
 
-  private func _didRemove(port: P) throws {
+  private func _didRemove(port: P) async throws {
     logger.debug("removed port \(port.id): \(port)")
 
-    try _applyContextIdentifierChanges(beforeRemoving: port)
+    try await _applyContextIdentifierChanges(beforeRemoving: port)
     _ports[port.id] = nil
 
     if timerConfiguration.periodicTime != .zero { _stopPeriodicTimer() }
@@ -271,7 +271,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
         case let .added(port):
           try await ports.contains(port) ? _didUpdate(port: port) : _didAdd(port: port)
         case let .removed(port):
-          try _didRemove(port: port)
+          try await _didRemove(port: port)
         case let .changed(port):
           try await _didUpdate(port: port)
         }
@@ -394,18 +394,18 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
   private func _didUpdate(
     contextIdentifier: MAPContextIdentifier,
     with context: MAPContext<P>
-  ) throws {
+  ) async throws {
     for application in _applications.values {
-      try application.didUpdate(contextIdentifier: contextIdentifier, with: context)
+      try await application.didUpdate(contextIdentifier: contextIdentifier, with: context)
     }
   }
 
   private func _didRemove(
     contextIdentifier: MAPContextIdentifier,
     with context: MAPContext<P>
-  ) throws {
+  ) async throws {
     for application in _applications.values {
-      try application.didRemove(contextIdentifier: contextIdentifier, with: context)
+      try await application.didRemove(contextIdentifier: contextIdentifier, with: context)
     }
   }
 
