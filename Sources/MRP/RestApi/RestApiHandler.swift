@@ -159,9 +159,9 @@ extension RestApiApplicationHandler {
   }
 
   /// Validates application and finds participant for port
-  func getParticipant(for port: P) throws -> Participant<A> {
+  func getParticipant(for port: P) async throws -> Participant<A> {
     let application = try requireApplication()
-    return try application.findParticipant(port: port)
+    return try await application.findParticipant(port: port)
   }
 
   /// Validates and extracts application, port, and participant from request
@@ -170,7 +170,7 @@ extension RestApiApplicationHandler {
   {
     let application = try requireApplication()
     let (port, _) = try await getPort(from: request)
-    let participant = try application.findParticipant(port: port)
+    let participant = try await application.findParticipant(port: port)
     return (application, port, participant)
   }
 }
