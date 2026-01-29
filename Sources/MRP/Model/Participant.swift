@@ -153,7 +153,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     }
 
     _logger = controller.logger
-    await _initTimers()
+    _initTimers()
     _logger.trace("\(self): initialized participant type \(_type)")
   }
 
@@ -161,7 +161,7 @@ public final actor Participant<A: Application>: Equatable, Hashable, CustomStrin
     "\(application!.name)@\(port.name)"
   }
 
-  private func _initTimers() async {
+  private func _initTimers() {
     // The Join Period Timer, jointimer, controls the interval between transmit
     // opportunities that are applied to the Applicant state machine. An
     // instance of this timer is required on a per-Port, per-MRP Participant
