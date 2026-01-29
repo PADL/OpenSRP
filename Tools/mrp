@@ -6,6 +6,7 @@ Supports MSRP, MVRP, and MMRP protocols
 
 import argparse
 import json
+import re
 import sys
 from typing import Optional, Dict, List, Any
 from urllib.parse import urljoin
@@ -72,6 +73,124 @@ class OutputFormatter:
 
         return "\n".join(lines)
 
+    @staticmethod
+    def format_age(age_seconds: Optional[float]) -> str:
+        """Format age in seconds as 'hr:mm:ss' or 'days, hr:mm:ss' (e.g., '02:15:30' or '3, 04:30:15')"""
+        if age_seconds is None:
+            return "N/A"
+
+        try:
+            age_seconds = int(age_seconds)
+
+            if age_seconds < 0:
+                return "N/A"
+
+            # Calculate components
+            days = age_seconds // 86400
+            hours = (age_seconds % 86400) // 3600
+            minutes = (age_seconds % 3600) // 60
+            seconds = age_seconds % 60
+
+            # Format as "hr:mm:ss" or "days, hr:mm:ss"
+            if days > 0:
+                return f"{days}, {hours:02d}:{minutes:02d}:{seconds:02d}"
+            else:
+                return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        except (ValueError, TypeError):
+            return "N/A"
+
+    @staticmethod
+    def format_stream_id(stream_id: str) -> str:
+        """Format stream ID with colon separators between bytes (e.g., '001122334455AABB' → '00:11:22:33:44:55:AA:BB')"""
+        if not stream_id or stream_id == "N/A":
+            return stream_id
+
+        # Remove any existing colons or separators
+        clean_id = stream_id.replace(":", "").replace("-", "").replace(" ", "")
+
+        # Insert colons between each byte (every 2 characters)
+        if len(clean_id) >= 2:
+            return ":".join(clean_id[i:i+2] for i in range(0, len(clean_id), 2))
+        return stream_id
+
+    @staticmethod
+    def format_port(port_name: Optional[str], port_number: Optional[int]) -> str:
+        """Format port as 'name (number)' (e.g., 'lan0 (4)') or just number if name unavailable"""
+        if port_name and port_number is not None:
+            return f"{port_name} ({port_number})"
+        elif port_number is not None:
+            return str(port_number)
+        elif port_name:
+            return port_name
+        else:
+            return "N/A"
+
+    @staticmethod
+    def format_type(type_str: str) -> str:
+        """Format listener/talker type to shortened form (Ask, Fail, Ready, AskFail, RdyFail, Adv)"""
+        if not type_str:
+            return ""
+
+        type_lower = type_str.lower()
+
+        # Map full type names to shortened forms
+        if "ask" in type_lower and "fail" in type_lower:
+            return "AskFail"
+        elif "ready" in type_lower and "fail" in type_lower:
+            return "RdyFail"
+        elif "rdy" in type_lower and "fail" in type_lower:
+            return "RdyFail"
+        elif "advertise" in type_lower or "adv" in type_lower:
+            return "Adv"
+        elif "ask" in type_lower:
+            return "Ask"
+        elif "ready" in type_lower:
+            return "Ready"
+        elif "rdy" in type_lower:
+            return "Ready"
+        elif "fail" in type_lower:
+            return "Fail"
+        else:
+            # Return capitalized version if no match
+            return type_str.capitalize()
+
+
+class MRPCommands:
+    """MRP general commands"""
+
+    def __init__(self, client: MRPClient, formatter: OutputFormatter):
+        self.client = client
+        self.formatter = formatter
+
+    def show_status(self, output_format: str):
+        """Show general MRP status"""
+        data = self.client._get("/mrp")
+
+        if output_format == "json":
+            print(self.formatter.format_json(data))
+        else:
+            # Display MRP ports with leave times
+            ports = data.get("port", []) if isinstance(data, dict) else []
+
+            if ports:
+                headers = ["Port", "Leave (ms)"]
+                rows = []
+                for port_data in ports:
+                    port = self.formatter.format_port(
+                        port_data.get("port_name"),
+                        port_data.get("port_number")
+                    )
+                    leave_time = port_data.get("leave_time")
+                    if leave_time is not None:
+                        leave_time_str = str(leave_time)
+                    else:
+                        leave_time_str = "N/A"
+                    rows.append([port, leave_time_str])
+
+                print(self.formatter.format_table(headers, rows))
+            else:
+                print("No ports found")
+
 
 class MSRPCommands:
     """MSRP subcommand handlers"""
@@ -88,12 +207,15 @@ class MSRPCommands:
             print(self.formatter.format_json(data))
         else:
             if isinstance(data, list):
-                headers = ["Port", "Port Number", "Enabled", "AS Capable", "Forwarding", "Transmit Rate (kbps)"]
+                headers = ["Port", "Enabled", "AS Capable", "Forwarding", "Transmit Rate (kbps)"]
                 rows = []
                 for port_data in data:
+                    port = self.formatter.format_port(
+                        port_data.get("port_name"),
+                        port_data.get("port_number")
+                    )
                     rows.append([
-                        port_data.get("port_name", "N/A"),
-                        port_data.get("port_number", "N/A"),
+                        port,
                         "Yes" if port_data.get("enabled") else "No",
                         "Yes" if port_data.get("as_capable") else "No",
                         "Yes" if port_data.get("forwarding") else "No",
@@ -108,8 +230,11 @@ class MSRPCommands:
         if output_format == "json":
             print(self.formatter.format_json(data))
         else:
-            print(f"Port: {data.get('port_name', port)}")
-            print(f"Port Number: {data.get('port_number', 'N/A')}")
+            port_display = self.formatter.format_port(
+                data.get('port_name'),
+                data.get('port_number')
+            )
+            print(f"Port: {port_display}")
             print(f"Enabled: {'Yes' if data.get('enabled') else 'No'}")
             print(f"AS Capable: {'Yes' if data.get('as_capable') else 'No'}")
             print(f"Forwarding: {'Yes' if data.get('forwarding') else 'No'}")
@@ -120,11 +245,12 @@ class MSRPCommands:
             talkers = data.get("talker", [])
             if talkers:
                 print("Talker Streams:")
-                headers = ["Stream ID", "Destination", "Latency (μs)", "Registered", "Declared"]
+                headers = ["Stream Id", "Destination", "Latency (μs)", "Registered", "Declared"]
                 rows = []
                 for talker in talkers:
+                    stream_id = self.formatter.format_stream_id(talker.get("stream_id", ""))
                     rows.append([
-                        talker.get("stream_id", ""),
+                        stream_id,
                         talker.get("destination", ""),
                         talker.get("accumulated_latency", "N/A"),
                         "Yes" if talker.get("registered") else "No",
@@ -137,11 +263,12 @@ class MSRPCommands:
             failed_talkers = data.get("talker_failed", [])
             if failed_talkers:
                 print("Failed Talker Streams:")
-                headers = ["Stream ID", "Failure Code", "Reason", "Destination"]
+                headers = ["Stream Id", "Failure Code", "Reason", "Destination"]
                 rows = []
                 for talker in failed_talkers:
+                    stream_id = self.formatter.format_stream_id(talker.get("stream_id", ""))
                     rows.append([
-                        talker.get("stream_id", ""),
+                        stream_id,
                         talker.get("failure_code", "N/A"),
                         talker.get("failure_reason", ""),
                         talker.get("destination", "")
@@ -153,12 +280,15 @@ class MSRPCommands:
             listeners = data.get("listener", [])
             if listeners:
                 print("Listener Streams:")
-                headers = ["Stream ID", "Type", "Registered", "Declared"]
+                headers = ["Stream Id", "Type", "Registered", "Declared"]
                 rows = []
                 for listener in listeners:
+                    stream_id = self.formatter.format_stream_id(listener.get("stream_id", ""))
+                    listener_type = listener.get("type", "")
+                    listener_type = self.formatter.format_type(listener_type)
                     rows.append([
-                        listener.get("stream_id", ""),
-                        listener.get("type", ""),
+                        stream_id,
+                        listener_type,
                         "Yes" if listener.get("registered") else "No",
                         "Yes" if listener.get("declared") else "No"
                     ])
@@ -179,6 +309,28 @@ class MSRPCommands:
                         print(f"    Delta Bandwidth: {class_data.get('delta_bandwidth', 'N/A')}%")
                         print(f"    Domain Boundary Port: {'Yes' if class_data.get('domain_boundary_port') else 'No'}")
 
+    def _get_port_sr_class_map(self, port_name: str, port_number: int) -> Dict[int, str]:
+        """Get SR class mapping for a port (priority -> class letter)"""
+        # Determine port identifier
+        port_id = port_name if port_name else str(port_number)
+
+        try:
+            port_data = self.client._get(f"/msrp/port/{port_id}")
+            sr_class = port_data.get("sr_class", {})
+
+            # Build mapping of priority to class letter
+            priority_to_class = {}
+            for class_name in ["a", "b", "c", "d", "e", "f", "g"]:
+                class_data = sr_class.get(class_name, {})
+                if class_data and class_data.get("present"):
+                    priority = class_data.get("priority")
+                    if priority is not None:
+                        priority_to_class[priority] = class_name.upper()
+
+            return priority_to_class
+        except Exception:
+            return {}
+
     def list_streams(self, output_format: str):
         """List all MSRP streams"""
         data = self.client._get("/msrp/stream")
@@ -191,22 +343,88 @@ class MSRPCommands:
                     print("No streams found")
                     return
 
-                headers = ["Stream ID", "Destination", "VLAN", "Priority", "Bandwidth (kbps)", "Rank", "Talker Port"]
+                # Cache port SR class mappings
+                port_class_cache = {}
+
+                headers = ["Stream Id", "Destination", "Port", "Type", "Vid", "Cls/Rn", "BW"]
                 rows = []
                 for stream_data in data:
                     talker = stream_data.get("talker", {})
                     if talker:
-                        talker_port = talker.get("port_name") or str(talker.get("port_number", "N/A"))
+                        talker_port = self.formatter.format_port(
+                            talker.get("port_name"),
+                            talker.get("port_number")
+                        )
+                        talker_type = talker.get("type", "")
+                        talker_type = self.formatter.format_type(talker_type) if talker_type else "N/A"
                     else:
                         talker_port = "N/A"
+                        talker_type = "N/A"
+
+                    # Format Class/Rank (e.g., "A/1", "B/0")
+                    # Get class from port SR class mapping based on priority
+                    priority = stream_data.get("priority")
+                    class_letter = ""
+
+                    if talker and priority is not None:
+                        # Get or fetch port SR class mapping
+                        port_key = (talker.get("port_name"), talker.get("port_number"))
+                        if port_key not in port_class_cache:
+                            port_class_cache[port_key] = self._get_port_sr_class_map(
+                                talker.get("port_name"),
+                                talker.get("port_number")
+                            )
+                        class_letter = port_class_cache[port_key].get(priority, "")
+
+                    # Extract rank: map "emergency" -> 0, "non_emergency" -> 1, or extract number
+                    rank_str = stream_data.get("rank", "")
+                    rank_num = ""
+                    if rank_str:
+                        rank_lower = str(rank_str).lower()
+                        if rank_lower == "emergency":
+                            rank_num = "0"
+                        elif rank_lower == "non_emergency":
+                            rank_num = "1"
+                        elif isinstance(rank_str, int):
+                            rank_num = str(rank_str)
+                        else:
+                            # Try to extract number from string
+                            match = re.search(r'\d+', str(rank_str))
+                            if match:
+                                rank_num = match.group(0)
+
+                    # Format as Class/Rank
+                    if class_letter and rank_num:
+                        cls_rank = f"{class_letter}/{rank_num}"
+                    elif class_letter or rank_num:
+                        cls_rank = f"{class_letter}/{rank_num}"
+                    else:
+                        cls_rank = "N/A"
+
+                    # Format bandwidth: use Kb if < 1 Mb, otherwise Mb
+                    bandwidth = stream_data.get("bandwidth")
+                    if bandwidth is not None and bandwidth != "N/A":
+                        try:
+                            bw_kbps = float(bandwidth)
+                            if bw_kbps < 1000:
+                                bw_str = f"{bw_kbps:.0f} Kb"
+                            else:
+                                bw_mbps = bw_kbps / 1000.0
+                                bw_str = f"{bw_mbps:.3f} Mb"
+                        except (ValueError, TypeError):
+                            bw_str = "N/A"
+                    else:
+                        bw_str = "N/A"
+
+                    stream_id = self.formatter.format_stream_id(stream_data.get("stream_id", "N/A"))
                     rows.append([
-                        stream_data.get("stream_id", "N/A"),
+                        stream_id,
                         stream_data.get("destination", ""),
+                        talker_port,
+                        talker_type,
                         stream_data.get("vid", "N/A"),
-                        stream_data.get("priority", "N/A"),
-                        stream_data.get("bandwidth", "N/A"),
-                        stream_data.get("rank", ""),
-                        talker_port
+                        cls_rank,
+                        bw_str
                     ])
                 print(self.formatter.format_table(headers, rows))
 
@@ -217,7 +435,8 @@ class MSRPCommands:
         if output_format == "json":
             print(self.formatter.format_json(data))
         else:
-            print(f"Stream ID: {data.get('stream_id', stream_id)}")
+            formatted_stream_id = self.formatter.format_stream_id(data.get('stream_id', stream_id))
+            print(f"Stream ID: {formatted_stream_id}")
             print(f"Destination: {data.get('destination', 'N/A')}")
             print(f"VLAN ID: {data.get('vid', 'N/A')}")
             print(f"Priority: {data.get('priority', 'N/A')}")
@@ -229,24 +448,106 @@ class MSRPCommands:
             talker = data.get("talker")
             if talker:
                 print("Talker:")
-                talker_port = talker.get("port_name") or str(talker.get("port_number", "N/A"))
+                talker_port = self.formatter.format_port(
+                    talker.get("port_name"),
+                    talker.get("port_number")
+                )
+                talker_type = talker.get('type', '')
+                talker_type = self.formatter.format_type(talker_type) if talker_type else 'N/A'
                 print(f"  Port: {talker_port}")
-                print(f"  Type: {talker.get('type', 'N/A')}")
+                print(f"  Type: {talker_type}")
                 print()
 
             # Listeners
             listeners = data.get("listener", [])
             if listeners:
                 print("Listeners:")
-                headers = ["Port", "Type", "Connected"]
+                headers = ["Port", "Type", "Conn", "Age"]
                 rows = []
                 for listener in listeners:
+                    port = self.formatter.format_port(
+                        listener.get("port_name"),
+                        listener.get("port_number")
+                    )
+                    listener_type = listener.get("type", "")
+                    listener_type = self.formatter.format_type(listener_type)
+                    stream_age = listener.get('stream_age')
+                    age = self.formatter.format_age(stream_age)
                     rows.append([
-                        listener.get("port_name", listener.get("port_number", "")),
-                        listener.get("type", ""),
-                        "Yes" if listener.get("connected") else "No"
+                        port,
+                        listener_type,
+                        "Yes" if listener.get("connected") else "No",
+                        age
                     ])
                 print(self.formatter.format_table(headers, rows))
+
+    def list_listeners(self, output_format: str):
+        """List all MSRP listeners across all streams"""
+        data = self.client._get("/msrp/stream")
+
+        if output_format == "json":
+            print(self.formatter.format_json(data))
+        else:
+            if isinstance(data, list):
+                headers = ["Stream Id", "Port", "Type", "Conn", "Age"]
+                rows = []
+                for stream_data in data:
+                    stream_id = self.formatter.format_stream_id(stream_data.get("stream_id", "N/A"))
+                    listeners = stream_data.get("listener", [])
+                    for listener in listeners:
+                        port = self.formatter.format_port(
+                            listener.get("port_name"),
+                            listener.get("port_number")
+                        )
+                        listener_type = listener.get("type", "")
+                        listener_type = self.formatter.format_type(listener_type)
+                        connected = "Yes" if listener.get("connected") else "No"
+                        stream_age = listener.get('stream_age')
+                        age = self.formatter.format_age(stream_age)
+                        rows.append([stream_id, port, listener_type, connected, age])
+
+                if not rows:
+                    print("No listeners found")
+                else:
+                    print(self.formatter.format_table(headers, rows))
+
+    def list_talkers(self, output_format: str):
+        """List all MSRP talkers across all streams"""
+        data = self.client._get("/msrp/stream")
+
+        if output_format == "json":
+            print(self.formatter.format_json(data))
+        else:
+            if isinstance(data, list):
+                headers = ["Stream Id", "Port", "Type", "Destination"]
+                rows = []
+                for stream_data in data:
+                    stream_id = self.formatter.format_stream_id(stream_data.get("stream_id", "N/A"))
+
+                    # Advertised talkers
+                    talker = stream_data.get("talker", {})
+                    if talker:
+                        port = self.formatter.format_port(
+                            talker.get("port_name"),
+                            talker.get("port_number")
+                        )
+                        destination = stream_data.get("destination", "")
+                        rows.append([stream_id, port, "Adv", destination])
+
+                    # Failed talkers
+                    talker_failed = stream_data.get("talker_failed", {})
+                    if talker_failed:
+                        port = self.formatter.format_port(
+                            talker_failed.get("port_name"),
+                            talker_failed.get("port_number")
+                        )
+                        destination = talker_failed.get("destination", "")
+                        rows.append([stream_id, port, "Fail", destination])
+
+                if not rows:
+                    print("No talkers found")
+                else:
+                    print(self.formatter.format_table(headers, rows))
 
 
 class MVRPCommands:
@@ -264,13 +565,16 @@ class MVRPCommands:
             print(self.formatter.format_json(data))
         else:
             if isinstance(data, list):
-                headers = ["Port", "Port Number", "Enabled", "VLANs"]
+                headers = ["Port", "Enabled", "VLANs"]
                 rows = []
                 for port_data in data:
+                    port = self.formatter.format_port(
+                        port_data.get("port_name"),
+                        port_data.get("port_number")
+                    )
                     vlan_count = len(port_data.get("vlan", []))
                     rows.append([
-                        port_data.get("port_name", "N/A"),
-                        port_data.get("port_number", "N/A"),
+                        port,
                         "Yes" if port_data.get("enabled") else "No",
                         vlan_count
                     ])
@@ -283,7 +587,11 @@ class MVRPCommands:
         if output_format == "json":
             print(self.formatter.format_json(data))
         else:
-            print(f"Port: {data.get('port_name', port)}")
+            port_display = self.formatter.format_port(
+                data.get('port_name'),
+                data.get('port_number')
+            )
+            print(f"Port: {port_display}")
             print(f"Enabled: {'Yes' if data.get('enabled') else 'No'}")
             print()
 
@@ -318,13 +626,16 @@ class MMRPCommands:
             print(self.formatter.format_json(data))
         else:
             if isinstance(data, list):
-                headers = ["Port", "Port Number", "Enabled", "MAC Addresses"]
+                headers = ["Port", "Enabled", "MAC Addresses"]
                 rows = []
                 for port_data in data:
+                    port = self.formatter.format_port(
+                        port_data.get("port_name"),
+                        port_data.get("port_number")
+                    )
                     mac_count = len(port_data.get("mac", []))
                     rows.append([
-                        port_data.get("port_name", "N/A"),
-                        port_data.get("port_number", "N/A"),
+                        port,
                         "Yes" if port_data.get("enabled") else "No",
                         mac_count
                     ])
@@ -337,7 +648,11 @@ class MMRPCommands:
         if output_format == "json":
             print(self.formatter.format_json(data))
         else:
-            print(f"Port: {data.get('port_name', port)}")
+            port_display = self.formatter.format_port(
+                data.get('port_name'),
+                data.get('port_number')
+            )
+            print(f"Port: {port_display}")
             print(f"Enabled: {'Yes' if data.get('enabled') else 'No'}")
             print()
 
@@ -371,6 +686,9 @@ def create_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="protocol", required=True, help="MRP protocol")
 
+    # MRP general status command
+    mrp_parser = subparsers.add_parser("mrp", help="MRP general status")
+
     # MSRP subcommand
     msrp_parser = subparsers.add_parser("msrp", help="MSRP (Multiple Stream Reservation Protocol)")
     msrp_subparsers = msrp_parser.add_subparsers(dest="msrp_command", required=True)
@@ -380,8 +698,14 @@ def create_parser() -> argparse.ArgumentParser:
     msrp_port_parser.add_argument("port_id", nargs="?", help="Port identifier (optional)")
 
     # MSRP stream commands
-    msrp_stream_parser = msrp_subparsers.add_parser("stream", help="Query MSRP streams")
+    msrp_stream_parser = msrp_subparsers.add_parser("streams", help="Query MSRP streams")
     msrp_stream_parser.add_argument("stream_id", nargs="?", help="Stream ID (optional)")
+
+    # MSRP listener commands
+    msrp_listener_parser = msrp_subparsers.add_parser("listeners", help="Query MSRP listeners")
+
+    # MSRP talker commands
+    msrp_talker_parser = msrp_subparsers.add_parser("talkers", help="Query MSRP talkers")
 
     # MVRP subcommand
     mvrp_parser = subparsers.add_parser("mvrp", help="MVRP (Multiple VLAN Registration Protocol)")
@@ -412,18 +736,26 @@ def main():
     formatter = OutputFormatter()
 
     # Handle commands
-    if args.protocol == "msrp":
+    if args.protocol == "mrp":
+        mrp = MRPCommands(client, formatter)
+        mrp.show_status(args.format)
+
+    elif args.protocol == "msrp":
         msrp = MSRPCommands(client, formatter)
         if args.msrp_command == "port":
             if args.port_id:
                 msrp.show_port(args.port_id, args.format)
             else:
                 msrp.list_ports(args.format)
-        elif args.msrp_command == "stream":
+        elif args.msrp_command == "streams":
             if args.stream_id:
                 msrp.show_stream(args.stream_id, args.format)
             else:
                 msrp.list_streams(args.format)
+        elif args.msrp_command == "listeners":
+            msrp.list_listeners(args.format)
+        elif args.msrp_command == "talkers":
+            msrp.list_talkers(args.format)
 
     elif args.protocol == "mvrp":
         mvrp = MVRPCommands(client, formatter)
