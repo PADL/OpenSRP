@@ -190,7 +190,7 @@ private final class MRPDaemon: AsyncParsableCommand {
       logger: logger,
       timerConfiguration: timerConfiguration,
       portExclusions: Set(excludeIface),
-      restServerPort: restServerPort,
+      restServerPort: restServerPort == 0 ? nil : restServerPort,
       forceFullParticipant: forceFullParticipant
     )
     if enableSRP {
