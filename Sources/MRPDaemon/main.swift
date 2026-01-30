@@ -128,7 +128,7 @@ private final class MRPDaemon: AsyncParsableCommand {
   var periodicTime: Duration = .seconds(1)
 
   @Option(name: .shortAndLong, help: "REST HTTP server port")
-  var restServerPort: UInt16 = 80
+  var restServerPort: UInt16?
 
   enum CodingKeys: String, CodingKey {
     case bridgeInterface
@@ -190,7 +190,7 @@ private final class MRPDaemon: AsyncParsableCommand {
       logger: logger,
       timerConfiguration: timerConfiguration,
       portExclusions: Set(excludeIface),
-      restServerPort: restServerPort == 0 ? nil : restServerPort,
+      restServerPort: restServerPort,
       forceFullParticipant: forceFullParticipant
     )
     if enableSRP {
