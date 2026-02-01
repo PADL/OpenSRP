@@ -30,14 +30,6 @@ extension Weak: Equatable where T: Equatable {
   }
 }
 
-// https://stackoverflow.com/questions/25329186/safe-bounds-checked-array-lookup-in-swift-through-optional-bindings
-extension Collection {
-  /// Returns the element at the specified index if it is within bounds, otherwise nil.
-  subscript(safe index: Index) -> Element? {
-    indices.contains(index) ? self[index] : nil
-  }
-}
-
 extension Array {
   /// Creates an array from a collection, padding to a multiple of the specified value.
   init(_ collection: some Collection<Element>, multiple: Int, with element: Element) {
@@ -61,18 +53,15 @@ public extension Sequence {
     return values
   }
 
-  func asyncCompactMap<T>(
-    _ transform: (Element) async throws -> T?
-  ) async rethrows -> [T] {
-    var values = [T]()
-
+  func asyncReduce<Result>(
+    into initialResult: Result,
+    _ updateAccumulatingResult: (inout Result, Element) async throws -> ()
+  ) async rethrows -> Result {
+    var result = initialResult
     for element in self {
-      if let transformed = try await transform(element) {
-        values.append(transformed)
-      }
+      try await updateAccumulatingResult(&result, element)
     }
-
-    return values
+    return result
   }
 }
 

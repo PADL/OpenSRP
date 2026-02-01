@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2024 PADL Software Pty Ltd
+// Copyright (c) 2024-2026 PADL Software Pty Ltd
 //
 // Licensed under the Apache License, Version 2.0 (the License);
 // you may not use this file except in compliance with the License.
@@ -26,27 +26,27 @@ public enum AdministrativeControl {
 
 public typealias AttributeSubtype = UInt8
 
-public protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
+public protocol Application<P>: Actor, Equatable, Hashable, Sendable {
   associatedtype P: Port
 
   typealias ApplyFunction<T> = (Participant<Self>) throws -> T
   typealias AsyncApplyFunction<T> = (Participant<Self>) async throws -> T
 
-  var validAttributeTypes: ClosedRange<AttributeType> { get }
-  var groupAddress: EUI48 { get }
-  var etherType: UInt16 { get }
-  var protocolVersion: ProtocolVersion { get }
-  var hasAttributeListLength: Bool { get }
-  var name: String { get }
+  nonisolated var validAttributeTypes: ClosedRange<AttributeType> { get }
+  nonisolated var groupAddress: EUI48 { get }
+  nonisolated var etherType: UInt16 { get }
+  nonisolated var protocolVersion: ProtocolVersion { get }
+  nonisolated var hasAttributeListLength: Bool { get }
+  nonisolated var name: String { get }
 
-  var controller: MRPController<P>? { get }
+  nonisolated var controller: MRPController<P>? { get }
 
   // notifications from controller when a port is added, didUpdated or removed
   // if contextIdentifier is MAPBaseSpanningTreeContext, the ports are physical
   // ports on the bridge; otherwise, they are virtual ports managed by MVRP.
   func didAdd(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) async throws
-  func didUpdate(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
-  func didRemove(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) throws
+  func didUpdate(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) async throws
+  func didRemove(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) async throws
 
   // apply for all participants. if contextIdentifier is nil, then all participants are called
   // regardless of contextIdentifier.
@@ -62,12 +62,12 @@ public protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
     _ block: AsyncApplyFunction<T>
   ) async rethrows -> [T]
 
-  func hasAttributeSubtype(for: AttributeType) -> Bool
-  func administrativeControl(for: AttributeType) throws -> AdministrativeControl
-  var nonBaseContextsSupported: Bool { get }
+  nonisolated func hasAttributeSubtype(for: AttributeType) -> Bool
+  nonisolated func administrativeControl(for: AttributeType) throws -> AdministrativeControl
+  nonisolated var nonBaseContextsSupported: Bool { get }
 
-  func makeNullValue(for attributeType: AttributeType) throws -> any Value
-  func deserialize(
+  nonisolated func makeNullValue(for attributeType: AttributeType) throws -> any Value
+  nonisolated func deserialize(
     attributeOfType attributeType: AttributeType,
     from input: inout ParserSpan
   ) throws -> any Value
@@ -95,11 +95,11 @@ public protocol Application<P>: AnyObject, Equatable, Hashable, Sendable {
 }
 
 public extension Application {
-  func hash(into hasher: inout Hasher) {
+  nonisolated func hash(into hasher: inout Hasher) {
     etherType.hash(into: &hasher)
   }
 
-  static func == (lhs: Self, rhs: Self) -> Bool {
+  nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
     lhs.etherType == rhs.etherType
   }
 }
@@ -115,16 +115,6 @@ extension Application {
   ) throws {
     try apply(for: contextIdentifier) { participant in
       try block(participant)(arg)
-    }
-  }
-
-  private func apply<T>(
-    for contextIdentifier: MAPContextIdentifier,
-    with arg: T,
-    _ block: AsyncParticipantSpecificApplyFunction<T>
-  ) async throws {
-    try await apply(for: contextIdentifier) { participant in
-      try await block(participant)(arg)
     }
   }
 
@@ -152,9 +142,9 @@ extension Application {
     attributeValue: some Value,
     isNew: Bool,
     for contextIdentifier: MAPContextIdentifier
-  ) async throws {
-    try await apply(for: contextIdentifier) { participant in
-      try await participant.join(
+  ) throws {
+    try apply(for: contextIdentifier) { participant in
+      try participant.join(
         attributeType: attributeType,
         attributeSubtype: attributeSubtype,
         attributeValue: attributeValue,
@@ -169,9 +159,9 @@ extension Application {
     attributeSubtype: AttributeSubtype? = nil,
     attributeValue: some Value,
     for contextIdentifier: MAPContextIdentifier
-  ) async throws {
-    try await apply(for: contextIdentifier) { participant in
-      try await participant.leave(
+  ) throws {
+    try apply(for: contextIdentifier) { participant in
+      try participant.leave(
         attributeType: attributeType,
         attributeSubtype: attributeSubtype,
         attributeValue: attributeValue,
@@ -180,11 +170,11 @@ extension Application {
     }
   }
 
-  func rx(packet: IEEE802Packet, from port: P) async throws {
+  func rx(packet: IEEE802Packet, from port: P) throws {
     let pdu = try packet.payload.withParserSpan { input in
       try MRPDU(parsing: &input, application: self)
     }
-    try await rx(
+    try rx(
       pdu: pdu,
       for: MAPContextIdentifier(packet: packet),
       from: port,
@@ -197,16 +187,16 @@ extension Application {
     for contextIdentifier: MAPContextIdentifier,
     from port: P,
     sourceMacAddress: EUI48
-  ) async throws {
+  ) throws {
     let participant = try findParticipant(for: contextIdentifier, port: port)
-    try await participant.rx(pdu: pdu, sourceMacAddress: sourceMacAddress)
+    try participant.rx(pdu: pdu, sourceMacAddress: sourceMacAddress)
   }
 
-  func flush(for contextIdentifier: MAPContextIdentifier) async throws {
-    try await apply(for: contextIdentifier) { try await $0.flush() }
+  func flush(for contextIdentifier: MAPContextIdentifier) throws {
+    try apply(for: contextIdentifier) { try $0.flush() }
   }
 
-  func redeclare(for contextIdentifier: MAPContextIdentifier) async throws {
-    try await apply(for: contextIdentifier) { try await $0.redeclare() }
+  func redeclare(for contextIdentifier: MAPContextIdentifier) throws {
+    try apply(for: contextIdentifier) { try $0.redeclare() }
   }
 }
