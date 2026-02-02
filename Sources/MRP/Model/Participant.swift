@@ -720,6 +720,7 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
   }
 
   private func _debugLogPdu(_ pdu: MRPDU, direction: _Direction) {
+    guard _logger.logLevel <= .debug else { return }
     _logger
       .debug("\(self): \(direction): -------------------------------------------------------------")
     for message in pdu.messages {
