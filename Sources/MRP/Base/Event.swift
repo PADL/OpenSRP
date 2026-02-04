@@ -125,6 +125,7 @@ struct StateMachineHandlerFlags: OptionSet, CustomStringConvertible {
     if contains(.registrationForbidden) { flags.append("registrationForbidden") }
     if contains(.applicantOnlyParticipant) { flags.append("applicantOnlyParticipant") }
     if contains(.isRegistered) { flags.append("isRegistered") }
+    if contains(.isReplacing) { flags.append("isReplacing") }
 
     return "[" + flags.joined(separator: ", ") + "]"
   }
@@ -135,6 +136,7 @@ struct StateMachineHandlerFlags: OptionSet, CustomStringConvertible {
   static let registrationForbidden = StateMachineHandlerFlags(rawValue: 1 << 3)
   static let applicantOnlyParticipant = StateMachineHandlerFlags(rawValue: 1 << 4)
   static let isRegistered = StateMachineHandlerFlags(rawValue: 1 << 5)
+  static let isReplacing = StateMachineHandlerFlags(rawValue: 1 << 6)
 }
 
 public struct EventCounters<A: Application>: Sendable {

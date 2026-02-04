@@ -620,7 +620,7 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
             .debug(
               "\(self): \(eventSource) declared attribute \(attribute) with new subtype \(attributeSubtype); replacing"
             )
-          try? attribute.rLvNow(eventSource: eventSource, suppressGC: true)
+          try? attribute.willReplace(eventSource: eventSource)
           attribute.attributeSubtype = attributeSubtype
         }
 
@@ -797,7 +797,7 @@ public extension Participant {
         "\(self): \(eventSource) declared attribute \(attribute) with new subtype \(attributeSubtype); replacing"
       )
 
-      try? attribute.handle(protocolEvent: .Lv, eventSource: eventSource, suppressGC: true)
+      try? attribute.willReplace(eventSource: eventSource)
       attribute.attributeSubtype = attributeSubtype
     }
 
@@ -1063,6 +1063,7 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
   private func _getEventContext(
     for event: ProtocolEvent,
     eventSource: EventSource,
+    isReplacing: Bool,
     participant: P
   ) throws -> EventContext<A> {
     try EventContext(
@@ -1072,7 +1073,7 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
       attributeType: attributeType,
       attributeSubtype: attributeSubtype,
       attributeValue: unwrappedValue,
-      smFlags: participant._getSmFlags(for: attributeType),
+      smFlags: participant._getSmFlags(for: attributeType).union(isReplacing ? .isReplacing : []),
       applicant: applicant,
       registrar: registrar
     )
@@ -1081,13 +1082,13 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
   fileprivate func handle(
     protocolEvent event: ProtocolEvent,
     eventSource: EventSource,
-    suppressGC: Bool = false
+    isReplacing: Bool = false
   ) throws {
     guard let participant else { throw MRPError.internalError }
     try _handle(
       protocolEvent: event,
       eventSource: eventSource,
-      suppressGC: suppressGC,
+      isReplacing: isReplacing,
       participant: participant
     )
   }
@@ -1095,12 +1096,13 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
   private func _handle(
     protocolEvent event: ProtocolEvent,
     eventSource: EventSource,
-    suppressGC: Bool = false,
+    isReplacing: Bool = false,
     participant: P
   ) throws {
     let context = try _getEventContext(
       for: event,
       eventSource: eventSource,
+      isReplacing: isReplacing,
       participant: participant
     )
 
@@ -1108,7 +1110,7 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
     try _handleApplicant(context: context, participant: context.participant)
 
     // remove attribute entirely if it is no longer declared or registered
-    if !suppressGC, canGC { participant._gcAttributeValue(self) }
+    if !isReplacing, canGC { participant._gcAttributeValue(self) }
   }
 
   private func _handleApplicant(
@@ -1189,6 +1191,11 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
 
     guard let application = context.participant.application else { throw MRPError.internalError }
 
+    // to avoid synchronization issues, when we replace an attribute with
+    // rLvNow, suppress the leave indication; MSRP will correctly recover with
+    // the subsequent join
+    guard !context.smFlags.contains(.isReplacing) else { return }
+
     Task { @Sendable in
       switch registrarAction {
       case .New:
@@ -1216,14 +1223,12 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
     }
   }
 
-  fileprivate func rLvNow(
-    eventSource: EventSource,
-    suppressGC: Bool = false
-  ) throws {
+  // called only when replacing attribute; suppresses GC and leave indication
+  fileprivate func willReplace(eventSource: EventSource) throws {
     try handle(
       protocolEvent: .rLvNow,
       eventSource: eventSource,
-      suppressGC: suppressGC
+      isReplacing: true
     )
     precondition(!isRegistered)
   }
