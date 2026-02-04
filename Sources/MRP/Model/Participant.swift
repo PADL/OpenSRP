@@ -1196,6 +1196,13 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
     // the subsequent join
     guard !context.smFlags.contains(.isReplacingSubtype) else { return }
 
+    // running application indications in unstructured tasks is a trade-off; it
+    // allows us to make the participant API as consumed by the application
+    // synchronous, thereby avoiding reentrancy issues; but it does not
+    // completely eliminate the possibility of race conditions as different
+    // values of the same attribute, or related attributes, are processed (as
+    // Tasks are not necessarily scheduled in order). If this proves to be
+    // problematic, we should look at using a queue of tasks instead.
     Task { @Sendable in
       switch registrarAction {
       case .New:
