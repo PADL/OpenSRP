@@ -1073,7 +1073,8 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
       attributeType: attributeType,
       attributeSubtype: attributeSubtype,
       attributeValue: unwrappedValue,
-      smFlags: participant._getSmFlags(for: attributeType).union(isReplacingSubtype ? .isReplacingSubtype : []),
+      smFlags: participant._getSmFlags(for: attributeType)
+        .union(isReplacingSubtype ? .isReplacingSubtype : []),
       applicant: applicant,
       registrar: registrar
     )
