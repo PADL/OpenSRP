@@ -18,7 +18,7 @@ var PlatformLinkerSettings: [LinkerSetting] = []
 PlatformPackageDependencies = [
   .package(
     url: "https://github.com/PADL/IORingSwift",
-    from: "0.1.2"
+    from: "0.9.9"
   ),
   .package(
     url: "https://github.com/PADL/NetLinkSwift",
@@ -112,6 +112,7 @@ let CommonPackageDependencies: [Package.Dependency] = [
   .package(url: "https://github.com/swhitty/FlyingFoxMacros", from: "0.2.0"),
   .package(url: "https://github.com/Flight-School/AnyCodable", from: "0.6.7"),
   .package(url: "https://github.com/apple/swift-binary-parsing", from: "0.0.1"),
+  .package(url: "https://github.com/dfed/swift-async-queue", from: "1.0.0"),
 ]
 
 let CommonProducts: [Product] = [
@@ -157,7 +158,7 @@ let CommonTargets: [Target] = [
       .product(name: "SystemPackage", package: "swift-system"),
       .product(name: "FlyingFox", package: "FlyingFox"),
       .product(name: "FlyingFoxMacros", package: "FlyingFoxMacros"),
-
+      .product(name: "AsyncQueue", package: "swift-async-queue"),
     ] + PlatformTargetDependencies,
     cSettings: PlatformCSettings,
     swiftSettings: PlatformSwiftSettings,
