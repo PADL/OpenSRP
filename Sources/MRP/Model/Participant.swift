@@ -35,6 +35,7 @@
 // identifies the set of Bridge Ports that form the applicable active topology
 // (8.4).
 
+import AsyncQueue
 import IEEE802
 import Logging
 import Synchronization
@@ -128,6 +129,7 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
 
   fileprivate let _logger: Logger
   fileprivate let _type: ParticipantType
+  fileprivate let _queue = ActorQueue<A>()
   fileprivate nonisolated var controller: MRPController<A.P>? { _controller.object }
 
   nonisolated var application: A? { _application.object }
@@ -143,6 +145,7 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
   ) {
     _controller = Weak(controller)
     _application = Weak(application)
+    _queue.adoptExecutionContext(of: application)
     self.contextIdentifier = contextIdentifier
 
     self.port = port
@@ -1197,14 +1200,7 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
     // the subsequent join
     guard !context.smFlags.contains(.isReplacingSubtype) else { return }
 
-    // running application indications in unstructured tasks is a trade-off; it
-    // allows us to make the participant API as consumed by the application
-    // synchronous, thereby avoiding reentrancy issues; but it does not
-    // completely eliminate the possibility of race conditions as different
-    // values of the same attribute, or related attributes, are processed (as
-    // Tasks are not necessarily scheduled in order). If this proves to be
-    // problematic, we should look at using a queue of tasks instead.
-    Task { @Sendable in
+    Task(on: context.participant._queue) { @Sendable _ in
       switch registrarAction {
       case .New:
         fallthrough
