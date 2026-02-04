@@ -620,7 +620,7 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
             .debug(
               "\(self): \(eventSource) declared attribute \(attribute) with new subtype \(attributeSubtype); replacing"
             )
-          try? attribute.willReplace(eventSource: eventSource)
+          try? attribute.willReplaceSubtype(eventSource: eventSource)
           attribute.attributeSubtype = attributeSubtype
         }
 
@@ -797,7 +797,7 @@ public extension Participant {
         "\(self): \(eventSource) declared attribute \(attribute) with new subtype \(attributeSubtype); replacing"
       )
 
-      try? attribute.willReplace(eventSource: eventSource)
+      try? attribute.willReplaceSubtype(eventSource: eventSource)
       attribute.attributeSubtype = attributeSubtype
     }
 
@@ -1063,7 +1063,7 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
   private func _getEventContext(
     for event: ProtocolEvent,
     eventSource: EventSource,
-    isReplacing: Bool,
+    isReplacingSubtype: Bool,
     participant: P
   ) throws -> EventContext<A> {
     try EventContext(
@@ -1073,7 +1073,7 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
       attributeType: attributeType,
       attributeSubtype: attributeSubtype,
       attributeValue: unwrappedValue,
-      smFlags: participant._getSmFlags(for: attributeType).union(isReplacing ? .isReplacing : []),
+      smFlags: participant._getSmFlags(for: attributeType).union(isReplacingSubtype ? .isReplacingSubtype : []),
       applicant: applicant,
       registrar: registrar
     )
@@ -1082,13 +1082,13 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
   fileprivate func handle(
     protocolEvent event: ProtocolEvent,
     eventSource: EventSource,
-    isReplacing: Bool = false
+    isReplacingSubtype: Bool = false
   ) throws {
     guard let participant else { throw MRPError.internalError }
     try _handle(
       protocolEvent: event,
       eventSource: eventSource,
-      isReplacing: isReplacing,
+      isReplacingSubtype: isReplacingSubtype,
       participant: participant
     )
   }
@@ -1096,13 +1096,13 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
   private func _handle(
     protocolEvent event: ProtocolEvent,
     eventSource: EventSource,
-    isReplacing: Bool = false,
+    isReplacingSubtype: Bool = false,
     participant: P
   ) throws {
     let context = try _getEventContext(
       for: event,
       eventSource: eventSource,
-      isReplacing: isReplacing,
+      isReplacingSubtype: isReplacingSubtype,
       participant: participant
     )
 
@@ -1110,7 +1110,7 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
     try _handleApplicant(context: context, participant: context.participant)
 
     // remove attribute entirely if it is no longer declared or registered
-    if !isReplacing, canGC { participant._gcAttributeValue(self) }
+    if !isReplacingSubtype, canGC { participant._gcAttributeValue(self) }
   }
 
   private func _handleApplicant(
@@ -1194,7 +1194,7 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
     // to avoid synchronization issues, when we replace an attribute with
     // rLvNow, suppress the leave indication; MSRP will correctly recover with
     // the subsequent join
-    guard !context.smFlags.contains(.isReplacing) else { return }
+    guard !context.smFlags.contains(.isReplacingSubtype) else { return }
 
     Task { @Sendable in
       switch registrarAction {
@@ -1224,11 +1224,11 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
   }
 
   // called only when replacing attribute; suppresses GC and leave indication
-  fileprivate func willReplace(eventSource: EventSource) throws {
+  fileprivate func willReplaceSubtype(eventSource: EventSource) throws {
     try handle(
       protocolEvent: .rLvNow,
       eventSource: eventSource,
-      isReplacing: true
+      isReplacingSubtype: true
     )
     precondition(!isRegistered)
   }
