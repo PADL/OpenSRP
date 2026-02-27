@@ -1,4 +1,4 @@
-#if canImport(FlyingFox)
+#if RestAPI
 import FlyingFox
 
 protocol RestApiApplication: Application {

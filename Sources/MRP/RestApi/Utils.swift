@@ -14,7 +14,7 @@
 // limitations under the License.
 //
 
-#if canImport(FlyingFox)
+#if RestAPI
 
 #if canImport(FoundationEssentials)
 import FoundationEssentials

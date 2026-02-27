@@ -19,7 +19,7 @@ import BinaryParsing
 import IEEE802
 import Logging
 import Synchronization
-#if canImport(FlyingFox)
+#if RestAPI
 import FlyingFox
 #endif
 
@@ -1804,7 +1804,7 @@ extension MSRPApplication {
   }
 }
 
-#if canImport(FlyingFox)
+#if RestAPI
 extension MSRPApplication: RestApiApplication {
   func registerRestApiHandlers(for httpServer: HTTPServer) async throws {
     let msrpHandler = MSRPHandler(application: self)

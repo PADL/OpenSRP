@@ -23,7 +23,7 @@
 // primarily on the exchange of idempotent protocol state rather than commands.
 
 import AsyncExtensions
-#if canImport(FlyingFox)
+#if RestAPI
 import FlyingFox
 #endif
 import IEEE802
@@ -46,7 +46,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
   private var _taskGroup: ThrowingTaskGroup<(), Error>?
   private let _rxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)>
   private let _portExclusions: Set<String>
-  #if canImport(FlyingFox)
+  #if RestAPI
   private var _httpServer: HTTPServer?
   #endif
 
@@ -68,7 +68,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
     self.forceFullParticipant = forceFullParticipant
     _rxPackets = try bridge.rxPackets
     _portExclusions = portExclusions
-    #if canImport(FlyingFox)
+    #if RestAPI
     if let restServerPort {
       let httpServer = HTTPServer(port: restServerPort)
       await registerDefaultRestApiHandlers(for: httpServer)
@@ -95,7 +95,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
           try await bridge.run(controller: self)
           try await _handleRxPackets()
         }
-        #if canImport(FlyingFox)
+        #if RestAPI
         if let _httpServer {
           group.addTask { @Sendable in try await _httpServer.run() }
         }
@@ -111,7 +111,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
     logger.info("stopping MRP for bridge \(bridge)")
     // FIXME: there appears to be a crash here
     _taskGroup?.cancelAll()
-    #if canImport(FlyingFox)
+    #if RestAPI
     await _httpServer?.stop()
     #endif
     try? await bridge.shutdown(controller: self)
@@ -362,7 +362,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
       controller: self
     )
     _applications[application.etherType] = application
-    #if canImport(FlyingFox)
+    #if RestAPI
     if let application = application as? any RestApiApplication, let _httpServer {
       try await application.registerRestApiHandlers(for: _httpServer)
     }
@@ -447,7 +447,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
   }
 }
 
-#if canImport(FlyingFox)
+#if RestAPI
 fileprivate extension MRPController {
   func registerDefaultRestApiHandlers(for httpServer: HTTPServer) async {
     let deviceHandler = DeviceHandler(controller: self)

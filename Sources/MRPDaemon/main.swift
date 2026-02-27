@@ -127,8 +127,10 @@ private final class MRPDaemon: AsyncParsableCommand {
   @Option(name: .long, help: "MRP Periodic TX time interval")
   var periodicTime: Duration = .seconds(1)
 
+  #if RestAPI
   @Option(name: .shortAndLong, help: "REST HTTP server port")
   var restServerPort: UInt16?
+  #endif
 
   enum CodingKeys: String, CodingKey {
     case bridgeInterface
@@ -156,7 +158,9 @@ private final class MRPDaemon: AsyncParsableCommand {
     case leaveTime
     case leaveAllTime
     case periodicTime
+    #if RestAPI
     case restServerPort
+    #endif
   }
 
   var logger: Logger!
@@ -185,6 +189,10 @@ private final class MRPDaemon: AsyncParsableCommand {
       qDiscHandle: qDiscHandle,
       ptpManagementClientSocketPath: pmcUdsPath
     )
+    #if !RestAPI
+    let restServerPort: UInt16? = nil
+    #endif
+
     let controller = try await MRPController<P>(
       bridge: bridge,
       logger: logger,

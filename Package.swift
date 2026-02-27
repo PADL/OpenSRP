@@ -156,8 +156,8 @@ let CommonTargets: [Target] = [
       .product(name: "Logging", package: "swift-log"),
       .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
       .product(name: "SystemPackage", package: "swift-system"),
-      .product(name: "FlyingFox", package: "FlyingFox"),
-      .product(name: "FlyingFoxMacros", package: "FlyingFoxMacros"),
+      .product(name: "FlyingFox", package: "FlyingFox", condition: .when(traits: ["RestAPI"])),
+      .product(name: "FlyingFoxMacros", package: "FlyingFoxMacros", condition: .when(traits: ["RestAPI"])),
       .product(name: "AsyncQueue", package: "swift-async-queue"),
     ] + PlatformTargetDependencies,
     cSettings: PlatformCSettings,
@@ -179,6 +179,7 @@ let package = Package(
     .macOS(.v15),
   ],
   products: CommonProducts + PlatformProducts,
+  traits: [.init(name: "RestAPI", description: "Build REST API")],
   dependencies: CommonPackageDependencies + PlatformPackageDependencies,
   targets: CommonTargets + PlatformTargets
 )
