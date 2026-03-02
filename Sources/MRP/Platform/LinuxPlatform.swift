@@ -380,6 +380,11 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
       return portDataSet.asCapable != 0
     }
   }
+
+  public func setMulticastFlooding(_ enabled: Bool) async throws {
+    guard let _bridge else { throw MRPError.internalError }
+    try await _rtnl.set(option: .mcastFlood, enabled, socket: _bridge._nlLinkSocket)
+  }
 }
 
 private extension LinuxPort {

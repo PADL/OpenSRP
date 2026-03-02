@@ -266,6 +266,21 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
   private func _handleBridgeNotifications() async throws {
     for try await notification in bridge.notifications {
       do {
+        // we disable multicast flooding on _all_ ports, even the excluded
+        // ones, because we don't want to flood SRP traffic to those ports.
+        // doing this is here is something on an abstraction violation, but the
+        // applications would otherwise not see the port.
+        if case let .added(port) = notification, !ports.contains(port),
+           let port = port as? any AVBPort
+        {
+          do {
+            try await port.setMulticastFlooding(false)
+            logger.debug("disabled multicast flooding on port \(port)")
+          } catch {
+            logger.warning("failed to disable multicast flooding on port \(port): \(error)")
+          }
+        }
+
         if _portExclusions.contains(notification.port.name) { continue }
         switch notification {
         case let .added(port):

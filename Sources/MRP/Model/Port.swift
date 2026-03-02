@@ -46,6 +46,9 @@ public protocol AVBPort: Port {
   var isAsCapable: Bool { get async throws }
 
   func getPortTcMaxLatency(for: SRclassPriority) async throws -> Int
+
+  // multicast flooding
+  func setMulticastFlooding(_ enabled: Bool) async throws
 }
 
 public enum PortNotification<P: Port>: Sendable {
