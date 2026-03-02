@@ -62,6 +62,8 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
 
   func getPortTcMaxLatency(for: SRclassPriority) async throws -> Int { 0 }
 
+  func setMulticastFlooding(_ enabled: Bool) async throws {}
+
   init(id: ID) {
     self.id = id
   }
