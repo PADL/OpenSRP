@@ -18,7 +18,7 @@ var PlatformLinkerSettings: [LinkerSetting] = []
 PlatformPackageDependencies = [
   .package(
     url: "https://github.com/PADL/IORingSwift",
-    from: "0.9.9"
+    from: "1.0.0"
   ),
   .package(
     url: "https://github.com/PADL/NetLinkSwift",
