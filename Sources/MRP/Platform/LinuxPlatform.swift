@@ -443,18 +443,21 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     AsyncChannel<SRClassPriorityMapNotification<P>>()
   fileprivate let _pmc: PTPManagementClient
   private var _portPropertiesCache = [P.ID: PortPropertiesNP]()
+  private let _portExclusions: Set<String>
 
   public init(
     name: String,
     netFilterGroup group: Int,
     qDiscHandle: UInt16? = nil,
-    ptpManagementClientSocketPath: String? = nil
+    ptpManagementClientSocketPath: String? = nil,
+    portExclusions: Set<String> = []
   ) async throws {
     _bridgeName = name
     _nlLinkSocket = try NLSocket(protocol: NETLINK_ROUTE)
     _nlNfLog = try NFNLLog(group: UInt16(group))
     _nlQDiscHandle = qDiscHandle
     _pmc = try await PTPManagementClient(path: ptpManagementClientSocketPath)
+    _portExclusions = portExclusions
   }
 
   public nonisolated var description: String {
@@ -474,7 +477,9 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     } else if port._rtnl.master == _bridgeIndex {
       if case .new = linkMessage {
         portNotification = .added(port)
-        try _addLinkLocalRxTask(port: port)
+        if !_portExclusions.contains(port.name) {
+          try _addLinkLocalRxTask(port: port)
+        }
       } else {
         try _cancelLinkLocalRxTask(port: port)
         portNotification = .removed(port)
@@ -569,8 +574,16 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     }
   }
 
+  private func _hasLinkLocalRxTasks(port: P) -> Bool {
+    !_linkLocalRegistrations.isEmpty && _linkLocalRegistrations.allSatisfy { filterRegistration in
+      let key = LinkLocalRXTaskKey(portID: port.id, filterRegistration: filterRegistration)
+      return _linkLocalRxTasks[key] != nil
+    }
+  }
+
   private func _addLinkLocalRxTask(port: P) throws {
     precondition(!port._isBridgeSelf)
+    guard !_hasLinkLocalRxTasks(port: port) else { return }
     try? _cancelLinkLocalRxTask(port: port)
     for filterRegistration in _linkLocalRegistrations {
       let key = LinkLocalRXTaskKey(portID: port.id, filterRegistration: filterRegistration)
@@ -658,7 +671,9 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     let ports = try await _getMemberPorts()
     for port in ports {
       await _portNotificationChannel.send(.added(port))
-      try _addLinkLocalRxTask(port: port)
+      if !_portExclusions.contains(port.name) {
+        try _addLinkLocalRxTask(port: port)
+      }
     }
   }
 

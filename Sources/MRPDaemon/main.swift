@@ -187,7 +187,8 @@ private final class MRPDaemon: AsyncParsableCommand {
       name: bridgeInterface,
       netFilterGroup: nfGroup,
       qDiscHandle: qDiscHandle,
-      ptpManagementClientSocketPath: pmcUdsPath
+      ptpManagementClientSocketPath: pmcUdsPath,
+      portExclusions: Set(excludeIface)
     )
     #if !RestAPI
     let restServerPort: UInt16? = nil
