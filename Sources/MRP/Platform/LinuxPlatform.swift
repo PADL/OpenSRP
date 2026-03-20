@@ -334,7 +334,7 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
   }
 
   public var macAddress: EUI48 {
-    _rtnl.address
+    _rtnl.address!
   }
 
   public var pvid: UInt16? {
