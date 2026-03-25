@@ -209,11 +209,22 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     _priorityMapNotificationTask = Task {
       guard let bridge = controller.bridge as? any MSRPAwareBridge<P> else { return }
 
-      for try await notification in bridge.srClassPriorityMapNotifications {
-        guard let port = try? await controller.port(with: notification.portID) else { continue }
-        try? withPortState(port: port) { portState in
-          portState.srClassPriorityMap = notification.map
-        }
+      try? await _observePriorityMapNotifications(bridge: bridge, controller: controller)
+    }
+  }
+
+  // Workaround for Swift 6.3 SIL verification crash: the optimizer incorrectly
+  // specializes the witness_method through the existential cast, producing a
+  // type mismatch between concrete and generic associated types. Extracting the
+  // loop into a separate generic method keeps the types consistent.
+  private func _observePriorityMapNotifications<B: MSRPAwareBridge>(
+    bridge: B,
+    controller: MRPController<P>
+  ) async throws where B.P == P {
+    for try await notification in bridge.srClassPriorityMapNotifications {
+      guard let port = try? await controller.port(with: notification.portID) else { continue }
+      try? withPortState(port: port) { portState in
+        portState.srClassPriorityMap = notification.map
       }
     }
   }
