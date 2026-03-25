@@ -111,7 +111,7 @@ let CommonPackageDependencies: [Package.Dependency] = [
   .package(url: "https://github.com/swhitty/FlyingFox", from: "0.25.0"),
   .package(url: "https://github.com/swhitty/FlyingFoxMacros", from: "0.2.0"),
   .package(url: "https://github.com/Flight-School/AnyCodable", from: "0.6.7"),
-  .package(url: "https://github.com/apple/swift-binary-parsing", from: "0.0.1"),
+  .package(url: "https://github.com/apple/swift-binary-parsing", branch: "main"),
   .package(url: "https://github.com/dfed/swift-async-queue", from: "1.0.0"),
 ]
 
