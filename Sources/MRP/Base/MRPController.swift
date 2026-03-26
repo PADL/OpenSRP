@@ -46,6 +46,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
   private var _taskGroup: ThrowingTaskGroup<(), Error>?
   private let _rxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)>
   private let _portExclusions: Set<String>
+  private var _multicastFloodingDisabledPorts = Set<P.ID>()
   #if RestAPI
   private var _httpServer: HTTPServer?
   #endif
@@ -271,10 +272,12 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
         // doing this is here is something on an abstraction violation, but the
         // applications would otherwise not see the port.
         if case let .added(port) = notification, !ports.contains(port),
-           let port = port as? any AVBPort
+           !_multicastFloodingDisabledPorts.contains(port.id),
+           let avbPort = port as? any AVBPort
         {
           do {
-            try await port.setMulticastFlooding(false)
+            try await avbPort.setMulticastFlooding(false)
+            _multicastFloodingDisabledPorts.insert(port.id)
             logger.debug("disabled multicast flooding on port \(port)")
           } catch {
             logger.warning("failed to disable multicast flooding on port \(port): \(error)")
@@ -286,6 +289,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
         case let .added(port):
           try await ports.contains(port) ? _didUpdate(port: port) : _didAdd(port: port)
         case let .removed(port):
+          _multicastFloodingDisabledPorts.remove(port.id)
           try await _didRemove(port: port)
         case let .changed(port):
           try await _didUpdate(port: port)
