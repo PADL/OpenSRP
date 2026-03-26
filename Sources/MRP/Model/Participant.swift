@@ -178,8 +178,8 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
     // basis. The value of JoinTime used to initialize this timer is determined
     // in accordance with 10.7.11.
     _jointimer = Timer(label: "jointimer") { @Sendable [weak self] in
-      guard let self, let application = self.application else { return }
-      try await self._onTxOpportunity(isolation: application)
+      guard let self, let application else { return }
+      try await _onTxOpportunity(isolation: application)
     }
 
     // The Leave All Period Timer, leavealltimer, controls the frequency with
@@ -192,8 +192,8 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
     _leaveAll = LeaveAll(interval: controller!.timerConfiguration
       .leaveAllTime)
     { @Sendable [weak self] in
-      guard let self, let application = self.application else { return }
-      try await self._onLeaveAllTimerExpired(isolation: application)
+      guard let self, let application else { return }
+      try await _onLeaveAllTimerExpired(isolation: application)
     }
   }
 
@@ -1016,7 +1016,7 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
         .leaveTime)
       { @Sendable [weak self] in
         guard let self, let application = self.participant?.application else { return }
-        try await self._onLeaveTimerExpired(isolation: application)
+        try await _onLeaveTimerExpired(isolation: application)
       }
     }
   }
