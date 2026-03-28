@@ -111,7 +111,7 @@ let CommonPackageDependencies: [Package.Dependency] = [
   .package(url: "https://github.com/swhitty/FlyingFox", from: "0.25.0"),
   .package(url: "https://github.com/swhitty/FlyingFoxMacros", from: "0.2.0"),
   .package(url: "https://github.com/Flight-School/AnyCodable", from: "0.6.7"),
-  .package(url: "https://github.com/apple/swift-binary-parsing", branch: "main"),
+  .package(url: "https://github.com/apple/swift-binary-parsing", from: "0.0.2"),
   .package(url: "https://github.com/dfed/swift-async-queue", from: "1.0.0"),
 ]
 
@@ -156,7 +156,11 @@ let CommonTargets: [Target] = [
       .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
       .product(name: "SystemPackage", package: "swift-system"),
       .product(name: "FlyingFox", package: "FlyingFox", condition: .when(traits: ["RestAPI"])),
-      .product(name: "FlyingFoxMacros", package: "FlyingFoxMacros", condition: .when(traits: ["RestAPI"])),
+      .product(
+        name: "FlyingFoxMacros",
+        package: "FlyingFoxMacros",
+        condition: .when(traits: ["RestAPI"])
+      ),
       .product(name: "AnyCodable", package: "AnyCodable", condition: .when(traits: ["RestAPI"])),
       .product(name: "AsyncQueue", package: "swift-async-queue"),
     ] + PlatformTargetDependencies,
