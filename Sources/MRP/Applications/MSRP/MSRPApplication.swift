@@ -973,6 +973,14 @@ extension MSRPApplication {
             eventSource: .map
           )
         } catch let error as MSRPFailure {
+          // Leave existing talkerAdvertise before joining talkerFailed to
+          // maintain mutual exclusion (IEEE 802.1Q 35.2.4.4.1)
+          try _enforceTalkerMutualExclusion(
+            participant: participant,
+            declarationType: .talkerFailed,
+            streamID: talkerValue.streamID,
+            eventSource: .map
+          )
           let talkerFailed = MSRPTalkerFailedValue(
             streamID: talkerValue.streamID,
             dataFrameParameters: talkerValue.dataFrameParameters,
@@ -1176,10 +1184,19 @@ extension MSRPApplication {
       guard let participantTalker = _findTalkerRegistration(
         for: streamID,
         participant: participant
-      ), talkerRegistration == nil else {
+      ) else {
         return
       }
-      talkerRegistration = (participant, participantTalker)
+      if talkerRegistration == nil {
+        talkerRegistration = (participant, participantTalker)
+      } else if talkerRegistration!.1 is MSRPTalkerFailedValue,
+                participantTalker is MSRPTalkerAdvertiseValue
+      {
+        // Prefer talkerAdvertise over talkerFailed: the talkerAdvertise
+        // registration is on the ingress port closest to the talker source,
+        // which is where listener declarations should be propagated
+        talkerRegistration = (participant, participantTalker)
+      }
     }
 
     return talkerRegistration
