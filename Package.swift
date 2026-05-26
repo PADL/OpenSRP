@@ -22,7 +22,7 @@ PlatformPackageDependencies = [
   ),
   .package(
     url: "https://github.com/PADL/NetLinkSwift",
-    branch: "main"
+    branch: "kernel-mdb-srp"
   ),
   .package(url: "https://github.com/xtremekforever/swift-systemd", from: "0.2.1"),
 ]

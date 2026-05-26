@@ -24,8 +24,31 @@ import FlyingFox
 
 public let MMRPEtherType: UInt16 = 0x88F6
 
+/// Per-registration hints passed to the platform bridge when an MMRP/MSRP MAC
+/// address registration is installed. Backends translate these to whatever
+/// platform-specific flag is appropriate (on Linux, the bridge MDB flags
+/// bitmask, e.g. `MDB_FLAGS_STREAM_RESERVED`).
+public struct MMRPRegistrationFlags: OptionSet, Sendable {
+  public let rawValue: UInt32
+
+  public init(rawValue: UInt32) {
+    self.rawValue = rawValue
+  }
+
+  /// The MAC registration corresponds to a reserved MSRP/802.1Q SR stream
+  /// destination (typically a MAAP group address). The platform bridge is
+  /// expected to mark the underlying MDB entry as stream-reserved so
+  /// hardware drivers can apply their own admission policy.
+  public static let streamReserved = MMRPRegistrationFlags(rawValue: 1 << 0)
+}
+
 protocol MMRPAwareBridge<P>: Bridge where P: Port {
-  func register(macAddress: EUI48, vlan: VLAN?, on ports: Set<P>) async throws
+  func register(
+    macAddress: EUI48,
+    vlan: VLAN?,
+    flags: MMRPRegistrationFlags,
+    on ports: Set<P>
+  ) async throws
   func deregister(macAddress: EUI48, vlan: VLAN?, from ports: Set<P>) async throws
 
   func register(
@@ -187,7 +210,7 @@ extension MMRPApplication {
         .debug(
           "MMRP: join indication from port \(port) address \(_macAddressToString(macAddress)) isNew \(isNew) source \(eventSource)"
         )
-      try await bridge.register(macAddress: macAddress, vlan: nil, on: ports)
+      try await bridge.register(macAddress: macAddress, vlan: nil, flags: [], on: ports)
     case .serviceRequirement:
       try await bridge.register(
         serviceRequirement: attributeValue as! MMRPServiceRequirementValue,
