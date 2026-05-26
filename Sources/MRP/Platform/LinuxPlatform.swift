@@ -792,14 +792,22 @@ fileprivate final class FilterRegistration: Equatable, Hashable, Sendable, Custo
 }
 
 extension LinuxBridge: MMRPAwareBridge {
-  func register(macAddress: EUI48, vlan: VLAN?, on ports: Set<P>) async throws {
+  func register(
+    macAddress: EUI48,
+    vlan: VLAN?,
+    flags: MMRPRegistrationFlags,
+    on ports: Set<P>
+  ) async throws {
     guard let rtnl = bridgePort._rtnl as? RTNLLinkBridge else { throw Errno.noSuchAddressOrDevice }
+    var mdbFlags: RTNLLinkBridge.MDBFlags = []
+    if flags.contains(.streamReserved) { mdbFlags.insert(.streamReserved) }
     for port in ports {
       if _isMulticast(macAddress: macAddress) {
         try await rtnl.add(
           link: port._rtnl,
           groupAddresses: [macAddress],
           vlanID: vlan?.vid,
+          flags: mdbFlags,
           socket: _nlLinkSocket
         )
       } else {

@@ -1268,6 +1268,7 @@ extension MSRPApplication {
         try await bridge.register(
           macAddress: talkerRegistration.dataFrameParameters.destinationAddress,
           vlan: talkerRegistration.dataFrameParameters.vlanIdentifier,
+          flags: .streamReserved,
           on: [port]
         )
       } catch {
