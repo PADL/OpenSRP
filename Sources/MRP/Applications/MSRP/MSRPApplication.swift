@@ -63,6 +63,11 @@ protocol MSRPAwareBridge<P>: Bridge where P: AVBPort {
 
   func getSRClassPriorityMap(port: P) async throws -> SRClassPriorityMap?
 
+  // Enable or disable 802.1Qat stream reservation admission control on a member
+  // port. This is meaningful only for MSRP, so it is driven by the application
+  // as ports are added to and removed from the SR domain.
+  func setStreamReservationFilter(on port: P, enabled: Bool) async throws
+
   var srClassPriorityMapNotifications: AnyAsyncSequence<SRClassPriorityMapNotification<P>> { get }
 }
 
@@ -259,7 +264,7 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     }
 
     for port in context {
-      if _configureQueues {
+      if _configureQueues, port.isAvbCapable || _forceAvbCapable {
         try? await bridge.unconfigureQueues(port: port)
         try await bridge.configureQueues(
           port: port,
@@ -267,6 +272,12 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
           queues: _queues,
           forceAvbCapable: _forceAvbCapable
         )
+        do {
+          try await bridge.setStreamReservationFilter(on: port, enabled: true)
+        } catch {
+          _logger
+            .error("MSRP: failed to enable stream reservation filtering on \(port): \(error)")
+        }
         srClassPriorityMap[port.id] = DefaultSRClassPriorityMap
         _logger
           .debug(
@@ -326,10 +337,15 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
   ) async throws {
     guard contextIdentifier == MAPBaseSpanningTreeContext else { return }
 
-    if _configureQueues {
+    if _configureQueues, let bridge = (controller?.bridge as? any MSRPAwareBridge<P>) {
       for port in context {
-        guard port.isAvbCapable,
-              let bridge = (controller?.bridge as? any MSRPAwareBridge<P>) else { continue }
+        guard port.isAvbCapable || _forceAvbCapable else { continue }
+        do {
+          try await bridge.setStreamReservationFilter(on: port, enabled: false)
+        } catch {
+          _logger
+            .error("MSRP: failed to disable stream reservation filtering on \(port): \(error)")
+        }
         do {
           try await bridge.unconfigureQueues(port: port)
         } catch {

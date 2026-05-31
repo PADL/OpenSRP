@@ -132,6 +132,8 @@ extension MockBridge: MSRPAwareBridge {
 
   func getSRClassPriorityMap(port: P) async throws -> SRClassPriorityMap? { nil }
 
+  func setStreamReservationFilter(on port: P, enabled: Bool) async throws {}
+
   var srClassPriorityMapNotifications: AnyAsyncSequence<SRClassPriorityMapNotification<P>> {
     AsyncEmptySequence<SRClassPriorityMapNotification<P>>().eraseToAnyAsyncSequence()
   }

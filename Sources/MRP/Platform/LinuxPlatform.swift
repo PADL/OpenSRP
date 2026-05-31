@@ -960,6 +960,25 @@ extension LinuxBridge: MSRPAwareBridge {
     }
   }
 
+  // Enable or disable 802.1Qat stream reservation admission control on a member
+  // port (IFLA_BRPORT_FILTER_STREAM_RESERVED). Kernels without
+  // CONFIG_BRIDGE_8021Q_SRP reject the attribute with EOPNOTSUPP, and kernels
+  // predating it with EINVAL; in both cases the software bridge cannot enforce it
+  // (an offloaded hardware datapath still may), so log and continue. Any other
+  // error is propagated.
+  func setStreamReservationFilter(on port: P, enabled: Bool) async throws {
+    do {
+      try await port._rtnl.set(
+        option: .filterStreamReserved, enabled, socket: _nlLinkSocket
+      )
+    } catch let error as Errno
+      where error == .invalidArgument || error == .notSupported {
+      debugPrint(
+        "LinuxBridge: stream reservation filtering not supported on \(port); continuing: \(error)"
+      )
+    }
+  }
+
   func getSRClassPriorityMap(port: P) async throws -> SRClassPriorityMap? {
     let qDiscs = try await _nlLinkSocket.getQDiscs(
       family: sa_family_t(AF_UNSPEC),
