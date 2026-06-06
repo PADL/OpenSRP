@@ -42,6 +42,8 @@ extension Logger.Level: @retroactive ExpressibleByArgument {
   }
 }
 
+extension MSRPFilteringType: ExpressibleByArgument {}
+
 @main
 private final class MRPDaemon: AsyncParsableCommand {
   typealias P = LinuxPort
@@ -90,6 +92,12 @@ private final class MRPDaemon: AsyncParsableCommand {
 
   @Flag(name: .long, help: "Automatically configure both ingress and egress queues")
   var configureQueues: Bool = false
+
+  @Option(
+    name: .long,
+    help: "Configure stream-reservation admission control filtering (\(MSRPFilteringType.allCases.map(\.rawValue).joined(separator: ", ")))"
+  )
+  var configureFiltering: MSRPFilteringType? = nil
 
   @Option(name: .long, help: "Default MSRP SR PVID")
   var srPVid: UInt16 = SR_PVID.id
@@ -153,6 +161,7 @@ private final class MRPDaemon: AsyncParsableCommand {
     case configureEgressQueues
     case configureIngressQueues
     case configureQueues
+    case configureFiltering
     case excludeIface
     case excludeVlan
     case logLevel
@@ -245,7 +254,8 @@ private final class MRPDaemon: AsyncParsableCommand {
         maxFanInPorts: maxFanInPorts,
         srPVid: VLAN(id: srPVid),
         queues: queues,
-        deltaBandwidths: deltaBandwidths.isEmpty ? nil : deltaBandwidths
+        deltaBandwidths: deltaBandwidths.isEmpty ? nil : deltaBandwidths,
+        filtering: configureFiltering
       )
     }
 

@@ -41,7 +41,23 @@ public struct MSRPApplicationFlags: OptionSet, Sendable {
   public static let defaultFlags = Self([.ignoreAsCapable])
 }
 
+// Stream-reservation admission control mechanism: restrict the AVB traffic
+// classes to streams that have a reservation (a dynamic-reservation MDB entry),
+// the role the old BR_FILTER_STREAM_RESERVED ingress flag played. The concrete
+// mechanism is platform-specific; the bridge dispatches on the selected type.
+// New mechanisms can be added here as additional cases.
+public enum MSRPFilteringType: String, Sendable, CaseIterable {
+  case mv88e6xxxDevlink = "mv88e6xxx-devlink"
+}
+
 protocol MSRPAwareBridge<P>: Bridge where P: AVBPort {
+  // Enable/disable stream-reservation admission control on a port using the
+  // given mechanism. Default is a no-op; platforms with the necessary hardware
+  // support (e.g. Linux/mv88e6xxx via devlink) override it.
+  func configureFiltering(on port: P, type: MSRPFilteringType) async throws
+
+  func unconfigureFiltering(on port: P, type: MSRPFilteringType) async throws
+
   func configureEgressQueues(
     port: P,
     srClassPriorityMap: SRClassPriorityMap,
@@ -83,6 +99,12 @@ protocol MSRPAwareBridge<P>: Bridge where P: AVBPort {
   func getSRClassPriorityMap(port: P) async throws -> SRClassPriorityMap?
 
   var srClassPriorityMapNotifications: AnyAsyncSequence<SRClassPriorityMapNotification<P>> { get }
+}
+
+extension MSRPAwareBridge {
+  // No-op defaults for platforms without admission-control support.
+  func configureFiltering(on port: P, type: MSRPFilteringType) async throws {}
+  func unconfigureFiltering(on port: P, type: MSRPFilteringType) async throws {}
 }
 
 public extension AVBPort {
@@ -189,6 +211,7 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
   let _deltaBandwidths: [SRclassID: Int]
   let _maxTalkerAttributes: Int
   let _flags: MSRPApplicationFlags
+  let _filtering: MSRPFilteringType?
 
   fileprivate let _maxFanInPorts: Int
   fileprivate let _maxSRClass: SRclassID
@@ -206,6 +229,8 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     _flags.contains(.configureIngressQueues)
   }
 
+  fileprivate nonisolated var _configureFiltering: Bool { _filtering != nil }
+
   nonisolated var _ignoreAsCapable: Bool { _flags.contains(.ignoreAsCapable) }
   fileprivate nonisolated var _talkerPruning: Bool { _flags.contains(.talkerPruning) }
 
@@ -218,11 +243,13 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     maxSRClass: SRclassID = .B,
     queues: [SRclassID: UInt] = [.A: 4, .B: 3],
     deltaBandwidths: [SRclassID: Int]? = nil,
-    maxTalkerAttributes: Int = 150
+    maxTalkerAttributes: Int = 150,
+    filtering: MSRPFilteringType? = nil
   ) async throws {
     _controller = Weak(controller)
     _logger = controller.logger
     _flags = flags
+    _filtering = filtering
     _maxFanInPorts = maxFanInPorts
     _latencyMaxFrameSize = latencyMaxFrameSize
     _srPVid = srPVid
@@ -285,9 +312,21 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     }
 
     for port in context {
-      if _configureEgressQueues || _configureIngressQueues,
+      if _configureEgressQueues || _configureIngressQueues || _configureFiltering,
          port.isAvbCapable || _forceAvbCapable
       {
+        // Experimental: enable stream-reservation admission control so the
+        // switch restricts the AVB traffic classes to reserved streams (the
+        // role the old BR_FILTER_STREAM_RESERVED ingress flag played). This is
+        // done before queueing so the filter is in place as the queues come up.
+        // Best-effort: platforms without hardware support are a no-op.
+        if let _filtering {
+          do {
+            try await bridge.configureFiltering(on: port, type: _filtering)
+          } catch {
+            _logger.error("MSRP: failed to enable admission control on \(port): \(error)")
+          }
+        }
         if _configureEgressQueues {
           try? await bridge.unconfigureEgressQueues(port: port)
           try await bridge.configureEgressQueues(
@@ -378,7 +417,7 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
   ) async throws {
     guard contextIdentifier == MAPBaseSpanningTreeContext else { return }
 
-    if _configureEgressQueues || _configureIngressQueues,
+    if _configureEgressQueues || _configureIngressQueues || _configureFiltering,
        let bridge = (controller?.bridge as? any MSRPAwareBridge<P>)
     {
       for port in context {
@@ -401,6 +440,15 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
           } catch {
             _logger
               .error("MSRP: failed to unconfigure ingress queues for port \(port): \(error)")
+          }
+        }
+        // Experimental: disable stream-reservation admission control, after the
+        // queues have been torn down (the inverse order of configuration).
+        if let _filtering {
+          do {
+            try await bridge.unconfigureFiltering(on: port, type: _filtering)
+          } catch {
+            _logger.error("MSRP: failed to disable admission control on \(port): \(error)")
           }
         }
       }

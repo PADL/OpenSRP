@@ -496,6 +496,9 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   fileprivate let _nlLinkSocket: NLSocket
   private let _nlNfLog: NFNLLog
   private let _nlQDiscHandle: UInt16?
+  // Experimental: devlink client for the per-port AVB mode. Best-effort -- nil
+  // if the devlink generic-netlink family is unavailable.
+  private let _devlink: RTNLDevlink?
   private var _nlNfLogMonitorTask: Task<(), Error>!
   private var _nlLinkMonitorTask: Task<(), Error>!
   private let _bridgeName: String
@@ -532,6 +535,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     _nlLinkSocket = try NLSocket(protocol: NETLINK_ROUTE)
     _nlNfLog = try NFNLLog(group: UInt16(group))
     _nlQDiscHandle = qDiscHandle
+    _devlink = try? RTNLDevlink()
     _pmc = try await PTPManagementClient(path: ptpManagementClientSocketPath)
     _portExclusions = portExclusions
   }
@@ -937,7 +941,48 @@ private extension SRClassPriorityMap {
   }
 }
 
+extension LinuxBridge {
+  // Marvell mv88e6xxx per-port AVB ingress mode (AVB_CFG bits 15:14).
+  // `.enhanced` reserves the AVB traffic classes for streams with a
+  // dynamic-reservation MDB entry.
+  enum MarvellAVBPortMode: UInt16, Sendable {
+    case legacy = 0x0000
+    case standard = 0x4000
+    case enhanced = 0x8000
+    case secure = 0xc000
+  }
+
+  // Experimental: set the per-port AVB ingress mode via the mv88e6xxx "avb_cfg"
+  // devlink parameter. Only the AVB mode bits (15:14) are written; the other
+  // AVB_CFG bits (filter/discard/override/tunnel) are left at their defaults.
+  private func _setAVBPortMode(on port: P, _ mode: MarvellAVBPortMode) async throws {
+    guard let devlink = _devlink else { throw Errno.notSupported }
+    try await devlink.setPortParam(
+      ifIndex: port._rtnl.index,
+      name: "avb_cfg",
+      u16Value: mode.rawValue
+    )
+  }
+}
+
 extension LinuxBridge: MSRPAwareBridge {
+  // Experimental: dispatch admission control to the requested mechanism. The
+  // mv88e6xxx/devlink type maps to the per-port AVB mode -- enhanced to enable,
+  // legacy to disable.
+  func configureFiltering(on port: P, type: MSRPFilteringType) async throws {
+    switch type {
+    case .mv88e6xxxDevlink:
+      try await _setAVBPortMode(on: port, .enhanced)
+    }
+  }
+
+  func unconfigureFiltering(on port: P, type: MSRPFilteringType) async throws {
+    switch type {
+    case .mv88e6xxxDevlink:
+      try await _setAVBPortMode(on: port, .legacy)
+    }
+  }
+
   // Compute the legacy (TC0) queue count and base offset for a port, shared by the egress
   // (MQPRIO) and ingress (DCBNL) queue configuration so both derive identical mappings.
   private func _legacyQueueParams(
@@ -1061,25 +1106,39 @@ extension LinuxBridge: MSRPAwareBridge {
     let wasEmpty = _ingressQueuePorts.isEmpty
     _ingressQueuePorts.insert(port.id)
 
-    // A switch with a global ingress priority map (e.g. 88E6352) mirrors DCBNL APP entries to
-    // every user port, so once the map is programmed the remaining member ports need no
-    // action. A switch with per-port maps (e.g. 88E6390/6393x) must have every port
-    // programmed individually. We program each port until we learn the switch is global, which
-    // it tells us by returning EEXIST (the entries were already mirrored from another port).
     if _ingressMappingIsGlobal { return }
 
-    if wasEmpty {
-      // Clear any stale entries (e.g. left behind by a previous daemon instance) before
-      // (re)programming the first port.
-      try? await port._rtnl.remove(dcbApps: apps, socket: _nlLinkSocket)
+    // Reconcile rather than blindly add. DCBNL keys APP entries on (selector, protocol,
+    // priority): adding an entry that already exists fails with EEXIST, and adding a PCP whose
+    // priority merely differs from a stale entry silently leaves *both* (the duplicate
+    // 0nd:0/0nd:1 seen in testing). So read the current PCP map, delete entries that are not in
+    // the desired set (stale priorities / leftovers from a previous daemon), and add only the
+    // ones that are missing. This is idempotent and the same effect as `dcb app replace`.
+    let currentPCP = ((try? await port._rtnl.getDCBApps(socket: _nlLinkSocket)) ?? [])
+      .filter { $0.selector == RTNLDCBApp.pcpSelector }
+
+    // A global-map switch (e.g. 88E6352) mirrors APP entries to every user port, so a later
+    // member port already sees the full desired set with nothing to do; a per-port switch
+    // (e.g. 88E6390/6393x) shows an empty map on each fresh port and must be programmed
+    // individually. Detecting this from the mirrored state avoids relying on EEXIST.
+    if !wasEmpty, apps.allSatisfy({ currentPCP.contains($0) }) {
+      _ingressMappingIsGlobal = true
+      return
     }
 
-    do {
-      try await port._rtnl.add(dcbApps: apps, socket: _nlLinkSocket)
-    } catch Errno.fileExists {
-      // The entries are already present because the switch mirrors them across all ports:
-      // this is a global ingress priority map.
-      _ingressMappingIsGlobal = true
+    let stale = currentPCP.filter { !apps.contains($0) }
+    if !stale.isEmpty {
+      try? await port._rtnl.remove(dcbApps: stale, socket: _nlLinkSocket)
+    }
+
+    let missing = apps.filter { !currentPCP.contains($0) }
+    if !missing.isEmpty {
+      do {
+        try await port._rtnl.add(dcbApps: missing, socket: _nlLinkSocket)
+      } catch Errno.fileExists {
+        // Belt-and-braces: entries already mirrored from another port -> global map.
+        _ingressMappingIsGlobal = true
+      }
     }
   }
 
