@@ -883,13 +883,29 @@ extension LinuxBridge: MMRPAwareBridge {
       flags.contains(.dynamicReservation) ? .dynamicReservation : .permanent
     for port in ports {
       if _isMulticast(macAddress: macAddress) {
-        try await rtnl.add(
-          link: port._rtnl,
-          groupAddresses: [macAddress],
-          vlanID: vlan?.vid,
-          state: state,
-          socket: _nlLinkSocket
-        )
+        do {
+          try await rtnl.add(
+            link: port._rtnl,
+            groupAddresses: [macAddress],
+            vlanID: vlan?.vid,
+            state: state,
+            socket: _nlLinkSocket
+          )
+        } catch where state == .dynamicReservation {
+          // Kernels predating MDB_DYNAMIC_RESERVATION reject the state value;
+          // fall back to a permanent entry so non-conformant kernels still get
+          // the MDB entry installed (without the 802.1Qat reserved-stream mark).
+          _logger.debug(
+            "LinuxBridge: failed to add dynamic reservation MDB entry for \(_macAddressToString(macAddress)) on \(port): \(error); falling back to permanent entry"
+          )
+          try await rtnl.add(
+            link: port._rtnl,
+            groupAddresses: [macAddress],
+            vlanID: vlan?.vid,
+            state: .permanent,
+            socket: _nlLinkSocket
+          )
+        }
       } else {
         try await rtnl.add(link: port._rtnl, fdbEntry: macAddress, socket: _nlLinkSocket)
       }
