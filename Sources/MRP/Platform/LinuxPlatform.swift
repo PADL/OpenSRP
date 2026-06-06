@@ -974,7 +974,7 @@ extension LinuxBridge: MSRPAwareBridge {
     return (legacyQueueCount, legacyQueueOffset)
   }
 
-  func configureQueues(
+  func configureEgressQueues(
     port: P,
     srClassPriorityMap: SRClassPriorityMap,
     queues: [SRclassID: UInt], // map a SR class (TC) to a queue number
@@ -1003,7 +1003,7 @@ extension LinuxBridge: MSRPAwareBridge {
     try await port._rtnl.add(mqprio: mqprio, socket: _nlLinkSocket)
   }
 
-  func unconfigureQueues(
+  func unconfigureEgressQueues(
     port: P
   ) async throws {
     guard let _nlQDiscHandle else {

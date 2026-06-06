@@ -42,14 +42,14 @@ public struct MSRPApplicationFlags: OptionSet, Sendable {
 }
 
 protocol MSRPAwareBridge<P>: Bridge where P: AVBPort {
-  func configureQueues(
+  func configureEgressQueues(
     port: P,
     srClassPriorityMap: SRClassPriorityMap,
     queues: [SRclassID: UInt],
     forceAvbCapable: Bool
   ) async throws
 
-  func unconfigureQueues(
+  func unconfigureEgressQueues(
     port: P
   ) async throws
 
@@ -294,8 +294,8 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
          port.isAvbCapable || _forceAvbCapable
       {
         if _configureEgressQueues {
-          try? await bridge.unconfigureQueues(port: port)
-          try await bridge.configureQueues(
+          try? await bridge.unconfigureEgressQueues(port: port)
+          try await bridge.configureEgressQueues(
             port: port,
             srClassPriorityMap: DefaultSRClassPriorityMap,
             queues: _queues,
@@ -392,7 +392,7 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
         }
         if _configureEgressQueues {
           do {
-            try await bridge.unconfigureQueues(port: port)
+            try await bridge.unconfigureEgressQueues(port: port)
           } catch {
             _logger.error("MSRP: failed to unconfigure queues for port \(port): \(error)")
           }
