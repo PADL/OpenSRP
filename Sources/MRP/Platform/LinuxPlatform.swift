@@ -946,32 +946,38 @@ extension LinuxBridge: MSRPAwareBridge {
     queues: [SRclassID: UInt], // map a SR class (TC) to a queue number
     forceAvbCapable: Bool
   ) throws -> (count: UInt16?, offset: UInt16?) {
-    var legacyQueueCount: UInt16?
-    var legacyQueueOffset: UInt16?
+    // The legacy (TC0) queues are the queues not claimed by an AVB class. Derive
+    // this from the SR-class queue assignment rather than the port's reported TX
+    // queue count: numTXQueues is unreliable on some switches (88E6352 -- the same
+    // reason --force-avb-capable is needed), and unlike egress (an MQPRIO qdisc in
+    // DCB mode, where the driver supplies the real queue layout), the ingress DCB
+    // path writes these QPri values straight to the switch, which rejects an
+    // out-of-range value with EINVAL. numTXQueues is consulted only to size the
+    // legacy block in the inverted (i210) layout, where it is reported reliably.
+    let avbQueueIndices = queues.compactMap { srClass, queue -> Int? in
+      srClass.tc != 0 ? Int(queue) - 1 : nil
+    }.sorted()
 
-    do {
-      let numTXQueues = UInt(port._rtnl.numTXQueues)
-      guard numTXQueues >= srClassPriorityMap.count else {
-        throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
-      }
-
-      legacyQueueCount = UInt16(numTXQueues) - UInt16(srClassPriorityMap.count)
-      legacyQueueOffset = if queues[.A] == numTXQueues {
-        // normal situation gives higher number queues to higher numbered traffic
-        // classes, and we assume class A gets the highest. queues start at 1.
-        0
-      } else if let queueForLowestClass = queues[srClassPriorityMap.lowestClassID] {
-        // otherwise, most likely, trying to work around for i210 weirdness where
-        // queue numbers are inverted
-        UInt16(numTXQueues) - UInt16(queueForLowestClass)
-      } else {
-        throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
-      }
-    } catch let error as MSRPFailure {
-      guard forceAvbCapable, error.failureCode == .egressPortIsNotAvbCapable else { throw error }
+    guard let lowestAvb = avbQueueIndices.first, let highestAvb = avbQueueIndices.last else {
+      return (nil, nil) // no AVB classes; fall back to defaults
     }
 
-    return (legacyQueueCount, legacyQueueOffset)
+    if lowestAvb > 0 {
+      // Normal layout: AVB classes occupy the top queues, legacy is [0, lowestAvb).
+      // Independent of numTXQueues.
+      return (UInt16(lowestAvb), 0)
+    }
+
+    // Inverted (i210) layout: AVB classes occupy the bottom queues, legacy is
+    // [highestAvb + 1, numTXQueues), so we need the real queue count here.
+    let numTXQueues = Int(port._rtnl.numTXQueues)
+    guard numTXQueues > highestAvb + 1 else {
+      guard forceAvbCapable else {
+        throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
+      }
+      return (nil, nil)
+    }
+    return (UInt16(numTXQueues - (highestAvb + 1)), UInt16(highestAvb + 1))
   }
 
   func configureEgressQueues(
@@ -1022,6 +1028,8 @@ extension LinuxBridge: MSRPAwareBridge {
     queues: [SRclassID: UInt],
     forceAvbCapable: Bool
   ) throws -> [RTNLDCBApp] {
+    // Shares _legacyQueueParams with the egress MQPRIO path so the ingress QPri
+    // values always match the queues MQPRIO programs for egress.
     let (legacyQueueCount, legacyQueueOffset) = try _legacyQueueParams(
       port: port,
       srClassPriorityMap: srClassPriorityMap,
