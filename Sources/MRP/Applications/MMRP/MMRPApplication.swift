@@ -26,8 +26,8 @@ public let MMRPEtherType: UInt16 = 0x88F6
 
 /// Per-registration hints passed to the platform bridge when an MMRP/MSRP MAC
 /// address registration is installed. Backends translate these to whatever
-/// platform-specific flag is appropriate (on Linux, the bridge MDB flags
-/// bitmask, e.g. `MDB_FLAGS_STREAM_RESERVED`).
+/// platform-specific representation is appropriate (on Linux, the bridge MDB
+/// entry state, e.g. `MDB_DYNAMIC_RESERVATION`).
 public struct MMRPRegistrationFlags: OptionSet, Sendable {
   public let rawValue: UInt32
 
@@ -37,9 +37,9 @@ public struct MMRPRegistrationFlags: OptionSet, Sendable {
 
   /// The MAC registration corresponds to a reserved MSRP/802.1Q SR stream
   /// destination (typically a MAAP group address). The platform bridge is
-  /// expected to mark the underlying MDB entry as stream-reserved so
+  /// expected to install the underlying MDB entry as a dynamic reservation so
   /// hardware drivers can apply their own admission policy.
-  public static let streamReserved = MMRPRegistrationFlags(rawValue: 1 << 0)
+  public static let dynamicReservation = MMRPRegistrationFlags(rawValue: 1 << 0)
 }
 
 protocol MMRPAwareBridge<P>: Bridge where P: Port {

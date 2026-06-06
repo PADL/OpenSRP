@@ -82,11 +82,6 @@ protocol MSRPAwareBridge<P>: Bridge where P: AVBPort {
 
   func getSRClassPriorityMap(port: P) async throws -> SRClassPriorityMap?
 
-  // Enable or disable 802.1Qat stream reservation admission control on a member
-  // port. This is meaningful only for MSRP, so it is driven by the application
-  // as ports are added to and removed from the SR domain.
-  func setStreamReservationFilter(on port: P, enabled: Bool) async throws
-
   var srClassPriorityMapNotifications: AnyAsyncSequence<SRClassPriorityMapNotification<P>> { get }
 }
 
@@ -324,12 +319,6 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
               .error("MSRP: failed to configure ingress queues for port \(port): \(error)")
           }
         }
-        do {
-          try await bridge.setStreamReservationFilter(on: port, enabled: true)
-        } catch {
-          _logger
-            .error("MSRP: failed to enable stream reservation filtering on \(port): \(error)")
-        }
         srClassPriorityMap[port.id] = DefaultSRClassPriorityMap
         _logger
           .debug(
@@ -394,12 +383,6 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     {
       for port in context {
         guard port.isAvbCapable || _forceAvbCapable else { continue }
-        do {
-          try await bridge.setStreamReservationFilter(on: port, enabled: false)
-        } catch {
-          _logger
-            .error("MSRP: failed to disable stream reservation filtering on \(port): \(error)")
-        }
         if _configureEgressQueues {
           do {
             try await bridge.unconfigureEgressQueues(port: port)
@@ -1353,7 +1336,7 @@ extension MSRPApplication {
         try await bridge.register(
           macAddress: talkerRegistration.dataFrameParameters.destinationAddress,
           vlan: talkerRegistration.dataFrameParameters.vlanIdentifier,
-          flags: .streamReserved,
+          flags: .dynamicReservation,
           on: [port]
         )
       } catch {
