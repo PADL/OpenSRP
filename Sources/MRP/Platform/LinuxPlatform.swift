@@ -67,6 +67,72 @@ private extension SRclassID {
   }
 }
 
+// Number of IEEE 802.1Q frame priorities (PCP 0-7).
+private let _ieee8021QMaxPriorities = 8
+
+// Replicate the frame-priority -> queue (QPri) distribution performed by the kernel's
+// mv88e6xxx_validate_tc_mqprio_avb(): each AVB class maps its PCP to its single reserved
+// queue, and the remaining legacy (TC0) PCPs are distributed round-robin across the legacy
+// queues. The result is keyed by PCP (0-7) with 0-based queue indices as values, matching the
+// DCBNL `dcb_app.priority` semantics for the DCB_APP_SEL_PCP selector. Mirrors the count/offset
+// computation in the RTNLMQPrioQDisc convenience initializer so ingress and egress agree.
+private func _computeIEEEPriorityMap(
+  srClassPriorityMap: SRClassPriorityMap,
+  queues: [SRclassID: UInt],
+  legacyQueueCount: UInt16?,
+  legacyQueueOffset: UInt16?
+) -> [UInt8: UInt8] {
+  let priorityToTC: [UInt8: UInt8] = Dictionary(
+    uniqueKeysWithValues: srClassPriorityMap.map { srClass, srClassPriority in
+      (_mapSRClassPriorityToUP(srClassPriority), srClass.tc)
+    }
+  )
+
+  // 0-based queue (QPri) offset for each AVB traffic class.
+  var avbOffset = [UInt8: UInt8]()
+  for (srClass, queue) in queues where srClass.tc != 0 {
+    precondition(queue > 0 && queue <= UInt(UInt8.max) + 1)
+    avbOffset[srClass.tc] = UInt8(queue - 1)
+  }
+
+  let tc0Base = Int(legacyQueueOffset ?? 0)
+  let legacyCount = max(Int(legacyQueueCount ?? 2), 1)
+  // IEEE_8021Q_MAX_PRIORITIES minus the AVB classes; matches the kernel's "- 2".
+  let legacyFrameCount = max(_ieee8021QMaxPriorities - srClassPriorityMap.count, 1)
+  // DIV_ROUND_UP(legacyFrameCount, legacyCount)
+  let tc0FramesPerQueue = max((legacyFrameCount + legacyCount - 1) / legacyCount, 1)
+
+  var map = [UInt8: UInt8]()
+  var legacyCounter = 0
+  for pcp in UInt8(0)..<UInt8(_ieee8021QMaxPriorities) {
+    let tc = priorityToTC[pcp] ?? 0
+    if tc == 0 {
+      map[pcp] = UInt8(tc0Base + (legacyCounter / tc0FramesPerQueue))
+      legacyCounter += 1
+    } else {
+      map[pcp] = avbOffset[tc] ?? UInt8(tc0Base)
+    }
+  }
+  return map
+}
+
+// Build the DCBNL APP table entries (PCP selector, DEI=0) for the ingress PCP -> queue map.
+private func _computeIngressDCBApps(
+  srClassPriorityMap: SRClassPriorityMap,
+  queues: [SRclassID: UInt],
+  legacyQueueCount: UInt16?,
+  legacyQueueOffset: UInt16?
+) -> [RTNLDCBApp] {
+  _computeIEEEPriorityMap(
+    srClassPriorityMap: srClassPriorityMap,
+    queues: queues,
+    legacyQueueCount: legacyQueueCount,
+    legacyQueueOffset: legacyQueueOffset
+  )
+  .sorted { $0.key < $1.key }
+  .map { pcp, queue in RTNLDCBApp.pcp(pcp, priority: queue) }
+}
+
 private func _makeLinkLayerAddress(
   family: sa_family_t = sa_family_t(AF_PACKET),
   macAddress: EUI48? = nil,
@@ -444,6 +510,16 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   fileprivate let _pmc: PTPManagementClient
   private var _portPropertiesCache = [P.ID: PortPropertiesNP]()
   private let _portExclusions: Set<String>
+  // Member ports for which the ingress (DCBNL) PCP->queue map is currently configured, and
+  // whether the switch uses a single global ingress priority map shared by all ports.
+  //
+  // Some switches (e.g. 88E6352) have a global map: the kernel mirrors DCBNL APP entries to
+  // every user port, rejects duplicates with EEXIST, and does not refcount. Others (e.g.
+  // 88E6390/6393x) have per-port maps. We program every member port until an add returns
+  // EEXIST, which tells us the map is global; from then on we program/tear down the shared map
+  // exactly once, on the first/last member port. See configureIngressQueues(port:...).
+  private var _ingressQueuePorts = Set<P.ID>()
+  private var _ingressMappingIsGlobal = false
 
   public init(
     name: String,
@@ -862,16 +938,14 @@ private extension SRClassPriorityMap {
 }
 
 extension LinuxBridge: MSRPAwareBridge {
-  func configureQueues(
+  // Compute the legacy (TC0) queue count and base offset for a port, shared by the egress
+  // (MQPRIO) and ingress (DCBNL) queue configuration so both derive identical mappings.
+  private func _legacyQueueParams(
     port: P,
     srClassPriorityMap: SRClassPriorityMap,
     queues: [SRclassID: UInt], // map a SR class (TC) to a queue number
     forceAvbCapable: Bool
-  ) async throws {
-    guard let _nlQDiscHandle else {
-      throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
-    }
-
+  ) throws -> (count: UInt16?, offset: UInt16?) {
     var legacyQueueCount: UInt16?
     var legacyQueueOffset: UInt16?
 
@@ -897,6 +971,26 @@ extension LinuxBridge: MSRPAwareBridge {
       guard forceAvbCapable, error.failureCode == .egressPortIsNotAvbCapable else { throw error }
     }
 
+    return (legacyQueueCount, legacyQueueOffset)
+  }
+
+  func configureQueues(
+    port: P,
+    srClassPriorityMap: SRClassPriorityMap,
+    queues: [SRclassID: UInt], // map a SR class (TC) to a queue number
+    forceAvbCapable: Bool
+  ) async throws {
+    guard let _nlQDiscHandle else {
+      throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
+    }
+
+    let (legacyQueueCount, legacyQueueOffset) = try _legacyQueueParams(
+      port: port,
+      srClassPriorityMap: srClassPriorityMap,
+      queues: queues,
+      forceAvbCapable: forceAvbCapable
+    )
+
     let mqprio = try RTNLMQPrioQDisc(
       handle: UInt32(_nlQDiscHandle) << 16,
       parent: UInt32.max,
@@ -920,6 +1014,93 @@ extension LinuxBridge: MSRPAwareBridge {
       mqprio: RTNLMQPrioQDisc(handle: UInt32(_nlQDiscHandle) << 16, parent: UInt32.max),
       socket: _nlLinkSocket
     )
+  }
+
+  private func _ingressDCBApps(
+    port: P,
+    srClassPriorityMap: SRClassPriorityMap,
+    queues: [SRclassID: UInt],
+    forceAvbCapable: Bool
+  ) throws -> [RTNLDCBApp] {
+    let (legacyQueueCount, legacyQueueOffset) = try _legacyQueueParams(
+      port: port,
+      srClassPriorityMap: srClassPriorityMap,
+      queues: queues,
+      forceAvbCapable: forceAvbCapable
+    )
+
+    return _computeIngressDCBApps(
+      srClassPriorityMap: srClassPriorityMap,
+      queues: queues,
+      legacyQueueCount: legacyQueueCount,
+      legacyQueueOffset: legacyQueueOffset
+    )
+  }
+
+  func configureIngressQueues(
+    port: P,
+    srClassPriorityMap: SRClassPriorityMap,
+    queues: [SRclassID: UInt],
+    forceAvbCapable: Bool
+  ) async throws {
+    let apps = try _ingressDCBApps(
+      port: port,
+      srClassPriorityMap: srClassPriorityMap,
+      queues: queues,
+      forceAvbCapable: forceAvbCapable
+    )
+
+    let wasEmpty = _ingressQueuePorts.isEmpty
+    _ingressQueuePorts.insert(port.id)
+
+    // A switch with a global ingress priority map (e.g. 88E6352) mirrors DCBNL APP entries to
+    // every user port, so once the map is programmed the remaining member ports need no
+    // action. A switch with per-port maps (e.g. 88E6390/6393x) must have every port
+    // programmed individually. We program each port until we learn the switch is global, which
+    // it tells us by returning EEXIST (the entries were already mirrored from another port).
+    if _ingressMappingIsGlobal { return }
+
+    if wasEmpty {
+      // Clear any stale entries (e.g. left behind by a previous daemon instance) before
+      // (re)programming the first port.
+      try? await port._rtnl.remove(dcbApps: apps, socket: _nlLinkSocket)
+    }
+
+    do {
+      try await port._rtnl.add(dcbApps: apps, socket: _nlLinkSocket)
+    } catch Errno.fileExists {
+      // The entries are already present because the switch mirrors them across all ports:
+      // this is a global ingress priority map.
+      _ingressMappingIsGlobal = true
+    }
+  }
+
+  func unconfigureIngressQueues(
+    port: P,
+    srClassPriorityMap: SRClassPriorityMap,
+    queues: [SRclassID: UInt],
+    forceAvbCapable: Bool
+  ) async throws {
+    guard _ingressQueuePorts.contains(port.id) else { return }
+    _ingressQueuePorts.remove(port.id)
+
+    // On a global-map switch a delete is mirrored to every port, so other member ports still
+    // rely on the shared map: only tear it down once the last member port has left. On a
+    // per-port switch each port owns its entries and must be torn down individually.
+    if _ingressMappingIsGlobal, !_ingressQueuePorts.isEmpty { return }
+
+    let apps = try _ingressDCBApps(
+      port: port,
+      srClassPriorityMap: srClassPriorityMap,
+      queues: queues,
+      forceAvbCapable: forceAvbCapable
+    )
+
+    do {
+      try await port._rtnl.remove(dcbApps: apps, socket: _nlLinkSocket)
+    } catch Errno.noSuchFileOrDirectory {
+      // Already gone (e.g. a delete mirrored from another port on a global-map switch).
+    }
   }
 
   func adjustCreditBasedShaper(

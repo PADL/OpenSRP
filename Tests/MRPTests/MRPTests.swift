@@ -121,6 +121,20 @@ extension MockBridge: MSRPAwareBridge {
 
   func unconfigureQueues(port: P) async throws {}
 
+  func configureIngressQueues(
+    port: P,
+    srClassPriorityMap: SRClassPriorityMap,
+    queues: [SRclassID: UInt],
+    forceAvbCapable: Bool
+  ) async throws {}
+
+  func unconfigureIngressQueues(
+    port: P,
+    srClassPriorityMap: SRClassPriorityMap,
+    queues: [SRclassID: UInt],
+    forceAvbCapable: Bool
+  ) async throws {}
+
   func adjustCreditBasedShaper(
     port: P,
     queue: UInt,

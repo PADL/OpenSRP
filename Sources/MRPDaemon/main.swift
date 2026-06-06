@@ -82,7 +82,13 @@ private final class MRPDaemon: AsyncParsableCommand {
   @Option(name: .long, help: "MSRP SR class B delta bandwidth percentage")
   var classBDeltaBandwidth: Int? = nil
 
-  @Flag(name: .long, help: "Automatically configure MQPRIO queues")
+  @Flag(name: .long, help: "Automatically configure MQPRIO egress queues")
+  var configureEgressQueues: Bool = false
+
+  @Flag(name: .long, help: "Automatically configure DCBNL ingress queue (PCP) mapping")
+  var configureIngressQueues: Bool = false
+
+  @Flag(name: .long, help: "Automatically configure both ingress and egress queues")
   var configureQueues: Bool = false
 
   @Option(name: .long, help: "Default MSRP SR PVID")
@@ -144,6 +150,8 @@ private final class MRPDaemon: AsyncParsableCommand {
     case classBDeltaBandwidth
     case classAQdiscHandle
     case classBQdiscHandle
+    case configureEgressQueues
+    case configureIngressQueues
     case configureQueues
     case excludeIface
     case excludeVlan
@@ -228,7 +236,8 @@ private final class MRPDaemon: AsyncParsableCommand {
       var flags: MSRPApplicationFlags = .defaultFlags
       if enableTalkerPruning { flags.insert(.talkerPruning) }
       if forceAvbCapable { flags.insert(.forceAvbCapable) }
-      if configureQueues { flags.insert(.configureQueues) }
+      if configureEgressQueues || configureQueues { flags.insert(.configureEgressQueues) }
+      if configureIngressQueues || configureQueues { flags.insert(.configureIngressQueues) }
 
       _ = try await MSRPApplication(
         controller: controller,
