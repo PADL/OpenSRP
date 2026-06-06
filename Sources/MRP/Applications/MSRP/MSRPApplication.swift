@@ -307,12 +307,22 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
           // ingress maps (e.g. 88E6390) and global maps shared across all ports (e.g.
           // 88E6352). No pre-clear is needed here (a blind per-port delete would tear down a
           // shared global map for the other member ports).
-          try await bridge.configureIngressQueues(
-            port: port,
-            srClassPriorityMap: DefaultSRClassPriorityMap,
-            queues: _queues,
-            forceAvbCapable: _forceAvbCapable
-          )
+          //
+          // Ingress (DCBNL) configuration is best-effort: kernels/switches without the DCBNL
+          // priority-map migration return EOPNOTSUPP. A failure here must not abort port setup
+          // (otherwise the port is left half-registered and re-notifications fail with
+          // portAlreadyExists), so log and continue.
+          do {
+            try await bridge.configureIngressQueues(
+              port: port,
+              srClassPriorityMap: DefaultSRClassPriorityMap,
+              queues: _queues,
+              forceAvbCapable: _forceAvbCapable
+            )
+          } catch {
+            _logger
+              .error("MSRP: failed to configure ingress queues for port \(port): \(error)")
+          }
         }
         do {
           try await bridge.setStreamReservationFilter(on: port, enabled: true)
