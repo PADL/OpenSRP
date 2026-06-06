@@ -25,6 +25,7 @@ import Glibc
 import IEEE802
 import IORing
 import IORingUtils
+import Logging
 import NetLink
 import PMC
 import SocketAddress
@@ -520,13 +521,15 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   // exactly once, on the first/last member port. See configureIngressQueues(port:...).
   private var _ingressQueuePorts = Set<P.ID>()
   private var _ingressMappingIsGlobal = false
+  private let _logger: Logger
 
   public init(
     name: String,
     netFilterGroup group: Int,
     qDiscHandle: UInt16? = nil,
     ptpManagementClientSocketPath: String? = nil,
-    portExclusions: Set<String> = []
+    portExclusions: Set<String> = [],
+    logger: Logger
   ) async throws {
     _bridgeName = name
     _nlLinkSocket = try NLSocket(protocol: NETLINK_ROUTE)
@@ -534,6 +537,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     _nlQDiscHandle = qDiscHandle
     _pmc = try await PTPManagementClient(path: ptpManagementClientSocketPath)
     _portExclusions = portExclusions
+    _logger = logger
   }
 
   public nonisolated var description: String {
@@ -547,7 +551,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
       if case .new = linkMessage {
         _bridgePort = port
       } else {
-        debugPrint("LinuxBridge: bridge device itself removed")
+        _logger.debug("LinuxBridge: bridge device itself removed")
         throw Errno.noSuchAddressOrDevice
       }
     } else if port._rtnl.master == _bridgeIndex {
@@ -561,7 +565,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
         portNotification = .removed(port)
       }
     } else {
-      debugPrint(
+      _logger.debug(
         "LinuxBridge: ignoring port \(port) at index \(port._rtnl.index), not a member or self"
       )
     }
@@ -667,7 +671,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
         port: port,
         filterRegistration: filterRegistration
       )
-      debugPrint(
+      _logger.debug(
         "LinuxBridge: started link-local RX task for \(port) filter registration \(filterRegistration)"
       )
     }
@@ -685,7 +689,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
       let task = _linkLocalRxTasks[index].value
       _linkLocalRxTasks.remove(at: index)
       task.cancel()
-      debugPrint(
+      _logger.debug(
         "LinuxBridge: removed link-local RX task for \(portID) filter registration \(filterRegistration)"
       )
     }
@@ -1142,7 +1146,7 @@ extension LinuxBridge: MSRPAwareBridge {
         )
       }
     } catch {
-      debugPrint(
+      _logger.debug(
         "adjustCreditBasedShaper: bridge \(self) port \(port) parent \(parent) hiCredit \(hiCredit) loCredit \(loCredit) idleSlope \(idleSlope) sendSlope \(sendSlope) failed: \(error)"
       )
       throw error

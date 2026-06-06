@@ -48,13 +48,14 @@ actor PortMonitor {
   }
 
   func run() async throws {
+    let logger = Logger(label: "com.padl.MRP.portmon")
     let bridge = try await B(
       name: CommandLine.arguments.count > 1 ? CommandLine
         .arguments[1] : "br0",
-      netFilterGroup: 10
+      netFilterGroup: 10,
+      logger: logger
     )
 
-    let logger = Logger(label: "com.padl.MRP.portmon")
     let controller = try await MRPController(bridge: bridge, logger: logger)
 
     // now we need to register to ensure RX task is created
