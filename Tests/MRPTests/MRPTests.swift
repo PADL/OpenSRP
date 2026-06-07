@@ -112,27 +112,23 @@ struct MockBridge: MRP.Bridge, CustomStringConvertible {
 }
 
 extension MockBridge: MSRPAwareBridge {
-  func configureEgressQueues(
+  func configureQueues(
     port: P,
     srClassPriorityMap: SRClassPriorityMap,
     queues: [SRclassID: UInt],
     forceAvbCapable: Bool
   ) async throws {}
 
-  func unconfigureEgressQueues(port: P) async throws {}
+  func unconfigureQueues(port: P) async throws {}
 
-  func configureIngressQueues(
+  func configurePCPPrioMapping(
     port: P,
-    srClassPriorityMap: SRClassPriorityMap,
-    queues: [SRclassID: UInt],
-    forceAvbCapable: Bool
+    srClassPriorityMap: SRClassPriorityMap
   ) async throws {}
 
-  func unconfigureIngressQueues(
+  func unconfigurePCPPrioMapping(
     port: P,
-    srClassPriorityMap: SRClassPriorityMap,
-    queues: [SRclassID: UInt],
-    forceAvbCapable: Bool
+    srClassPriorityMap: SRClassPriorityMap
   ) async throws {}
 
   func adjustCreditBasedShaper(

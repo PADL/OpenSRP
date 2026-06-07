@@ -33,42 +33,42 @@ public struct MSRPApplicationFlags: OptionSet, Sendable {
   public init(rawValue: RawValue) { self.rawValue = rawValue }
 
   public static let forceAvbCapable = Self(rawValue: 1 << 0)
-  public static let configureEgressQueues = Self(rawValue: 1 << 1)
+  public static let configureQueues = Self(rawValue: 1 << 1)
   public static let ignoreAsCapable = Self(rawValue: 1 << 2)
   public static let talkerPruning = Self(rawValue: 1 << 3)
-  public static let configureIngressQueues = Self(rawValue: 1 << 4)
+  public static let configurePCPPrioMapping = Self(rawValue: 1 << 4)
 
   public static let defaultFlags = Self([.ignoreAsCapable])
 }
 
 protocol MSRPAwareBridge<P>: Bridge where P: AVBPort {
-  func configureEgressQueues(
+  func configureQueues(
     port: P,
     srClassPriorityMap: SRClassPriorityMap,
     queues: [SRclassID: UInt],
     forceAvbCapable: Bool
   ) async throws
 
-  func unconfigureEgressQueues(
+  func unconfigureQueues(
     port: P
   ) async throws
 
-  func configureIngressQueues(
+  // Program the DCB_APP_SEL_PCP table: each ingress PCP -> an internal frame priority (FPri),
+  // with AVB classes kept at unity so reserved streams retain their priority and legacy traffic
+  // is steered to frame priorities no AVB class depends on. Queue (QPri) selection is a
+  // separate, downstream FPri->QPri step, so no queue layout is needed here.
+  func configurePCPPrioMapping(
     port: P,
-    srClassPriorityMap: SRClassPriorityMap,
-    queues: [SRclassID: UInt],
-    forceAvbCapable: Bool
+    srClassPriorityMap: SRClassPriorityMap
   ) async throws
 
   // Unlike egress (MQPRIO) queues, which can be torn down by qdisc handle alone,
   // DCBNL APP entries are keyed by their (selector, protocol, priority) tuple and the
-  // switch only clears a PCP mapping if the priority matches. The same parameters used
+  // switch only clears a PCP mapping if the priority matches. The same srClassPriorityMap used
   // to configure must therefore be supplied to recompute the exact entries to delete.
-  func unconfigureIngressQueues(
+  func unconfigurePCPPrioMapping(
     port: P,
-    srClassPriorityMap: SRClassPriorityMap,
-    queues: [SRclassID: UInt],
-    forceAvbCapable: Bool
+    srClassPriorityMap: SRClassPriorityMap
   ) async throws
 
   func adjustCreditBasedShaper(
@@ -198,12 +198,12 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
 
   // Convenience accessors for flags
   fileprivate nonisolated var _forceAvbCapable: Bool { _flags.contains(.forceAvbCapable) }
-  fileprivate nonisolated var _configureEgressQueues: Bool {
-    _flags.contains(.configureEgressQueues)
+  fileprivate nonisolated var _configureQueues: Bool {
+    _flags.contains(.configureQueues)
   }
 
-  fileprivate nonisolated var _configureIngressQueues: Bool {
-    _flags.contains(.configureIngressQueues)
+  fileprivate nonisolated var _configurePCPPrioMapping: Bool {
+    _flags.contains(.configurePCPPrioMapping)
   }
 
   nonisolated var _ignoreAsCapable: Bool { _flags.contains(.ignoreAsCapable) }
@@ -285,38 +285,36 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     }
 
     for port in context {
-      if _configureEgressQueues || _configureIngressQueues,
+      if _configureQueues || _configurePCPPrioMapping,
          port.isAvbCapable || _forceAvbCapable
       {
-        if _configureEgressQueues {
-          try? await bridge.unconfigureEgressQueues(port: port)
-          try await bridge.configureEgressQueues(
+        if _configureQueues {
+          try? await bridge.unconfigureQueues(port: port)
+          try await bridge.configureQueues(
             port: port,
             srClassPriorityMap: DefaultSRClassPriorityMap,
             queues: _queues,
             forceAvbCapable: _forceAvbCapable
           )
         }
-        if _configureIngressQueues {
-          // configureIngressQueues is ref-counted at the bridge and handles both per-port
+        if _configurePCPPrioMapping {
+          // configurePCPPrioMapping is ref-counted at the bridge and handles both per-port
           // ingress maps (e.g. 88E6390) and global maps shared across all ports (e.g.
           // 88E6352). No pre-clear is needed here (a blind per-port delete would tear down a
           // shared global map for the other member ports).
           //
-          // Ingress (DCBNL) configuration is best-effort: kernels/switches without the DCBNL
+          // PCP-priority mapping (DCBNL) is best-effort: kernels/switches without the DCBNL
           // priority-map migration return EOPNOTSUPP. A failure here must not abort port setup
           // (otherwise the port is left half-registered and re-notifications fail with
           // portAlreadyExists), so log and continue.
           do {
-            try await bridge.configureIngressQueues(
+            try await bridge.configurePCPPrioMapping(
               port: port,
-              srClassPriorityMap: DefaultSRClassPriorityMap,
-              queues: _queues,
-              forceAvbCapable: _forceAvbCapable
+              srClassPriorityMap: DefaultSRClassPriorityMap
             )
           } catch {
             _logger
-              .error("MSRP: failed to configure ingress queues for port \(port): \(error)")
+              .error("MSRP: failed to configure PCP priority mapping for port \(port): \(error)")
           }
         }
         srClassPriorityMap[port.id] = DefaultSRClassPriorityMap
@@ -378,29 +376,27 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
   ) async throws {
     guard contextIdentifier == MAPBaseSpanningTreeContext else { return }
 
-    if _configureEgressQueues || _configureIngressQueues,
+    if _configureQueues || _configurePCPPrioMapping,
        let bridge = (controller?.bridge as? any MSRPAwareBridge<P>)
     {
       for port in context {
         guard port.isAvbCapable || _forceAvbCapable else { continue }
-        if _configureEgressQueues {
+        if _configureQueues {
           do {
-            try await bridge.unconfigureEgressQueues(port: port)
+            try await bridge.unconfigureQueues(port: port)
           } catch {
             _logger.error("MSRP: failed to unconfigure queues for port \(port): \(error)")
           }
         }
-        if _configureIngressQueues {
+        if _configurePCPPrioMapping {
           do {
-            try await bridge.unconfigureIngressQueues(
+            try await bridge.unconfigurePCPPrioMapping(
               port: port,
-              srClassPriorityMap: DefaultSRClassPriorityMap,
-              queues: _queues,
-              forceAvbCapable: _forceAvbCapable
+              srClassPriorityMap: DefaultSRClassPriorityMap
             )
           } catch {
             _logger
-              .error("MSRP: failed to unconfigure ingress queues for port \(port): \(error)")
+              .error("MSRP: failed to unconfigure PCP priority mapping for port \(port): \(error)")
           }
         }
       }
