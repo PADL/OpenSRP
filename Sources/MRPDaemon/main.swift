@@ -83,10 +83,13 @@ private final class MRPDaemon: AsyncParsableCommand {
   var classBDeltaBandwidth: Int? = nil
 
   @Flag(name: .long, help: "Automatically configure MQPRIO egress queues")
-  var configureQueues: Bool = false
+  var configureEgressQueues: Bool = false
 
-  @Flag(name: .long, help: "Automatically configure the DCBNL ingress PCP-to-priority map")
-  var configurePcpPrioMapping: Bool = false
+  @Flag(name: .long, help: "Automatically configure DCBNL ingress queue (PCP) mapping")
+  var configureIngressQueues: Bool = false
+
+  @Flag(name: .long, help: "Automatically configure both ingress and egress queues")
+  var configureQueues: Bool = false
 
   @Option(name: .long, help: "Default MSRP SR PVID")
   var srPVid: UInt16 = SR_PVID.id
@@ -147,8 +150,9 @@ private final class MRPDaemon: AsyncParsableCommand {
     case classBDeltaBandwidth
     case classAQdiscHandle
     case classBQdiscHandle
+    case configureEgressQueues
+    case configureIngressQueues
     case configureQueues
-    case configurePcpPrioMapping
     case excludeIface
     case excludeVlan
     case logLevel
@@ -233,8 +237,8 @@ private final class MRPDaemon: AsyncParsableCommand {
       var flags: MSRPApplicationFlags = .defaultFlags
       if enableTalkerPruning { flags.insert(.talkerPruning) }
       if forceAvbCapable { flags.insert(.forceAvbCapable) }
-      if configureQueues { flags.insert(.configureQueues) }
-      if configurePcpPrioMapping { flags.insert(.configurePCPPrioMapping) }
+      if configureEgressQueues || configureQueues { flags.insert(.configureEgressQueues) }
+      if configureIngressQueues || configureQueues { flags.insert(.configureIngressQueues) }
 
       _ = try await MSRPApplication(
         controller: controller,
