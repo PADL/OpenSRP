@@ -24,7 +24,7 @@ nft list ruleset
 echo ""
 
 for ETH in $INTERFACES; do
-	bridge mdb add dev ${BR} port ${ETH} grp 91:e0:f0:00:00:00 permanent
-	bridge mdb add dev ${BR} port ${ETH} grp 91:e0:f0:00:00:01 permanent
+	bridge mdb add dev ${BR} port ${ETH} grp 91:e0:f0:01:00:00 permanent
+	bridge mdb add dev ${BR} port ${ETH} grp 91:e0:f0:01:00:01 permanent
 	bridge mdb add dev ${BR} port ${ETH} grp 91:e0:f0:00:ff:00 permanent
 done
