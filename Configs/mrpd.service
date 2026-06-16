@@ -7,7 +7,7 @@ PartOf=avb.target
 Type=notify
 
 Environment=BR=br0
-Environment=INTERFACES="eth0 eth1"
+Environment=INTERFACES="lan0 lan1 lan2 lan3"
 Environment=GROUPS="91:e0:f0:00:00:00 91:e0:f0:00:00:01 91:e0:f0:00:ff:00"
 
 # configure MVRP hook
