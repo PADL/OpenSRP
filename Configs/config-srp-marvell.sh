@@ -28,3 +28,9 @@ for ETH in $INTERFACES; do
 	bridge mdb add dev ${BR} port ${ETH} grp 91:e0:f0:01:00:01 permanent
 	bridge mdb add dev ${BR} port ${ETH} grp 91:e0:f0:00:ff:00 permanent
 done
+
+# Also deliver AVDECC discovery to the bridge host itself, in case an
+# AVDECC controller/entity (e.g. Hive) runs locally rather than on a port.
+# port ${BR} is the bridge device, i.e. the local CPU (no hardware offload).
+bridge mdb add dev ${BR} port ${BR} grp 91:e0:f0:01:00:00 permanent
+bridge mdb add dev ${BR} port ${BR} grp 91:e0:f0:01:00:01 permanent
