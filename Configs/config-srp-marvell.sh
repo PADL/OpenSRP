@@ -2,15 +2,7 @@
 
 BR=br0
 HANDLE=9000
-INTERFACES=${1:-"br0 xe0 lan1"}
-
-for ETH in $INTERFACES
-do
-	echo "Unconfiguring ${ETH} Qdisc..."
-
-	tc qdisc del dev ${ETH} parent root handle ${HANDLE} mqprio
-	echo "${ETH} unconfigured\n"
-done
+INTERFACES=${1:-"lan0 lan1 lan2 lan3"}
 
 set -e
 
@@ -31,15 +23,8 @@ nft list ruleset
 
 echo ""
 
-for ETH in $INTERFACES
-do
-	echo "Configuring ${ETH} Qdisc..."
-
-	tc qdisc add dev ${ETH} parent root handle ${HANDLE} mqprio \
-		num_tc 3 \
-		map 0 0 1 2 0 0 0 0 0 0 0 0 0 0 0 0 \
-		queues 2@0 1@2 1@3 \
-		hw 1
-
-	echo "${ETH} configured!\n"
+for ETH in $INTERFACES; do
+	bridge mdb add dev ${BR} port ${ETH} grp 91:e0:f0:00:00:00 permanent
+	bridge mdb add dev ${BR} port ${ETH} grp 91:e0:f0:00:00:01 permanent
+	bridge mdb add dev ${BR} port ${ETH} grp 91:e0:f0:00:ff:00 permanent
 done
