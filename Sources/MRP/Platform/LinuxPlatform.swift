@@ -29,6 +29,7 @@ import Logging
 import NetLink
 import PMC
 import SocketAddress
+import Synchronization
 import SystemPackage
 
 private func _mapUPToSRClassPriority(_ up: UInt8) -> SRclassPriority {
@@ -502,6 +503,10 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   private let _bridgeName: String
   private var _bridgeIndex: Int = 0
   private var _bridgePort: P?
+  // The bridge's default PVID, mirrored into nonisolated storage so MVRP's
+  // exclusion check can read it synchronously — no actor hop, and therefore no
+  // suspension point (reentrancy window) in the MVRP indication handlers.
+  private let _defaultPVid = Mutex<UInt16?>(nil)
   private let _portNotificationChannel = AsyncChannel<PortNotification<P>>()
   private let _rxPacketsChannel = AsyncThrowingChannel<(P.ID, IEEE802Packet), Error>()
   private var _linkLocalRegistrations = Set<FilterRegistration>()
@@ -550,6 +555,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     if port._isBridgeSelf, port._rtnl.index == _bridgeIndex {
       if case .new = linkMessage {
         _bridgePort = port
+        _defaultPVid.withLock { $0 = port._pvid }
       } else {
         _logger.debug("LinuxBridge: bridge device itself removed")
         throw Errno.noSuchAddressOrDevice
@@ -592,8 +598,8 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     Task { await _srClassPriorityMapNotificationChannel.send(tcNotification) }
   }
 
-  public var defaultPVid: UInt16? {
-    _bridgePort?._pvid
+  public nonisolated var defaultPVid: UInt16? {
+    _defaultPVid.withLock { $0 }
   }
 
   public func getVlans(controller: isolated MRPController<P>) async -> Set<VLAN> {

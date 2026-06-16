@@ -28,6 +28,12 @@ protocol MVRPAwareBridge<P>: Bridge where P: Port {
   // allow use of platform MVRP applicant (e.g. in-kernel Linux MVRP implementation)
   var hasLocalMVRPApplicant: Bool { get }
 
+  // the bridge's default PVID (native/untagged management VLAN), if any; MVRP
+  // must never add or remove this VLAN. Nonisolated/synchronous so the exclusion
+  // check adds no suspension point — and thus no reentrancy — to the indication
+  // handlers.
+  var defaultPVid: UInt16? { get }
+
   func register(vlan: VLAN, on port: P) async throws
   func deregister(vlan: VLAN, from port: P) async throws
 }
@@ -134,6 +140,17 @@ public actor MVRPApplication<P: Port>: BaseApplication, BaseApplicationEventObse
     )
   }
 
+  // The bridge's default PVID (the native/untagged management VLAN, e.g. VID 1)
+  // is statically provisioned and must never be added or removed by MVRP: an
+  // MVRP Leave/LeaveAll from a peer that doesn't declare the native VLAN would
+  // otherwise strip the PVID and black-hole the management interface. Treat it
+  // as implicitly excluded, alongside any operator-configured --exclude-vlan.
+  private func _isVlanExcluded(_ vlan: VLAN, bridge: any MVRPAwareBridge<P>) -> Bool {
+    if _vlanExclusions.contains(vlan) { return true }
+    if let defaultPVid = bridge.defaultPVid, vlan.vid == defaultPVid { return true }
+    return false
+  }
+
   public func periodic(for contextIdentifier: MAPContextIdentifier?) async throws {
     // 5.4.4 the Periodic Transmission state machine (10.7.10) is specifically
     // excluded from MSRP
@@ -168,7 +185,9 @@ extension MVRPApplication {
     switch attributeType {
     case .vid:
       let vlan = (attributeValue as! VLAN)
-      guard !_vlanExclusions.contains(vlan) else { throw MRPError.doNotPropagateAttribute }
+      guard !_isVlanExcluded(vlan, bridge: bridge) else {
+        throw MRPError.doNotPropagateAttribute
+      }
       guard !bridge.hasLocalMVRPApplicant || eventSource != .local
       else { throw MRPError.doNotPropagateAttribute }
       _logger
@@ -201,7 +220,9 @@ extension MVRPApplication {
     switch attributeType {
     case .vid:
       let vlan = (attributeValue as! VLAN)
-      guard !_vlanExclusions.contains(vlan) else { throw MRPError.doNotPropagateAttribute }
+      guard !_isVlanExcluded(vlan, bridge: bridge) else {
+        throw MRPError.doNotPropagateAttribute
+      }
       guard !bridge.hasLocalMVRPApplicant || eventSource != .local
       else { throw MRPError.doNotPropagateAttribute }
       _logger
