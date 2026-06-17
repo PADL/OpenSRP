@@ -296,7 +296,8 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
           do {
             try await avbPort.setMulticastFlooding(_multicastFlooding)
             _multicastFloodingConfiguredPorts.insert(port.id)
-            logger.debug("set multicast flooding \(_multicastFlooding ? "on" : "off") on port \(port)")
+            logger
+              .debug("set multicast flooding \(_multicastFlooding ? "on" : "off") on port \(port)")
           } catch {
             logger.warning("failed to configure multicast flooding on port \(port): \(error)")
           }

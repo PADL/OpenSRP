@@ -1095,7 +1095,7 @@ extension LinuxBridge: MSRPAwareBridge {
     // 0nd:0/0nd:1 seen in testing). So read the current PCP map, delete entries that are not in
     // the desired set (stale priorities / leftovers from a previous daemon), and add only the
     // ones that are missing. This is idempotent and the same effect as `dcb app replace`.
-    let currentPCP = ((try? await port._rtnl.getDCBApps(socket: _nlLinkSocket)) ?? [])
+    let currentPCP = await ((try? port._rtnl.getDCBApps(socket: _nlLinkSocket)) ?? [])
       .filter { $0.selector == RTNLDCBApp.pcpSelector }
 
     // A global-map switch (e.g. 88E6352) mirrors APP entries to every user port, so a later
