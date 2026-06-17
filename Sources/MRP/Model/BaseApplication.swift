@@ -144,7 +144,7 @@ extension BaseApplication {
           application: self,
           port: port,
           contextIdentifier: contextIdentifier,
-          type: controller.forceFullParticipant ? .full : nil
+          type: controller.flags.contains(.forceFullParticipant) ? .full : nil
         )
         try add(participant: participant)
       }

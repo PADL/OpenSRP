@@ -91,6 +91,9 @@ private final class MRPDaemon: AsyncParsableCommand {
   @Flag(name: .long, help: "Automatically configure both ingress and egress queues")
   var configureQueues: Bool = false
 
+  @Flag(inversion: .prefixedNo, help: "Flood multicast on bridge ports")
+  var multicastFlooding: Bool = true
+
   @Option(name: .long, help: "Default MSRP SR PVID")
   var srPVid: UInt16 = SR_PVID.id
 
@@ -165,6 +168,7 @@ private final class MRPDaemon: AsyncParsableCommand {
     case joinTime
     case leaveTime
     case leaveAllTime
+    case multicastFlooding
     case periodicTime
     #if RestAPI
     case restServerPort
@@ -203,13 +207,17 @@ private final class MRPDaemon: AsyncParsableCommand {
     let restServerPort: UInt16? = nil
     #endif
 
+    var mrpFlags: MRPFlags = []
+    if forceFullParticipant { mrpFlags.insert(.forceFullParticipant) }
+    if multicastFlooding { mrpFlags.insert(.multicastFlooding) }
+
     let controller = try await MRPController<P>(
       bridge: bridge,
       logger: logger,
       timerConfiguration: timerConfiguration,
       portExclusions: Set(excludeIface),
       restServerPort: restServerPort,
-      forceFullParticipant: forceFullParticipant
+      flags: mrpFlags
     )
     if enableSRP {
       enableMMRP = false

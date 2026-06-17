@@ -30,6 +30,19 @@ import IEEE802
 import Logging
 import ServiceLifecycle
 
+public struct MRPFlags: OptionSet, Sendable {
+  public typealias RawValue = UInt8
+
+  public let rawValue: RawValue
+
+  public init(rawValue: RawValue) { self.rawValue = rawValue }
+
+  public static let forceFullParticipant = Self(rawValue: 1 << 0)
+  public static let multicastFlooding = Self(rawValue: 1 << 1)
+
+  public static let defaultFlags = Self([.multicastFlooding])
+}
+
 public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable {
   typealias MAPContextDictionary = [MAPContextIdentifier: MAPContext<P>]
 
@@ -37,7 +50,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
   let logger: Logger
   var ports: Set<P> { Set(_ports.values) }
   let timerConfiguration: MRPTimerConfiguration
-  let forceFullParticipant: Bool
+  let flags: MRPFlags
 
   private var _applications = [UInt16: any Application<P>]()
   private var _ports = [P.ID: P]()
@@ -46,7 +59,8 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
   private var _taskGroup: ThrowingTaskGroup<(), Error>?
   private let _rxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)>
   private let _portExclusions: Set<String>
-  private var _multicastFloodingDisabledPorts = Set<P.ID>()
+  private var _multicastFloodingConfiguredPorts = Set<P.ID>()
+  private var _multicastFlooding: Bool { flags.contains(.multicastFlooding) }
   #if RestAPI
   private var _httpServer: HTTPServer?
   #endif
@@ -57,7 +71,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
     timerConfiguration: MRPTimerConfiguration = .init(),
     portExclusions: Set<String> = [],
     restServerPort: UInt16? = nil,
-    forceFullParticipant: Bool = false
+    flags: MRPFlags = .defaultFlags
   ) async throws {
     logger
       .debug(
@@ -66,7 +80,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
     self.bridge = bridge
     self.logger = logger
     self.timerConfiguration = timerConfiguration
-    self.forceFullParticipant = forceFullParticipant
+    self.flags = flags
     _rxPackets = try bridge.rxPackets
     _portExclusions = portExclusions
     #if RestAPI
@@ -267,20 +281,21 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
   private func _handleBridgeNotifications() async throws {
     for try await notification in bridge.notifications {
       do {
-        // we disable multicast flooding on _all_ ports, even the excluded
-        // ones, because we don't want to flood SRP traffic to those ports.
-        // doing this is here is something on an abstraction violation, but the
+        // apply the configured multicast flooding policy to _all_ ports, even
+        // the excluded ones: for SRP we typically don't want to flood multicast
+        // to non-participant ports, but the operator can keep it enabled. doing
+        // this here is something of an abstraction violation, but the
         // applications would otherwise not see the port.
         if case let .added(port) = notification, !ports.contains(port),
-           !_multicastFloodingDisabledPorts.contains(port.id),
+           !_multicastFloodingConfiguredPorts.contains(port.id),
            let avbPort = port as? any AVBPort
         {
           do {
-            try await avbPort.setMulticastFlooding(false)
-            _multicastFloodingDisabledPorts.insert(port.id)
-            logger.debug("disabled multicast flooding on port \(port)")
+            try await avbPort.setMulticastFlooding(_multicastFlooding)
+            _multicastFloodingConfiguredPorts.insert(port.id)
+            logger.debug("set multicast flooding \(_multicastFlooding ? "on" : "off") on port \(port)")
           } catch {
-            logger.warning("failed to disable multicast flooding on port \(port): \(error)")
+            logger.warning("failed to configure multicast flooding on port \(port): \(error)")
           }
         }
 
@@ -289,7 +304,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
         case let .added(port):
           try await ports.contains(port) ? _didUpdate(port: port) : _didAdd(port: port)
         case let .removed(port):
-          _multicastFloodingDisabledPorts.remove(port.id)
+          _multicastFloodingConfiguredPorts.remove(port.id)
           try await _didRemove(port: port)
         case let .changed(port):
           try await _didUpdate(port: port)
