@@ -1,0 +1,26 @@
+# Sample configuration for the AVB/TSN stack (mrpd, ptp4l).
+#
+# Installed as /etc/default/avb and sourced by mrpd.service and ptp4l.service.
+# The values below are EXAMPLES for a 4-port switch — edit them to match your
+# hardware. This file is a conffile, so your edits survive package upgrades.
+
+# Bridge device mrpd operates on.
+#
+# NOTE: creating the bridge and enslaving ports is left to you (e.g. via
+# systemd-networkd or netplan); the stack only operates on an existing bridge.
+BR=br0
+
+# Space-separated list of bridge member interfaces.
+# Used by mrpd (SRP) and passed to ptp4l on the command line (-i) for gPTP.
+INTERFACES="lan0 lan1 lan2 lan3"
+
+# Static SRP multicast groups programmed into the bridge MDB by mrpd.service
+# (one "bridge mdb add" per interface per group). Space-separated MAC list.
+#   91:e0:f0:01:00:00  - MMRP / MSRP domain
+#   91:e0:f0:00:ff:00  - MVRP
+GROUPS="91:e0:f0:01:00:00 91:e0:f0:01:00:01 91:e0:f0:00:ff:00"
+
+# --- optional ---------------------------------------------------------------
+# Extra flags appended to the mrpd command line (see `mrpd --help`). Leave
+# empty for the defaults baked into mrpd.service.
+#MRPD_OPTS=""

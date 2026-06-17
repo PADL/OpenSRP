@@ -1,0 +1,8 @@
+[Unit]
+Description=Audio Video Bridging (AVB/TSN) stack
+Documentation=https://github.com/PADL/OpenSRP
+Wants=network-online.target
+After=network-online.target
+
+[Install]
+WantedBy=multi-user.target
