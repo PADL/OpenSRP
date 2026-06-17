@@ -92,7 +92,7 @@ private final class MRPDaemon: AsyncParsableCommand {
   var configureQueues: Bool = false
 
   @Flag(inversion: .prefixedNo, help: "Flood multicast on bridge ports")
-  var multicastFlooding: Bool = true
+  var multicastFlooding: Bool = false
 
   @Option(name: .long, help: "Default MSRP SR PVID")
   var srPVid: UInt16 = SR_PVID.id
