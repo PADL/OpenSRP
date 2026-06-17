@@ -4,12 +4,14 @@ Name=br0
 [Link]
 RequiredForOnline=degraded
 
+[Bridge]
+
 [Network]
-BindCarrier=eth0
+BindCarrier=eth1
 DHCP=yes
 LinkLocalAddressing=no
+IPv6AcceptRA=no
+ConfigureWithoutCarrier=yes
 
-# IEEE Std 1722.1 Table B.1 ADP and ACMP
-[BridgeMDB]
-MulticastGroupAddress=91:e0:f0:01:00:00
-VLANId=1
+[DHCPv4]
+ClientIdentifier=mac

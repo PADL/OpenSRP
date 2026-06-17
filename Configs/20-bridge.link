@@ -2,8 +2,4 @@
 OriginalName=br0
 
 [Link]
-# Give br0 its own stable, locally-administered MAC instead of inheriting
-# lan0's. Avoids ATU/FDB ambiguity from the bridge host and a user port
-# sharing an address. AVB protocols (MVRP/MSRP/PTP) are unaffected: they
-# egress from the individual DSA user-port MACs, not br0.
 MACAddressPolicy=persistent

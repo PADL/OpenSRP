@@ -6,10 +6,11 @@ RequiredForOnline=enslaved
 
 [Network]
 Bridge=br0
+LLDP=yes
+EmitLLDP=customer-bridge
 
-# Multicast DNS (mDNS)
-[BridgeMDB]
-MulticastGroupAddress=01:00:5e:00:00:fb
+[Bridge]
+MulticastRouter=query
 
 # IEEE Std 1722.1 Table B.1 ADP and ACMP
 [BridgeMDB]

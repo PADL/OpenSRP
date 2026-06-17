@@ -1,5 +1,5 @@
 [Match]
-Name=eth0
+Name=eth1
 
 [Link]
 ActivationPolicy=always-up
@@ -8,4 +8,3 @@ RequiredForOnline=degraded
 [Network]
 DHCP=no
 LinkLocalAddressing=no
-ConfigureWithoutCarrier=true
