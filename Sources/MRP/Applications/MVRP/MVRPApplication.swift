@@ -111,6 +111,15 @@ public actor MVRPApplication<P: Port>: BaseApplication, BaseApplicationEventObse
     .normalParticipant
   }
 
+  public nonisolated func isRegistrationAllowed(
+    for attributeType: AttributeType,
+    attributeSubtype: AttributeSubtype?,
+    attributeValue: some Value,
+    on port: P
+  ) -> Bool {
+    true
+  }
+
   // On receipt of an ES_REGISTER_VLAN_MEMBER service primitive, the MVRP
   // Participant issues a MAD_Join.request service primitive (10.2, 10.3). The
   // attribute_type parameter of the request carries the value of the VID

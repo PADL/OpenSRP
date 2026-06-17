@@ -66,6 +66,16 @@ public protocol Application<P>: Actor, Equatable, Hashable, Sendable {
   nonisolated func administrativeControl(for: AttributeType) throws -> AdministrativeControl
   nonisolated var nonBaseContextsSupported: Bool { get }
 
+  // Return false to hold the Registrar in MT (no New/Join indication).
+  // Re-evaluated on every event, so registration proceeds on a later
+  // declaration once it returns true (no replay needed). See 35.1.3.1.
+  nonisolated func isRegistrationAllowed(
+    for attributeType: AttributeType,
+    attributeSubtype: AttributeSubtype?,
+    attributeValue: some Value,
+    on port: P
+  ) -> Bool
+
   nonisolated func makeNullValue(for attributeType: AttributeType) throws -> any Value
   nonisolated func deserialize(
     attributeOfType attributeType: AttributeType,

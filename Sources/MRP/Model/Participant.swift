@@ -1069,15 +1069,30 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
     isReplacingSubtype: Bool,
     participant: P
   ) throws -> EventContext<A> {
-    try EventContext(
+    var smFlags = try participant._getSmFlags(for: attributeType)
+      .union(isReplacingSubtype ? .isReplacingSubtype : [])
+    // Hold the Registrar in MT while the application blocks this attribute
+    // (e.g. MSRP until the stream's SR-class VLAN is present on the port).
+    // Only the Registrar consults .registrationForbidden, so the Applicant is
+    // unaffected; it is re-evaluated here on every event so a later
+    // declaration registers once the application permits it.
+    if let application = participant.application,
+       !application.isRegistrationAllowed(
+         for: attributeType,
+         attributeSubtype: attributeSubtype,
+         attributeValue: unwrappedValue,
+         on: participant.port
+       ) {
+      smFlags.insert(.registrationForbidden)
+    }
+    return try EventContext(
       participant: participant,
       event: event,
       eventSource: eventSource,
       attributeType: attributeType,
       attributeSubtype: attributeSubtype,
       attributeValue: unwrappedValue,
-      smFlags: participant._getSmFlags(for: attributeType)
-        .union(isReplacingSubtype ? .isReplacingSubtype : []),
+      smFlags: smFlags,
       applicant: applicant,
       registrar: registrar
     )

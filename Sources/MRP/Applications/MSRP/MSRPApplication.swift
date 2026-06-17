@@ -461,6 +461,25 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     .normalParticipant
   }
 
+  // 35.1.3.1: block a Talker Declaration until its SR-class VLAN is present on
+  // the port. With the Talker held in MT the listener-side reservation (and its
+  // MDB offload) isn't attempted before the VLAN exists in the VTU; the next
+  // re-declaration registers it once the VLAN is there.
+  public nonisolated func isRegistrationAllowed(
+    for attributeType: AttributeType,
+    attributeSubtype: AttributeSubtype?,
+    attributeValue: some Value,
+    on port: P
+  ) -> Bool {
+    guard attributeType == MSRPAttributeType.talkerAdvertise.rawValue ||
+      attributeType == MSRPAttributeType.talkerFailed.rawValue,
+      let talker = attributeValue as? any MSRPTalkerValue
+    else {
+      return true
+    }
+    return port.vlans.contains(talker.dataFrameParameters.vlanIdentifier)
+  }
+
   // On receipt of a REGISTER_STREAM.request the MSRP Participant shall issue a
   // MAD_Join.request service primitive (10.2, 10.3). The attribute_type (10.2)
   // parameter of the request shall carry the appropriate Talker Attribute Type

@@ -136,6 +136,15 @@ public actor MMRPApplication<P: Port>: BaseApplication, BaseApplicationEventObse
     .normalParticipant
   }
 
+  public nonisolated func isRegistrationAllowed(
+    for attributeType: AttributeType,
+    attributeSubtype: AttributeSubtype?,
+    attributeValue: some Value,
+    on port: P
+  ) -> Bool {
+    true
+  }
+
   public func register(macAddress: EUI48) throws {
     try join(
       attributeType: MMRPAttributeType.mac.rawValue,
