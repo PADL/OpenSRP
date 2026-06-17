@@ -5,10 +5,15 @@ PartOf=avb.target
 
 [Service]
 Type=simple
+# Interface list (INTERFACES) shared with mrpd; optional so ptp4l can also
+# run standalone with interfaces set another way.
+EnvironmentFile=-/etc/default/avb
 CPUSchedulingPolicy=fifo
 CPUSchedulingPriority=80
 ExecStartPre=/usr/bin/sh -c '/usr/bin/pgrep -x ptp0 | /usr/bin/xargs -I {} /usr/bin/chrt -f --pid 75 {}'
-ExecStart=/usr/sbin/ptp4l -f /etc/gPTP.cfg -l 5 -m
+# Interfaces are passed on the command line (-i) from $INTERFACES rather than
+# listed in gPTP.cfg, which carries only the [global] section.
+ExecStart=/bin/sh -c 'exec /usr/sbin/ptp4l -f /etc/gPTP.cfg -l 5 -m $(for i in $INTERFACES; do printf -- "-i %s " "$i"; done)'
 
 [Install]
 WantedBy=multi-user.target
