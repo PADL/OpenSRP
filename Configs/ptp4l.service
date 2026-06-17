@@ -13,7 +13,9 @@ CPUSchedulingPriority=80
 ExecStartPre=/usr/bin/sh -c '/usr/bin/pgrep -x ptp0 | /usr/bin/xargs -I {} /usr/bin/chrt -f --pid 75 {}'
 # Interfaces are passed on the command line (-i) from $INTERFACES rather than
 # listed in gPTP.cfg, which carries only the [global] section.
-ExecStart=/bin/sh -c 'exec /usr/sbin/ptp4l -f /etc/gPTP.cfg -l 5 -m $(for i in $INTERFACES; do printf -- "-i %s " "$i"; done)'
+# Note: $$ defers expansion to the shell (systemd would otherwise eat $i, and
+# treat % as a unit specifier).
+ExecStart=/bin/sh -c 'a=""; for i in $$INTERFACES; do a="$$a -i $$i"; done; exec /usr/sbin/ptp4l -f /etc/gPTP.cfg -l 5 -m $$a'
 
 [Install]
 WantedBy=multi-user.target
