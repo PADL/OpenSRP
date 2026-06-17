@@ -23,7 +23,7 @@ msg "Building mrpd (Swift / arm64 / release / static stdlib) version $VER"
 
 swift build -c release \
   --swift-sdk "$SWIFT_SDK" \
-  --static-swift-stdlib
+  --traits RestAPI --static-swift-stdlib
 
 BIN="$(swift build -c release --swift-sdk "$SWIFT_SDK" --show-bin-path)"
 
@@ -32,6 +32,14 @@ rm -rf "$stage"; mkdir -p "$stage"
 install -D -m0755 "$BIN/mrpd"    "$stage/usr/sbin/mrpd"
 install -D -m0755 "$BIN/portmon" "$stage/usr/bin/portmon"
 install -D -m0755 "$BIN/pmctool" "$stage/usr/bin/pmctool"
+# mrp: Python CLI that interrogates the mrpd REST API (needs the RestAPI trait).
+install -D -m0755 "$SWIFTMRP_DIR/Tools/mrp" "$stage/usr/bin/mrp"
+
+# Strip symbols/debug info — static Swift stdlib makes these binaries ~50M each
+# otherwise. Use the cross strip so it understands arm64 objects.
+for b in usr/sbin/mrpd usr/bin/portmon usr/bin/pmctool; do
+  "${CROSS_COMPILE}strip" --strip-unneeded "$stage/$b"
+done
 install -D -m0644 "$SWIFTMRP_DIR/Configs/mrpd.service" \
   "$stage/lib/systemd/system/mrpd.service"
 # avb.target groups the stack; referenced (PartOf=) by mrpd and ptp4l.
@@ -50,6 +58,6 @@ msg "mrpd shared-library dependencies (NEEDED) — verify these exist on target:
 # Runtime deps from the binary's NEEDED libs (see objdump output above) plus
 # nftables + iproute2, which are invoked from mrpd.service (nft, bridge).
 build_deb mrpd "$VER" "$stage" \
-  "libc6, libstdc++6, libgcc-s1, liburing2, libsystemd0, libnl-3-200, libnl-route-3-200, libnl-nf-3-200, nftables, iproute2" \
+  "libc6, libstdc++6, libgcc-s1, liburing2, libsystemd0, libnl-3-200, libnl-route-3-200, libnl-nf-3-200, libcurl4t64, nftables, iproute2, python3, python3-requests" \
   "OpenSRP MRP/MVRP/MSRP daemon (mrpd) with portmon and pmctool helpers" \
   mrpd.service avb.target

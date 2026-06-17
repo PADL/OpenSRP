@@ -26,11 +26,18 @@ LIBDIR="$overlay/usr/lib/aarch64-linux-gnu"
 
 # HOSTCC=gcc: netem builds small table generators that are *run* at build time,
 # so they must target the host, not arm64 (the makefile defaults HOSTCC to CC).
+#
+# -Wl,-export-dynamic is REQUIRED: with SHARED_LIBS=y, tc resolves a qdisc kind
+# (cbs, prio, htb, ...) by dlsym'ing the matching `<kind>_qdisc_util` struct out
+# of its OWN dynamic symbol table. The modules are linked into the binary, but
+# without -export-dynamic they aren't in the dynamic symtab, so every qdisc reads
+# as "unknown qdisc". The Makefile adds this via `LDFLAGS +=`, but passing
+# LDFLAGS= on the command line overrides (not appends to) that, so we re-add it.
 ( cd "$src"
   CC="${CROSS_COMPILE}gcc" ./configure
   make CC="${CROSS_COMPILE}gcc" HOSTCC=gcc clean >/dev/null 2>&1 || true
   make CC="${CROSS_COMPILE}gcc" HOSTCC=gcc \
-    LDFLAGS="-L$LIBDIR -Wl,-rpath-link,$LIBDIR" -j"$(nproc)"
+    LDFLAGS="-L$LIBDIR -Wl,-rpath-link,$LIBDIR -Wl,-export-dynamic" -j"$(nproc)"
 )
 
 stage="$WORK_DIR/iproute2"
