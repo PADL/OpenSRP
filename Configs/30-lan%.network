@@ -11,6 +11,11 @@ EmitLLDP=customer-bridge
 
 [Bridge]
 MulticastRouter=query
+# Bring member ports up with unknown-multicast flooding already disabled, so
+# the bridge is contained from boot rather than relying on mrpd to flip it
+# (which raced the bridge bring-up). This is BR_MCAST_FLOOD and is independent
+# of broadcast (BR_BCAST_FLOOD / the ff:ff ATU entry), so ARP still works.
+MulticastFlood=no
 
 # IEEE Std 1722.1 Table B.1 ADP and ACMP
 [BridgeMDB]
