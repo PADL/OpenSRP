@@ -32,12 +32,19 @@ rm -rf "$stage"; mkdir -p "$stage"
 install -D -m0755 "$BIN/mrpd"    "$stage/usr/sbin/mrpd"
 install -D -m0755 "$BIN/portmon" "$stage/usr/bin/portmon"
 install -D -m0755 "$BIN/pmctool" "$stage/usr/bin/pmctool"
+# NetLinkSwift diagnostic tools (built as mrpd target deps; see Package.swift
+# PlatformTargetDependencies). Useful on the target for inspecting bridge/VLAN/
+# FDB/MDB state, e.g. nlmonitor to watch RTM_NEWVLAN notifications.
+install -D -m0755 "$BIN/nlmonitor" "$stage/usr/bin/nlmonitor"
+install -D -m0755 "$BIN/nldump"    "$stage/usr/bin/nldump"
+install -D -m0755 "$BIN/nltool"    "$stage/usr/bin/nltool"
 # mrp: Python CLI that interrogates the mrpd REST API (needs the RestAPI trait).
 install -D -m0755 "$SWIFTMRP_DIR/Tools/mrp" "$stage/usr/bin/mrp"
 
 # Strip symbols/debug info — static Swift stdlib makes these binaries ~50M each
 # otherwise. Use the cross strip so it understands arm64 objects.
-for b in usr/sbin/mrpd usr/bin/portmon usr/bin/pmctool; do
+for b in usr/sbin/mrpd usr/bin/portmon usr/bin/pmctool \
+         usr/bin/nlmonitor usr/bin/nldump usr/bin/nltool; do
   "${CROSS_COMPILE}strip" --strip-unneeded "$stage/$b"
 done
 install -D -m0644 "$SWIFTMRP_DIR/Configs/mrpd.service" \
