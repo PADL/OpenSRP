@@ -190,17 +190,59 @@ def live_snapshot(dev, snapshot, length):
 
 
 def get_text(args):
-    """Return raw hex text for one snapshot, from --file/stdin or live."""
+    """Return (raw hex text, dev) for one snapshot. dev is None for file/stdin
+    (no live device to query for FloodBC)."""
     if args.file:
-        return sys.stdin.read() if args.file == "-" else open(args.file).read()
+        t = sys.stdin.read() if args.file == "-" else open(args.file).read()
+        return t, None
     if not sys.stdin.isatty() and args.dev is None and not args.watch:
-        return sys.stdin.read()
+        return sys.stdin.read(), None
     dev = args.dev or find_atu_dev()
     text = live_snapshot(dev, args.snapshot, args.length)
     if args.save:
         with open(args.save, "w") as fh:
             fh.write(text)
-    return text
+    return text, dev
+
+
+def read_floodbc(dev):
+    """Return True/False if the global FloodBC bit (G2 Switch Mgmt 0x05,
+    bit 12) is set, or None if it can't be determined. When FloodBC is on,
+    broadcast is flooded by that bit and ff:ff is intentionally NOT an ATU
+    entry, so its absence is expected, not a problem."""
+    region = "%s/global2" % dev
+    snap = None
+    try:
+        # The region permits only one snapshot ("max 1"), so any existing
+        # snapshot must be deleted before "region new" will succeed. Find the
+        # current snapshot id(s) from "... snapshot [N ...]" and drop them.
+        show = subprocess.check_output(["devlink", "region", "show", region],
+                                       text=True, stderr=subprocess.STDOUT)
+        m = re.search(r"snapshot\s*\[([\d ]+)\]", show)
+        for sid in (m.group(1).split() if m else []):
+            subprocess.run(["devlink", "region", "del", region,
+                            "snapshot", sid], stderr=subprocess.DEVNULL,
+                           check=False)
+        # Let devlink assign the new id and parse it from "<region>: snapshot N".
+        out = subprocess.check_output(["devlink", "region", "new", region],
+                                      text=True, stderr=subprocess.STDOUT)
+        m = re.search(r"snapshot\s+(\d+)", out)
+        snap = m.group(1) if m else "0"
+        data = subprocess.check_output(
+            ["devlink", "region", "read", region, "snapshot", snap,
+             "address", "0", "length", "16"], text=True)
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    finally:
+        if snap is not None:
+            subprocess.run(["devlink", "region", "del", region,
+                            "snapshot", snap], stderr=subprocess.DEVNULL,
+                           check=False)
+    raw = parse_hex(data)
+    if len(raw) < 12:
+        return None
+    reg05 = raw[10] | (raw[11] << 8)   # G2 register 0x05 lives at byte 0x0a
+    return bool(reg05 & 0x1000)
 
 
 def filtered(entries, args):
@@ -217,7 +259,7 @@ def fmt(e):
                                           e.dpvstr(), e.tag())
 
 
-def print_table(entries):
+def print_table(entries, floodbc=None):
     print("%-4s %-17s %-22s %-18s %s" % ("FID", "MAC", "STATE", "DPV", "KIND"))
     print("-" * 78)
     last_fid = None
@@ -231,14 +273,23 @@ def print_table(entries):
             bcast.add(e.fid)
         print(fmt(e))
     fids = sorted({e.fid for e in entries})
-    missing = [f for f in fids if f not in bcast]
     print()
     print("FIDs present: %s" % ", ".join(map(str, fids)))
     print("FIDs with ff:ff broadcast: %s" %
           (", ".join(map(str, sorted(bcast))) or "(none)"))
-    if missing:
-        print("FIDs WITHOUT broadcast: %s   <-- ARP/broadcast needs flooding "
-              "on these" % ", ".join(map(str, missing)))
+    if floodbc:
+        print("Broadcast: flooded via the global FloodBC bit (G2 0x05) -- "
+              "ff:ff is intentionally not in the ATU; absence is expected.")
+        return
+    # FID 0 = standalone, FID 1 = VLAN-unaware bridged DB; broadcast there is
+    # not required, so only flag real (VLAN-aware) FIDs >= 2.
+    missing = [f for f in fids if f not in bcast and f >= 2]
+    if not missing:
+        return
+    state = "FloodBC off" if floodbc is False else "FloodBC state unknown"
+    print("FIDs WITHOUT broadcast: %s   <-- no ff:ff entry (%s); "
+          "ARP/broadcast on these VLANs needs flooding unless FloodBC is set"
+          % (", ".join(map(str, missing)), state))
 
 
 def diff_entries(old, new):
@@ -328,11 +379,12 @@ def main():
         return
 
     # single snapshot
-    entries = filtered(decode(parse_hex(get_text(args))), args)
+    text, dev = get_text(args)
+    entries = filtered(decode(parse_hex(text)), args)
     if not entries:
         print("(no ATU entries)")
         return
-    print_table(entries)
+    print_table(entries, read_floodbc(dev) if dev else None)
 
 
 if __name__ == "__main__":
