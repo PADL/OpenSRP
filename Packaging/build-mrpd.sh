@@ -40,6 +40,9 @@ install -D -m0755 "$BIN/nldump"    "$stage/usr/bin/nldump"
 install -D -m0755 "$BIN/nltool"    "$stage/usr/bin/nltool"
 # mrp: Python CLI that interrogates the mrpd REST API (needs the RestAPI trait).
 install -D -m0755 "$SWIFTMRP_DIR/Tools/mrp" "$stage/usr/bin/mrp"
+# atu-snapshot: Python tool to snapshot/decode the mv88e6xxx switch ATU via
+# devlink (only python3 + devlink/iproute2, both already in Depends).
+install -D -m0755 "$SWIFTMRP_DIR/Tools/atu-snapshot.py" "$stage/usr/bin/atu-snapshot"
 
 # Strip symbols/debug info — static Swift stdlib makes these binaries ~50M each
 # otherwise. Use the cross strip so it understands arm64 objects.
