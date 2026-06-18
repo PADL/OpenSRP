@@ -4,7 +4,7 @@ Kind=bridge
 MACAddress=none
 
 [Bridge]
-MulticastQuerier=no
+MulticastQuerier=yes
 MulticastSnooping=yes
 MulticastIGMPVersion=2
 DefaultPVID=1
