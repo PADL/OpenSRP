@@ -14,10 +14,13 @@ BR=br0
 # Used by mrpd (SRP) and passed to ptp4l on the command line (-i) for gPTP.
 INTERFACES="lan0 lan1 lan2 lan3"
 
-# Static SRP multicast groups programmed into the bridge MDB by mrpd.service
+# Static L2 multicast groups programmed into the bridge MDB by mrpd.service
 # (one "bridge mdb add" per interface per group). Space-separated MAC list.
-#   91:e0:f0:01:00:00  - MMRP / MSRP domain
-#   91:e0:f0:00:ff:00  - MVRP
+# This should be setup by systemd, but Ubuntu 24.04 does not ship with a
+# recent enough version.
+# 91:e0:f0:01:00:00 - IEEE Std 1722.1 Table B.1 ADP and ACMP
+# 91:e0:f0:01:00:01 - IEEE Std 1722.1 Table B.1 Identification Notifications
+# 91:e0:f0:00:ff:00 - IEEE Std 1722 Table B.4.1 MAAP frames
 GROUPS="91:e0:f0:01:00:00 91:e0:f0:01:00:01 91:e0:f0:00:ff:00"
 
 # --- optional ---------------------------------------------------------------
