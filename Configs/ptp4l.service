@@ -1,6 +1,11 @@
 [Unit]
 Description=Precision Time Protocol (PTP) service
 Documentation=man:ptp4l
+# Start only once networkd has applied the bridge/VLAN config (mrpd is ordered
+# After=ptp4l.service, so ptp4l must wait too). Reached without an IP on br0
+# via RequiredForOnline=degraded.
+After=network-online.target
+Wants=network-online.target
 PartOf=avb.target
 
 [Service]

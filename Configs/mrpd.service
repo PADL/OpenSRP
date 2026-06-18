@@ -1,6 +1,13 @@
 [Unit]
 Description=Stream Reservation Protocol (SRP)
-After=ptp4l.service
+# Wait for systemd-networkd to finish applying the bridge/VLAN configuration
+# before starting: mrpd disables multicast flooding early, so it must not race
+# the bridge bring-up (a VID-1 churn during setup strips the broadcast ATU
+# entry and ARP breaks). network-online here means "configured", not "has an
+# IP" -- br0 uses RequiredForOnline=degraded so this is reached without an
+# address on br0.
+After=network-online.target ptp4l.service
+Wants=network-online.target
 PartOf=avb.target
 
 [Service]
