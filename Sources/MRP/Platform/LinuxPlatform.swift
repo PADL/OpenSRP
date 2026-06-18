@@ -410,8 +410,13 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
   }
 
   public var vlans: Set<VLAN> {
-    guard let vlans = _vlans else { return [] }
-    return Set(vlans.map { VLAN(id: $0) })
+    var vids = _vlans ?? []
+    // Merge VLANs learned from netlink notifications after the initial dump;
+    // _rtnl is a frozen snapshot and won't reflect later kernel-MVRP/manual adds.
+    if let live = _bridge?._portTaggedVLANs.withLock({ $0[id] }) {
+      vids.formUnion(live)
+    }
+    return Set(vids.map { VLAN(id: $0) })
   }
 
   public var mtu: UInt {
@@ -507,6 +512,11 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   // exclusion check can read it synchronously — no actor hop, and therefore no
   // suspension point (reentrancy window) in the MVRP indication handlers.
   private let _defaultPVid = Mutex<UInt16?>(nil)
+  // Per-port tagged VLANs learned from RTM_NEWVLAN/DELVLAN after the initial
+  // dump (kernel-MVRP or manual `bridge vlan add`). _rtnl is a frozen snapshot
+  // that won't reflect later changes, so LinuxPort.vlans merges this in. Keyed
+  // by port ifindex; a Mutex so LinuxPort.vlans can read it synchronously.
+  let _portTaggedVLANs = Mutex<[Int: Set<UInt16>]>([:])
   private let _portNotificationChannel = AsyncChannel<PortNotification<P>>()
   private let _rxPacketsChannel = AsyncThrowingChannel<(P.ID, IEEE802Packet), Error>()
   private var _linkLocalRegistrations = Set<FilterRegistration>()
@@ -596,6 +606,28 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
       .removed(srClassPriorityMap)
     }
     Task { await _srClassPriorityMapNotificationChannel.send(tcNotification) }
+  }
+
+  private func _handleVLANNotification(_ vlanMessage: RTNLVLANDBMessage) {
+    let vlandb = vlanMessage.vlandb
+    // Track tagged VLANs only (port.vlans mirrors bridgeTaggedVLANs; the SR
+    // class VLAN is tagged), keyed by port ifindex.
+    let taggedVids = Set(vlandb.entries.filter { !$0.isUntagged }.map(\.vid))
+    let isNew: Bool
+    switch vlanMessage {
+    case .new: isNew = true
+    case .del: isNew = false
+    }
+    _portTaggedVLANs.withLock { map in
+      if isNew {
+        map[vlandb.ifIndex, default: []].formUnion(taggedVids)
+      } else {
+        map[vlandb.ifIndex]?.subtract(taggedVids)
+      }
+    }
+    _logger.debug(
+      "LinuxBridge: VLAN \(isNew ? "new" : "del") on ifindex \(vlandb.ifIndex): \(vlandb.entries)"
+    )
   }
 
   public nonisolated var defaultPVid: UInt16? {
@@ -731,6 +763,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
 
     try _nlLinkSocket.subscribeLinks()
     try _nlLinkSocket.subscribeTC()
+    try _nlLinkSocket.subscribeBridgeVLANs()
 
     _nlLinkMonitorTask = Task<(), Error> { [self] in
       for try await notification in _nlLinkSocket.notifications {
@@ -740,6 +773,8 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
             try _handleLinkNotification(linkNotification)
           case let tcNotification as RTNLTCMessage:
             try _handleTCNotification(tcNotification)
+          case let vlanNotification as RTNLVLANDBMessage:
+            _handleVLANNotification(vlanNotification)
           default:
             break
           }
@@ -772,6 +807,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     _nlNfLogMonitorTask?.cancel()
     _nlLinkMonitorTask?.cancel()
 
+    try? _nlLinkSocket.unsubscribeBridgeVLANs()
     try? _nlLinkSocket.unsubscribeTC()
     try? _nlLinkSocket.unsubscribeLinks()
 

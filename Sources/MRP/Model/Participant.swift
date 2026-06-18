@@ -1085,7 +1085,7 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
        ) {
       smFlags.insert(.registrationForbidden)
     }
-    return try EventContext(
+    return EventContext(
       participant: participant,
       event: event,
       eventSource: eventSource,
