@@ -24,6 +24,6 @@ INTERFACES="lan0 lan1 lan2 lan3"
 GROUPS="91:e0:f0:01:00:00 91:e0:f0:01:00:01 91:e0:f0:00:ff:00"
 
 # --- optional ---------------------------------------------------------------
-# Extra flags appended to the mrpd command line (see `mrpd --help`). Leave
-# empty for the defaults baked into mrpd.service.
-#MRPD_OPTS=""
+# Extra flags appended to the mrpd command line (see `mrpd --help`).
+# --rest-server-port enables the REST control API on the given TCP port.
+MRPD_OPTS="--rest-server-port 80"
