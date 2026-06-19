@@ -18,14 +18,29 @@ else
 fi
 msg "swift: $(command -v swift) — $(swift --version 2>/dev/null | head -1)"
 
-VER="$(resolve_version "$SWIFTMRP_DIR" "${MRPD_BASE_VERSION:-0.1.0}")"
-msg "Building mrpd (Swift / arm64 / release / static stdlib) version $VER"
+# Build configuration: "release" (default) or "debug". A debug build is -Onone
+# with full debug info and skips the strip step below, for profiling on the
+# target with perf. Set NOSTRIP=1 to also keep symbols in a release build
+# (release + -g, representative performance) instead. Either way the binaries
+# get much larger (static Swift stdlib, unstripped ~70M).
+BUILD_CONFIG="${BUILD_CONFIG:-release}"
+case "$BUILD_CONFIG" in
+  release|debug) ;;
+  *) die "BUILD_CONFIG must be 'release' or 'debug', not '$BUILD_CONFIG'" ;;
+esac
+[ "$BUILD_CONFIG" = debug ] && NOSTRIP=1
 
-swift build -c release \
+VER="$(resolve_version "$SWIFTMRP_DIR" "${MRPD_BASE_VERSION:-0.1.0}")"
+# Tag non-release builds so their .deb does not clobber the release artifact.
+[ "$BUILD_CONFIG" = release ] || VER="${VER}+${BUILD_CONFIG}"
+msg "Building mrpd (Swift / arm64 / $BUILD_CONFIG / static stdlib) version $VER"
+
+swift build -c "$BUILD_CONFIG" \
   --swift-sdk "$SWIFT_SDK" \
   --traits RestAPI --static-swift-stdlib
+  ${NOSTRIP:+-Xswiftc -g}
 
-BIN="$(swift build -c release --swift-sdk "$SWIFT_SDK" --show-bin-path)"
+BIN="$(swift build -c "$BUILD_CONFIG" --swift-sdk "$SWIFT_SDK" --show-bin-path)"
 
 stage="$WORK_DIR/mrpd"
 rm -rf "$stage"; mkdir -p "$stage"
@@ -45,11 +60,16 @@ install -D -m0755 "$SWIFTMRP_DIR/Tools/mrp" "$stage/usr/bin/mrp"
 install -D -m0755 "$SWIFTMRP_DIR/Tools/atu-snapshot.py" "$stage/usr/bin/atu-snapshot"
 
 # Strip symbols/debug info — static Swift stdlib makes these binaries ~50M each
-# otherwise. Use the cross strip so it understands arm64 objects.
-for b in usr/sbin/mrpd usr/bin/portmon usr/bin/pmctool \
-         usr/bin/nlmonitor usr/bin/nldump usr/bin/nltool; do
-  "${CROSS_COMPILE}strip" --strip-unneeded "$stage/$b"
-done
+# otherwise. Use the cross strip so it understands arm64 objects. Skipped when
+# NOSTRIP=1 (debug builds, or release+symbols) so perf can resolve symbols.
+if [ -n "${NOSTRIP:-}" ]; then
+  msg "NOSTRIP set — keeping symbols; binaries will be large (~70M each)"
+else
+  for b in usr/sbin/mrpd usr/bin/portmon usr/bin/pmctool \
+           usr/bin/nlmonitor usr/bin/nldump usr/bin/nltool; do
+    "${CROSS_COMPILE}strip" --strip-unneeded "$stage/$b"
+  done
+fi
 install -D -m0644 "$SWIFTMRP_DIR/Configs/mrpd.service" \
   "$stage/lib/systemd/system/mrpd.service"
 # avb.target groups the stack; referenced (PartOf=) by mrpd and ptp4l.
