@@ -88,6 +88,6 @@ msg "mrpd shared-library dependencies (NEEDED) — verify these exist on target:
 # Runtime deps from the binary's NEEDED libs (see objdump output above) plus
 # nftables + iproute2, which are invoked from mrpd.service (nft, bridge).
 build_deb mrpd "$VER" "$stage" \
-  "libc6, libstdc++6, libgcc-s1, liburing2, libsystemd0, libnl-3-200, libnl-route-3-200, libnl-nf-3-200, libcurl4t64, nftables, iproute2, python3, python3-requests" \
+  "libc6, libstdc++6, libgcc-s1, liburing2, libsystemd0, libnl-3-200, libnl-route-3-200, libnl-nf-3-200, libcurl4t64, nftables, iproute2, python3, python3-requests, libjemalloc2" \
   "OpenSRP MRP/MVRP/MSRP daemon (mrpd) with portmon and pmctool helpers" \
   mrpd.service avb.target

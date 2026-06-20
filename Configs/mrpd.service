@@ -14,6 +14,7 @@ PartOf=avb.target
 Type=notify
 
 # Bridge / interface / group configuration (see /etc/default/avb).
+Environment=LD_PRELOAD=/lib/aarch64-linux-gnu/libjemalloc.so.2
 EnvironmentFile=/etc/default/avb
 
 # configure MVRP hook
