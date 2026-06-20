@@ -232,8 +232,9 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     _maxTalkerAttributes = maxTalkerAttributes
     _mmrp = try? await controller.application(for: MMRPEtherType)
     try await controller.register(application: self)
-    _priorityMapNotificationTask = Task {
-      guard let bridge = controller.bridge as? any MSRPAwareBridge<P> else { return }
+    _priorityMapNotificationTask = Task { [weak self] in
+      guard let self, let controller = self.controller,
+            let bridge = controller.bridge as? any MSRPAwareBridge<P> else { return }
 
       try? await _observePriorityMapNotifications(bridge: bridge, controller: controller)
     }
