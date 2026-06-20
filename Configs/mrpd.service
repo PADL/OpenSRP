@@ -15,6 +15,12 @@ Type=notify
 
 # Bridge / interface / group configuration (see /etc/default/avb).
 Environment=LD_PRELOAD=/lib/aarch64-linux-gnu/libjemalloc.so.2
+# Tune jemalloc for a low-allocation-churn daemon: cap arenas (default is
+# 4*ncpu, so a multicore box retains dirty extents across many arenas it never
+# uses) and run the background thread so decayed pages are returned to the OS
+# proactively instead of only on the next allocation (which a quiet daemon
+# rarely makes). Cuts steady-state RSS without touching the working set.
+Environment=MALLOC_CONF=narenas:2,background_thread:true,dirty_decay_ms:5000,muzzy_decay_ms:0
 Environment=SWIFT_IORING_QUEUE_ENTRIES=64
 EnvironmentFile=/etc/default/avb
 
