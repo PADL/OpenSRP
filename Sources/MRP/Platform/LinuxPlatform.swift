@@ -559,7 +559,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     _bridgeName
   }
 
-  private func _handleLinkNotification(_ linkMessage: RTNLLinkMessage) throws {
+  private func _handleLinkNotification(_ linkMessage: RTNLLinkMessage) async throws {
     var portNotification: PortNotification<P>?
     let port = try P(rtnl: linkMessage.link, bridge: self)
     if port._isBridgeSelf, port._rtnl.index == _bridgeIndex {
@@ -578,6 +578,8 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
         }
       } else {
         try _cancelLinkLocalRxTask(port: port)
+        _portPropertiesCache[port.id] = nil
+        _portTaggedVLANs.withLock { $0[port.id] = nil }
         portNotification = .removed(port)
       }
     } else {
@@ -586,7 +588,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
       )
     }
     if let portNotification {
-      Task { await _portNotificationChannel.send(portNotification) }
+      await _portNotificationChannel.send(portNotification)
     }
   }
 
@@ -594,7 +596,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     _portNotificationChannel.eraseToAnyAsyncSequence()
   }
 
-  private func _handleTCNotification(_ tcMessage: RTNLTCMessage) throws {
+  private func _handleTCNotification(_ tcMessage: RTNLTCMessage) async throws {
     // all we are really interested is in SR class remappings
     guard let qDisc = tcMessage.tc as? RTNLMQPrioQDisc,
           let _nlQDiscHandle,
@@ -605,7 +607,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     } else {
       .removed(srClassPriorityMap)
     }
-    Task { await _srClassPriorityMapNotificationChannel.send(tcNotification) }
+    await _srClassPriorityMapNotificationChannel.send(tcNotification)
   }
 
   private func _handleVLANNotification(_ vlanMessage: RTNLVLANDBMessage) {
@@ -623,6 +625,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
         map[vlandb.ifIndex, default: []].formUnion(taggedVids)
       } else {
         map[vlandb.ifIndex]?.subtract(taggedVids)
+        if map[vlandb.ifIndex]?.isEmpty == true { map[vlandb.ifIndex] = nil }
       }
     }
     _logger.debug(
@@ -770,9 +773,9 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
         do {
           switch notification {
           case let linkNotification as RTNLLinkMessage:
-            try _handleLinkNotification(linkNotification)
+            try await _handleLinkNotification(linkNotification)
           case let tcNotification as RTNLTCMessage:
-            try _handleTCNotification(tcNotification)
+            try await _handleTCNotification(tcNotification)
           case let vlanNotification as RTNLVLANDBMessage:
             _handleVLANNotification(vlanNotification)
           default:
