@@ -35,12 +35,29 @@ VER="$(resolve_version "$SWIFTMRP_DIR" "${MRPD_BASE_VERSION:-0.1.0}")"
 [ "$BUILD_CONFIG" = release ] || VER="${VER}+${BUILD_CONFIG}"
 msg "Building mrpd (Swift / arm64 / $BUILD_CONFIG / static stdlib) version $VER"
 
-swift build -c "$BUILD_CONFIG" \
-  --swift-sdk "$SWIFT_SDK" \
-  --traits RestAPI --static-swift-stdlib
-  ${NOSTRIP:+-Xswiftc -g}
+# Assemble the swift build flags. The DEFAULT build includes the REST control
+# API (FlyingFox + FlyingFoxMacros + AnyCodable, plus their Foundation surface;
+# matches avb.default's --rest-server-port). CONSTRAINED=1 targets small-RAM/
+# flash devices (e.g. the 64MB switch): it drops the RestAPI trait — removing
+# those three packages from the link, ~9.5MB of clean code-page RSS — and builds
+# -Osize. On a 1GB box -Osize is pointless (clean text is free/evictable); on a
+# 64MB box clean text competes for scarce RAM and is the thrash source, so it
+# earns its keep. Runtime memory tuning for the constrained target is layered on
+# via a systemd drop-in below, not baked into the shared Configs/mrpd.service.
+build_args=(-c "$BUILD_CONFIG" --swift-sdk "$SWIFT_SDK" --static-swift-stdlib)
+if [ -n "${CONSTRAINED:-}" ]; then
+  msg "CONSTRAINED profile: REST API off, -Osize (small-RAM/flash target)"
+  build_args+=(-Xswiftc -Osize)
+else
+  build_args+=(--traits RestAPI)
+fi
+# Keep symbols (-g) for perf on debug / NOSTRIP builds. NB: this was previously a
+# dangling line after a missing '\', so -g never actually reached swift build.
+[ -n "${NOSTRIP:-}" ] && build_args+=(-Xswiftc -g)
 
-BIN="$(swift build -c "$BUILD_CONFIG" --swift-sdk "$SWIFT_SDK" --show-bin-path)"
+swift build "${build_args[@]}"
+
+BIN="$(swift build "${build_args[@]}" --show-bin-path)"
 
 stage="$WORK_DIR/mrpd"
 rm -rf "$stage"; mkdir -p "$stage"
@@ -72,6 +89,21 @@ else
 fi
 install -D -m0644 "$SWIFTMRP_DIR/Configs/mrpd.service" \
   "$stage/lib/systemd/system/mrpd.service"
+# Constrained-target runtime tuning, layered as a systemd drop-in so the shared
+# Configs/mrpd.service stays the general profile. Squeezes the dirty side
+# further than the committed narenas:2: a single arena, faster decay, and
+# thp:never (only effective once the kernel cmdline sets transparent_hugepage=
+# madvise|never — on an 'always' system khugepaged collapses regardless), plus a
+# smaller io_uring ring. Expect a few MB off Private_Dirty vs the default tuning.
+if [ -n "${CONSTRAINED:-}" ]; then
+  install -D -m0644 /dev/stdin \
+    "$stage/lib/systemd/system/mrpd.service.d/constrained.conf" <<'EOF'
+[Service]
+# Small-RAM overrides; base settings live in /lib/systemd/system/mrpd.service.
+Environment=MALLOC_CONF=narenas:1,background_thread:true,dirty_decay_ms:1000,muzzy_decay_ms:0,thp:never
+Environment=SWIFT_IORING_QUEUE_ENTRIES=32
+EOF
+fi
 # avb.target groups the stack; referenced (PartOf=) by mrpd and ptp4l.
 install -D -m0644 "$SWIFTMRP_DIR/Configs/avb.target" \
   "$stage/lib/systemd/system/avb.target"
