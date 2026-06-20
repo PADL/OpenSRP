@@ -29,27 +29,13 @@ public protocol Value: SerDes, Equatable {
 
 struct AnyValue: Value, Equatable, CustomStringConvertible {
   static func == (lhs: AnyValue, rhs: AnyValue) -> Bool {
-    lhs._isEqual(rhs)
+    lhs._value._isEqual(to: rhs._value)
   }
 
   private let _value: any Value
-  private let _isEqual: @Sendable (_: AnyValue)
-    -> Bool
-  private let _makeValue: @Sendable (_: UInt64) throws -> any Value
 
   init<V: Value>(_ value: V) {
     _value = value
-
-    _isEqual = { otherValue in
-      guard let otherValue = otherValue._value as? V else {
-        return false
-      }
-      return value == otherValue
-    }
-
-    _makeValue = { index in
-      try value.makeValue(relativeTo: index)
-    }
   }
 
   var value: any Value {
@@ -65,8 +51,7 @@ struct AnyValue: Value, Equatable, CustomStringConvertible {
   }
 
   func makeValue(relativeTo index: UInt64) throws -> Self {
-    let value = try _makeValue(index)
-    return Self(value)
+    Self(try _value.makeValue(relativeTo: index))
   }
 
   init(parsing _: inout ParserSpan) throws {
@@ -79,6 +64,11 @@ struct AnyValue: Value, Equatable, CustomStringConvertible {
 }
 
 extension Value {
+  fileprivate func _isEqual(to other: any Value) -> Bool {
+    guard let other = other as? Self else { return false }
+    return self == other
+  }
+
   func eraseToAny() -> AnyValue {
     if let self = self as? AnyValue {
       self
