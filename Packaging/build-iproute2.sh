@@ -19,13 +19,14 @@ msg "Building iproute2 (arm64) version $VER"
 overlay="$WORK_DIR/iproute2-sysroot"
 rm -rf "$overlay"; mkdir -p "$overlay"
 # libelf1 was renamed libelf1t64 in noble (64-bit time_t transition).
-fetch_arm64_debs "$overlay" \
+fetch_ports_debs "$overlay" \
   libmnl0 libmnl-dev libelf1t64 libelf-dev libselinux1 libselinux1-dev \
   zlib1g libzstd1 libpcre2-8-0
-LIBDIR="$overlay/usr/lib/aarch64-linux-gnu"
+LIBDIR="$overlay/usr/lib/$CROSS_TRIPLE"
 
 # HOSTCC=gcc: netem builds small table generators that are *run* at build time,
-# so they must target the host, not arm64 (the makefile defaults HOSTCC to CC).
+# so they must target the host, not the cross target (the makefile defaults
+# HOSTCC to CC).
 #
 # -Wl,-export-dynamic is REQUIRED: with SHARED_LIBS=y, tc resolves a qdisc kind
 # (cbs, prio, htb, ...) by dlsym'ing the matching `<kind>_qdisc_util` struct out

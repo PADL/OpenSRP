@@ -14,7 +14,12 @@ PartOf=avb.target
 Type=notify
 
 # Bridge / interface / group configuration (see /etc/default/avb).
-Environment=LD_PRELOAD=/lib/aarch64-linux-gnu/libjemalloc.so.2
+# Absolute path pins the exact preloaded object — stronger than a bare soname,
+# which the dynamic linker would resolve via the library search path / ld.so.
+# cache (a weaker guarantee for a root service). This is the arm64 default;
+# build-mrpd.sh rewrites the multiarch dir to the target arch when staging the
+# .deb, so armhf builds get /usr/lib/arm-linux-gnueabihf/... automatically.
+Environment=LD_PRELOAD=/usr/lib/aarch64-linux-gnu/libjemalloc.so.2
 # Tune jemalloc for a low-allocation-churn daemon: cap arenas (default is
 # 4*ncpu, so a multicore box retains dirty extents across many arenas it never
 # uses) and run the background thread so decayed pages are returned to the OS

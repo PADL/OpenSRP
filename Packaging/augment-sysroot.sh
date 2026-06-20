@@ -31,15 +31,15 @@ SYSROOT="$(find "$SDK_BUNDLE" -maxdepth 4 -type d -name '*.sdk' 2>/dev/null | he
 [ -n "$SYSROOT" ] || die "could not locate sysroot under $SDK_BUNDLE"
 msg "augmenting sysroot: $SYSROOT"
 
-# ---- download + extract the arm64 packages into the sysroot -------------
-fetch_arm64_debs "$SYSROOT" $PKGS
+# ---- download + extract the target packages into the sysroot ------------
+fetch_ports_debs "$SYSROOT" $PKGS
 
 # ---- repair the libcurl.so linker symlink if dangling -------------------
 # The SDK ships libcurl.so -> libcurl.so.4.8.0 but not the target; the
 # runtime package supplies an soname'd file (libcurl.so.4.x). Point the
 # dev symlink at whatever real shared object landed so lld prefers it over
 # the static libcurl.a.
-libdir="$SYSROOT/usr/lib/aarch64-linux-gnu"
+libdir="$SYSROOT/usr/lib/$CROSS_TRIPLE"
 if [ -e "$libdir/libcurl.so" ] && [ ! -e "$(readlink -f "$libdir/libcurl.so")" ]; then
   real="$(ls "$libdir"/libcurl.so.4.* 2>/dev/null | sort -V | tail -1)"
   if [ -n "$real" ]; then

@@ -13,11 +13,24 @@
 set -euo pipefail
 
 # ---- target / toolchain -------------------------------------------------
+# DEB_ARCH is the single source of truth; the cross-triple and the Linux `make
+# ARCH=` value (which differs from the Debian arch name) are derived from it.
+# Override any of them explicitly if your toolchain differs. Known targets:
+# arm64 (aarch64), armhf (32-bit armv7, arm-linux-gnueabihf).
 export DEB_ARCH="${DEB_ARCH:-arm64}"
-export CROSS_TRIPLE="${CROSS_TRIPLE:-aarch64-linux-gnu}"
+case "$DEB_ARCH" in
+  arm64) _def_triple=aarch64-linux-gnu;   _def_karch=arm64; _def_sdk="6.3-RELEASE_ubuntu_noble_aarch64" ;;
+  armhf) _def_triple=arm-linux-gnueabihf; _def_karch=arm;   _def_sdk="" ;; # supply SWIFT_SDK (no swift.org armv7 SDK)
+  *) printf 'ERROR: unsupported DEB_ARCH %s (known: arm64, armhf)\n' "$DEB_ARCH" >&2; exit 1 ;;
+esac
+export CROSS_TRIPLE="${CROSS_TRIPLE:-$_def_triple}"
 export CROSS_COMPILE="${CROSS_COMPILE:-${CROSS_TRIPLE}-}"
-# Swift cross SDK (see `swift sdk list`); regenerate with swift-sdk-generator if needed.
-export SWIFT_SDK="${SWIFT_SDK:-6.3-RELEASE_ubuntu_noble_aarch64}"
+export KERNEL_ARCH="${KERNEL_ARCH:-$_def_karch}"   # Linux `make ARCH=` (arm64|arm)
+# Swift cross SDK (see `swift sdk list`); MUST match DEB_ARCH. swift.org ships no
+# 32-bit ARM Linux SDK, so for armhf set SWIFT_SDK to a community/self-built
+# armv7 SDK (e.g. swift-embedded-linux/armhf-debian). Regenerate the aarch64 one
+# with swift-sdk-generator if needed.
+export SWIFT_SDK="${SWIFT_SDK:-$_def_sdk}"
 
 MAINTAINER="${MAINTAINER:-Luke Howard <lukeh@padl.com>}"
 
@@ -68,42 +81,45 @@ git_checkout() {
   printf '%s' "$dir"
 }
 
-# ---- fetching genuine arm64 .debs from ports.ubuntu.com -----------------
-# Used to supply arm64 system libraries that the cross toolchains lack, without
-# touching the host (amd64) sysroot.
+# ---- fetching genuine target .debs from ports.ubuntu.com ----------------
+# Used to supply $DEB_ARCH system libraries that the cross toolchains lack,
+# without touching the host (amd64) sysroot. Arch is driven by DEB_ARCH
+# (arm64|armhf); Ubuntu ports carries binary-armhf for noble.
 PORTS_MIRROR="${PORTS_MIRROR:-http://ports.ubuntu.com/ubuntu-ports}"
 UBUNTU_SUITE="${UBUNTU_SUITE:-noble}"
 UBUNTU_POCKETS="${UBUNTU_POCKETS:-$UBUNTU_SUITE $UBUNTU_SUITE-updates $UBUNTU_SUITE-security}"
 UBUNTU_COMPONENTS="${UBUNTU_COMPONENTS:-main universe}"
 
-# _arm64_index : ensure the merged arm64 Packages index exists; echo its path.
-_arm64_index() {
-  local idx="$WORK_DIR/Packages.merged"
+# _ports_index : ensure the merged $DEB_ARCH Packages index exists; echo its
+# path. The index + cache are arch-tagged so switching DEB_ARCH can't reuse a
+# stale other-arch index.
+_ports_index() {
+  local idx="$WORK_DIR/Packages.$DEB_ARCH.merged"
   [ -s "$idx" ] && { printf '%s' "$idx"; return; }
   local cache="$WORK_DIR/ports-cache"; mkdir -p "$cache"
   : > "$idx"
   local p c f
   for p in $UBUNTU_POCKETS; do
     for c in $UBUNTU_COMPONENTS; do
-      f="$cache/Packages_${p}_${c}.gz"
+      f="$cache/Packages_${DEB_ARCH}_${p}_${c}.gz"
       if [ ! -s "$f" ]; then
-        msg "fetching arm64 index $p/$c" >&2
-        curl -fsSL "$PORTS_MIRROR/dists/$p/$c/binary-arm64/Packages.gz" -o "$f" \
+        msg "fetching $DEB_ARCH index $p/$c" >&2
+        curl -fsSL "$PORTS_MIRROR/dists/$p/$c/binary-$DEB_ARCH/Packages.gz" -o "$f" \
           || { warn "no index for $p/$c"; rm -f "$f"; continue; }
       fi
       zcat "$f" >> "$idx"; echo >> "$idx"
     done
   done
-  [ -s "$idx" ] || die "no arm64 package indices fetched (network?)"
+  [ -s "$idx" ] || die "no $DEB_ARCH package indices fetched (network?)"
   printf '%s' "$idx"
 }
 
-# fetch_arm64_debs <destdir> <pkg...>
-# Resolve the highest-version arm64 .deb for each package and extract it into
-# <destdir> (preserving its /usr tree).
-fetch_arm64_debs() {
+# fetch_ports_debs <destdir> <pkg...>
+# Resolve the highest-version $DEB_ARCH .deb for each package and extract it
+# into <destdir> (preserving its /usr tree).
+fetch_ports_debs() {
   local dest="$1"; shift
-  local idx; idx="$(_arm64_index)"
+  local idx; idx="$(_ports_index)"
   local cache="$WORK_DIR/ports-cache"
   local pkg v f bv bf deb
   for pkg in "$@"; do
@@ -120,7 +136,7 @@ fetch_arm64_debs() {
         }
         if(pk==p && fl!="") print vr"\t"fl
       }' "$idx")
-    [ -n "$bf" ] || die "arm64 package '$pkg' not found in indices"
+    [ -n "$bf" ] || die "$DEB_ARCH package '$pkg' not found in indices"
     deb="$cache/$(basename "$bf")"
     [ -s "$deb" ] || { msg "downloading $pkg ($(basename "$bf"))" >&2; curl -fsSL "$PORTS_MIRROR/$bf" -o "$deb"; }
     dpkg-deb -x "$deb" "$dest"
@@ -191,6 +207,13 @@ build_deb() {
   # latter read as ~0 right after writing under ext4 delayed allocation.
   local isize
   isize="$(du -k -s --apparent-size --exclude=DEBIAN "$stage" | cut -f1)"
+  # Optional relationship fields (e.g. a variant package that Provides/Conflicts/
+  # Replaces the base). Each ends with a newline so it slots in before Section:
+  # cleanly, and the line collapses away when all three are unset.
+  local relations=""
+  [ -n "${DEB_PROVIDES:-}" ]  && relations="${relations}Provides: ${DEB_PROVIDES}"$'\n'
+  [ -n "${DEB_CONFLICTS:-}" ] && relations="${relations}Conflicts: ${DEB_CONFLICTS}"$'\n'
+  [ -n "${DEB_REPLACES:-}" ]  && relations="${relations}Replaces: ${DEB_REPLACES}"$'\n'
   cat > "$stage/DEBIAN/control" <<EOF
 Package: $pkg
 Version: $ver
@@ -198,7 +221,7 @@ Architecture: $DEB_ARCH
 Maintainer: $MAINTAINER
 Installed-Size: $isize
 Depends: $depends
-Section: net
+${relations}Section: net
 Priority: optional
 Description: $desc
 EOF

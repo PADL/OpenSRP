@@ -32,12 +32,15 @@ elif [ -n "${PKG_USE_TAG:-}" ]; then
   KDEB_VER="$(resolve_version "$src")"
 fi
 
-msg "Building Linux kernel .deb (arm64) ${KDEB_VER:+version $KDEB_VER}"
-make -C "$src" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" olddefconfig
+msg "Building Linux kernel .deb ($DEB_ARCH / ARCH=$KERNEL_ARCH) ${KDEB_VER:+version $KDEB_VER}"
+# KERNEL_ARCH is the Linux `make ARCH=` value derived from DEB_ARCH in common.sh
+# (arm64 -> arm64, armhf -> arm). The $CONFIG (ARMADA_CONFIG) must be a config
+# for that arch -- a 64-bit armada.config will not configure an ARCH=arm build.
+make -C "$src" ARCH="$KERNEL_ARCH" CROSS_COMPILE="$CROSS_COMPILE" olddefconfig
 # DPKG_FLAGS=-d: skip dpkg-buildpackage's build-dep check. mkdebian pins
 # "debhelper-compat (= 12)" but noble ships debhelper 13, which builds
 # compat-12 sources fine. Needs host tools: debhelper, libdw-dev.
-make -C "$src" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" -j"$J" \
+make -C "$src" ARCH="$KERNEL_ARCH" CROSS_COMPILE="$CROSS_COMPILE" -j"$J" \
   ${KDEB_VER:+KDEB_PKGVERSION="$KDEB_VER"} \
   DPKG_FLAGS="${KDEB_DPKG_FLAGS:--d}" bindeb-pkg
 

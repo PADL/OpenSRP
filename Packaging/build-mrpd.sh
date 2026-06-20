@@ -33,7 +33,16 @@ esac
 VER="$(resolve_version "$SWIFTMRP_DIR" "${MRPD_BASE_VERSION:-0.1.0}")"
 # Tag non-release builds so their .deb does not clobber the release artifact.
 [ "$BUILD_CONFIG" = release ] || VER="${VER}+${BUILD_CONFIG}"
-msg "Building mrpd (Swift / arm64 / $BUILD_CONFIG / static stdlib) version $VER"
+# The CONSTRAINED (REST-off, small-target) build ships as a SEPARATE package
+# "mrpd-minimal" — the Ubuntu convention for a reduced variant (cf. vim-tiny and
+# the *-minimal packages) — that Provides/Conflicts/Replaces mrpd so only one of
+# the two installs at a time. Full and minimal coexist in out/ by package name.
+PKG=mrpd
+if [ -n "${CONSTRAINED:-}" ]; then
+  PKG=mrpd-minimal
+  export DEB_PROVIDES=mrpd DEB_CONFLICTS=mrpd DEB_REPLACES=mrpd
+fi
+msg "Building $PKG (Swift / $DEB_ARCH / $BUILD_CONFIG / static stdlib) version $VER"
 
 # Assemble the swift build flags. The DEFAULT build includes the REST control
 # API (FlyingFox + FlyingFoxMacros + AnyCodable, plus their Foundation surface;
@@ -44,7 +53,21 @@ msg "Building mrpd (Swift / arm64 / $BUILD_CONFIG / static stdlib) version $VER"
 # 64MB box clean text competes for scarce RAM and is the thrash source, so it
 # earns its keep. Runtime memory tuning for the constrained target is layered on
 # via a systemd drop-in below, not baked into the shared Configs/mrpd.service.
-build_args=(-c "$BUILD_CONFIG" --swift-sdk "$SWIFT_SDK" --static-swift-stdlib)
+# SDK selector. arm64 uses a modern artifactbundle SDK (--swift-sdk <id>). The
+# armhf path uses the legacy destination JSON from swift-embedded-linux/armhf-
+# debian (set SWIFT_DESTINATION_JSON to its …-armv7/debian-bookworm.json). That
+# Debian-bookworm SDK's older glibc is forward-compatible with the Ubuntu-noble
+# armhf target once --static-swift-stdlib removes the Swift stdlib from the
+# dynamic linkage; the remaining non-glibc deps (libsystemd/liburing/libnl/
+# jemalloc) resolve by soname on-target.
+if [ -n "${SWIFT_DESTINATION_JSON:-}" ]; then
+  [ -f "$SWIFT_DESTINATION_JSON" ] || die "SWIFT_DESTINATION_JSON not found: $SWIFT_DESTINATION_JSON"
+  sdk_sel=(--destination "$SWIFT_DESTINATION_JSON")
+else
+  [ -n "$SWIFT_SDK" ] || die "no Swift SDK: set SWIFT_SDK ($DEB_ARCH artifactbundle id) or SWIFT_DESTINATION_JSON (armhf)"
+  sdk_sel=(--swift-sdk "$SWIFT_SDK")
+fi
+build_args=(-c "$BUILD_CONFIG" "${sdk_sel[@]}" --static-swift-stdlib)
 if [ -n "${CONSTRAINED:-}" ]; then
   msg "CONSTRAINED profile: REST API off, -Osize (small-RAM/flash target)"
   build_args+=(-Xswiftc -Osize)
@@ -89,6 +112,11 @@ else
 fi
 install -D -m0644 "$SWIFTMRP_DIR/Configs/mrpd.service" \
   "$stage/lib/systemd/system/mrpd.service"
+# Pin the jemalloc LD_PRELOAD multiarch dir to the target arch. The committed
+# service carries the arm64 path; rewrite it to $CROSS_TRIPLE so armhf (and any
+# other arch) gets the correct absolute path without resorting to a soname.
+sed -i "s|LD_PRELOAD=/usr/lib/[^/]*/libjemalloc\.so\.2|LD_PRELOAD=/usr/lib/$CROSS_TRIPLE/libjemalloc.so.2|" \
+  "$stage/lib/systemd/system/mrpd.service"
 # Constrained-target runtime tuning, layered as a systemd drop-in so the shared
 # Configs/mrpd.service stays the general profile. Squeezes the dirty side
 # further than the committed narenas:2: a single arena, faster decay, and
@@ -119,7 +147,10 @@ msg "mrpd shared-library dependencies (NEEDED) — verify these exist on target:
 
 # Runtime deps from the binary's NEEDED libs (see objdump output above) plus
 # nftables + iproute2, which are invoked from mrpd.service (nft, bridge).
-build_deb mrpd "$VER" "$stage" \
-  "libc6, libstdc++6, libgcc-s1, liburing2, libsystemd0, libnl-3-200, libnl-route-3-200, libnl-nf-3-200, libcurl4t64, nftables, iproute2, python3, python3-requests, libjemalloc2" \
+# libcurl4t64 is only pulled in by the REST API (FoundationNetworking under
+# static linking), so the minimal build omits it.
+deps="libc6, libstdc++6, libgcc-s1, liburing2, libsystemd0, libnl-3-200, libnl-route-3-200, libnl-nf-3-200, nftables, iproute2, python3, python3-requests, libjemalloc2"
+[ -n "${CONSTRAINED:-}" ] || deps="libcurl4t64, $deps"
+build_deb "$PKG" "$VER" "$stage" "$deps" \
   "OpenSRP MRP/MVRP/MSRP daemon (mrpd) with portmon and pmctool helpers" \
   mrpd.service avb.target
