@@ -68,7 +68,13 @@ OPTIONS:
                           MSRP SR class A delta bandwidth percentage
   --class-b-delta-bandwidth <class-b-delta-bandwidth>
                           MSRP SR class B delta bandwidth percentage
-  --configure-queues      Automatically configure MQPRIO queues
+  --configure-egress-queues
+                          Automatically configure MQPRIO egress queues
+  --configure-ingress-queues
+                          Automatically configure DCBNL ingress queue (PCP) mapping
+  --configure-queues      Automatically configure both ingress and egress queues
+  --multicast-flooding/--no-multicast-flooding
+                          Flood multicast on bridge ports (default: --no-multicast-flooding)
   --sr-p-vid <sr-p-vid>   Default MSRP SR PVID (default: 2)
   --exclude-iface <exclude-iface>
                           Exclude physical interface (may be specified multiple times)
@@ -88,15 +94,14 @@ OPTIONS:
                           MRP LeaveAll time interval (default: 10.0 seconds)
   --periodic-time <periodic-time>
                           MRP Periodic TX time interval (default: 1.0 seconds)
-  -r, --rest-server-port <rest-server-port>
-                          REST HTTP server port (default: 80)
   -h, --help              Show help information.
+
 ```
 
 A typical invocation would look like:
 
 ```bash
-mrpd -b br0 --enable-mmrp --enable-mvrp --enable-msrp -l debug
+mrpd -b br0 --enable-srp --configure-egress-queues
 ```
 
 Note that the `trace` log level will log a _lot_ of messages. `--enable-srp` is a (hidden) synonym which will enable MMRP, MVRP and MSRP.
@@ -108,23 +113,22 @@ Higher queue numbers have higher scheduling priority, however this is broken wit
 The current test environments consist of:
 
 * An x86\_64 server with two Intel i210 NICs with their SDP pins tied, using `ts2phc` and `ptp4l` in 802.1AS mode (no longer being tested)
-* A Global Scale Technologies [MochaBIN](https://globalscaletechnologies.com/product/mochabin-copy/) with its stock 88E6141 switch chip replaced with a 88E6341, also using `ptp4l`
+* A Global Scale Technologies [MOCHAbin](https://globalscaletechnologies.com/product/MOCHAbin-copy/) with its stock 88E6141 switch chip replaced with a 88E6341, also using `ptp4l`
 * A custom board (’XEBRA’) with a Raspberry Pi CM4 and a Marvell 88E6352
 
-Kernel patches for the Marvell to support FQTSS and RMU are in the [rpi-6.18.y-xebros-rmu](https://github.com/PADL/linux/tree/rpi-6.18.y-xebros-rmu) branch.
+Kernel patches for the Marvell to support FQTSS and RMU are in the [rpi-6.18.y-xebros-rmu](https://github.com/PADL/linux/tree/rpi-6.18.y-xebros-rmu) branch. Packaging scripts for Ubuntu 24.04.4 can be found in [Packaging](Packaging/).
 
 Endpoints we are testing include:
 
-* MOTU Ultralite AVB (tested with i210 and MochaBIN)
-* MOTU M64 (tested with MochaBIN)
-* MOTU 16A (2025) (tested with XEBRA)
+* MOTU Ultralite AVB (tested with i210, MOCHAbin)
+* MOTU M64 (tested with MOCHAbin)
+* MOTU 16A (2025) (tested with XEBRA, ESPRESSObin, MOCHAbin)
 * macOS AVB stack (tested with i210)
-* XMOS lib\_tsn (tested with XEBRA)
-* JOYNED lib\_joyned (TBA)
+* XMOS lib\_tsn (tested with XEBRA, ESPRESSObin, MOCHAbin)
 
-Bridges we are testing transitively:
+Bridges have tested transitively (i.e. as upstream switches):
 
-* Luminex Gigacore 10i (tested)
-* Extreme x460-48p (tested)
+* Luminex Gigacore 10i
+* Extreme x460-48p
 
 Please reach out to myself (lukeh `at` lukktone `dot` com) for further information.
