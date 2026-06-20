@@ -908,7 +908,7 @@ fileprivate final class FilterRegistration: Equatable, Hashable, Sendable, Custo
       index: port.id
     ))
 
-    return try await rxSocket.receiveMessages(count: Int(port._rtnl.mtu)).compactMap { message in
+    return try await rxSocket.receiveMessages(count: Int(port._rtnl.mtu), capacity: 32).compactMap { message in
       try? message.buffer.withParserSpan { input in
         try IEEE802Packet(parsing: &input)
       }
