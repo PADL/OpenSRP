@@ -1,0 +1,29 @@
+# 32-bit ARMv7 Armada-38x (Marvell 88F6820, Cortex-A9) — e.g. Linksys WRT3200ACM
+# ("rango"). The arch-neutral switch personality (DSA/MV88E6XXX/RMU/MVNETA/TSN/
+# bridge/PTP) lives in armada.common; this fragment carries only what differs
+# from the arm64 (Armada 7K/8K) build. Symbol set follows OpenWrt's
+# target/linux/mvebu/cortexa9 config. Built with `make ARCH=arm`, which implies
+# CONFIG_ARM=y (so it is not listed here).
+CONFIG_ARCH_MULTIPLATFORM=y
+CONFIG_ARCH_MULTI_V7=y
+CONFIG_MACH_ARMADA_38X=y
+# Cortex-A9 FPU/SIMD + L2
+CONFIG_VFP=y
+CONFIG_NEON=y
+CONFIG_CACHE_L2X0=y
+# Armada-38x SoC blocks (arm64 uses the CP110/AP806 + 3700 variants instead)
+CONFIG_PINCTRL_ARMADA_38X=y
+CONFIG_PHY_MVEBU_A38X_COMPHY=y
+CONFIG_MVNETA_BM=y
+CONFIG_MVNETA_BM_ENABLE=y
+CONFIG_PCI_MVEBU=y
+CONFIG_USB_EHCI_HCD_ORION=y
+CONFIG_ORION_WATCHDOG=y
+# Marvell CESA + ARM-accelerated crypto (arm64 uses the *_ARM64_CE variants)
+CONFIG_CRYPTO_DEV_MARVELL_CESA=y
+CONFIG_CRYPTO_AES_ARM=y
+CONFIG_CRYPTO_AES_ARM_BS=y
+CONFIG_CRYPTO_SHA1_ARM=y
+CONFIG_CRYPTO_SHA1_ARM_NEON=y
+CONFIG_CRYPTO_SHA256_ARM=y
+CONFIG_CRYPTO_SHA512_ARM=y

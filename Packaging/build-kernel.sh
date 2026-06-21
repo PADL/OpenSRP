@@ -1,18 +1,31 @@
 #!/usr/bin/env bash
 # Build the Linux kernel as native Ubuntu linux-image / linux-headers .deb
-# packages (arm64), using the kernel's own bindeb-pkg target. These install to
+# packages (for DEB_ARCH), using the kernel's own bindeb-pkg target. These install to
 # /boot, regenerate the initramfs and run depmod via their maintainer scripts —
 # i.e. drop-in replacements for the stock Ubuntu kernel .debs.
 #
-# Source is checked out from git ($LINUX_GIT @ $LINUX_REF) and configured with
-# the Armada switch config kept alongside this script (Packaging/armada.config).
+# Source is checked out from git ($LINUX_GIT @ $LINUX_REF) and configured from
+# the Armada switch config fragments kept alongside this script (armada.common +
+# armada.$KERNEL_ARCH; see below).
 #
 # This is the slow one; it is NOT included in build-all by default.
 set -euo pipefail
 . "$(dirname "$0")/common.sh"
 
-CONFIG="${ARMADA_CONFIG:-$PACKAGING_DIR/armada.config}"
-[ -f "$CONFIG" ] || die "armada config not found at $CONFIG (set ARMADA_CONFIG)"
+# The kernel config is assembled from an arch-neutral base (armada.common) plus
+# a per-arch fragment (armada.$KERNEL_ARCH: armada.arm64 or armada.arm), merged
+# below and reconciled by olddefconfig. This keeps the switch personality
+# (DSA/MV88E6XXX/MVNETA/TSN/...) in one shared file across both arches. Set
+# ARMADA_CONFIG to a single verbatim full .config to bypass the merge entirely
+# (back-compat / debugging). Validate inputs now, before the slow kernel clone.
+COMMON="$PACKAGING_DIR/armada.common"
+ARCH_FRAG="$PACKAGING_DIR/armada.$KERNEL_ARCH"
+if [ -n "${ARMADA_CONFIG:-}" ]; then
+  [ -f "$ARMADA_CONFIG" ] || die "ARMADA_CONFIG not found: $ARMADA_CONFIG"
+else
+  [ -f "$COMMON" ]    || die "kernel config base not found: $COMMON"
+  [ -f "$ARCH_FRAG" ] || die "no kernel config fragment for ARCH=$KERNEL_ARCH: $ARCH_FRAG (known: arm64, arm)"
+fi
 
 # A full kernel tree is large even shallow-cloned; warn but proceed.
 warn "cloning a kernel tree (large); this can take a while and a few GB of disk"
@@ -20,9 +33,25 @@ src="$(git_checkout linux "$LINUX_GIT" "$LINUX_REF")"
 
 J="${JOBS:-$(nproc)}"
 
-# Use the Armada switch config verbatim, then reconcile with the source.
-msg "applying armada config: $CONFIG"
-cp "$CONFIG" "$src/.config"
+# Clean on arch switch: bindeb-pkg builds in-tree, so arm64 and arm objects would
+# mix if the same checkout is reused across arches. Track the last-built ARCH and
+# mrproper when it changes (mrproper also clears .config, which we rewrite below).
+arch_stamp="$src/.kbuild_arch"
+if [ -f "$arch_stamp" ] && [ "$(cat "$arch_stamp" 2>/dev/null)" != "$KERNEL_ARCH" ]; then
+  msg "kernel ARCH changed ($(cat "$arch_stamp") -> $KERNEL_ARCH); make mrproper"
+  make -C "$src" mrproper
+fi
+
+# Assemble .config, then reconcile with the source via olddefconfig below. The
+# per-arch fragment is concatenated LAST so it can override a common default.
+if [ -n "${ARMADA_CONFIG:-}" ]; then
+  msg "applying verbatim kernel config: $ARMADA_CONFIG"
+  cp "$ARMADA_CONFIG" "$src/.config"
+else
+  msg "merging kernel config: armada.common + armada.$KERNEL_ARCH"
+  cat "$COMMON" "$ARCH_FRAG" > "$src/.config"
+fi
+echo "$KERNEL_ARCH" > "$arch_stamp"
 
 # KDEB_PKGVERSION sets the .deb version; honour the same overrides as the rest.
 KDEB_VER=""
@@ -34,8 +63,8 @@ fi
 
 msg "Building Linux kernel .deb ($DEB_ARCH / ARCH=$KERNEL_ARCH) ${KDEB_VER:+version $KDEB_VER}"
 # KERNEL_ARCH is the Linux `make ARCH=` value derived from DEB_ARCH in common.sh
-# (arm64 -> arm64, armhf -> arm). The $CONFIG (ARMADA_CONFIG) must be a config
-# for that arch -- a 64-bit armada.config will not configure an ARCH=arm build.
+# (arm64 -> arm64, armhf -> arm). The merged fragments must match that arch --
+# armada.common is arch-neutral and armada.$KERNEL_ARCH supplies the arch deltas.
 make -C "$src" ARCH="$KERNEL_ARCH" CROSS_COMPILE="$CROSS_COMPILE" olddefconfig
 # DPKG_FLAGS=-d: skip dpkg-buildpackage's build-dep check. mkdebian pins
 # "debhelper-compat (= 12)" but noble ships debhelper 13, which builds
