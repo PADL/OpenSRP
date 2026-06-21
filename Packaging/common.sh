@@ -22,19 +22,21 @@ export DEB_ARCH="${DEB_ARCH:-arm64}"
 # Per-arch defaults: cross-triple, Linux `make ARCH=`, the Swift toolchain that
 # matches the SDK (swiftly id), and the Swift SDK selector. arm64 uses a modern
 # artifactbundle (SWIFT_SDK, --swift-sdk). armhf has no swift.org SDK: it uses
-# the swift-embedded-linux/armhf-debian destination JSON in /opt (SWIFT_
-# DESTINATION_JSON, --destination), built with Swift 6.3.2 — so its toolchain
-# must be 6.3.2, not the arm64 default of 6.3.0.
+# the swift-embedded-linux armv7 destination JSON in /opt (SWIFT_DESTINATION_
+# JSON, --destination), built with Swift 6.3.2 against an Ubuntu noble sysroot —
+# so its toolchain must be 6.3.2, not the arm64 default of 6.3.0.
 _def_dest_json=""
 case "$DEB_ARCH" in
   arm64) _def_triple=aarch64-linux-gnu;   _def_karch=arm64; _def_sdk="6.3-RELEASE_ubuntu_noble_aarch64"; _def_tc=6.3.0 ;;
   armhf) _def_triple=arm-linux-gnueabihf; _def_karch=arm;   _def_sdk=""; _def_tc=6.3.2
          # Use the *-static.json destination: its resource-dir/rpaths point at
          # usr/lib/swift_static, where static-stdlib-args.lnk lives. mrpd always
-         # builds with --static-swift-stdlib; the plain debian-bookworm.json
+         # builds with --static-swift-stdlib; the plain ubuntu-noble.json
          # (resource-dir usr/lib/swift) makes the driver look for that .lnk under
          # usr/lib/swift/linux, where it does not exist -> fatal "not found".
-         _def_dest_json="/opt/swift-6.3.2-RELEASE-debian-bookworm-armv7/debian-bookworm-static.json" ;;
+         # (--static-swift-stdlib is now a deployment choice, not a glibc-skew
+         # necessity: the SDK is noble-based, matching the target's glibc 2.39.)
+         _def_dest_json="/opt/swift-6.3.2-RELEASE-ubuntu-noble-armv7/ubuntu-noble-static.json" ;;
   *) printf 'ERROR: unsupported DEB_ARCH %s (known: arm64, armhf)\n' "$DEB_ARCH" >&2; exit 1 ;;
 esac
 export CROSS_TRIPLE="${CROSS_TRIPLE:-$_def_triple}"
@@ -102,24 +104,17 @@ git_checkout() {
 # Supplies $DEB_ARCH system libraries that the cross toolchains lack, without
 # touching the host (amd64) sysroot. The apt source MUST match the SDK's glibc
 # generation, or libraries built against a newer glibc drag in symbols the SDK's
-# libc.so lacks (e.g. noble's libnl references __isoc23_strtoul@GLIBC_2.38, which
-# Debian-bookworm glibc 2.36 does not export -> lld --no-allow-shlib-undefined
-# rejects the link). So:
-#   arm64  -> Ubuntu noble (its Swift SDK sysroot is noble-glibc based)
-#   armhf  -> Debian bookworm (the armhf-debian Swift SDK is bookworm-glibc based)
+# libc.so lacks (e.g. a noble lib references __isoc23_strtoul@GLIBC_2.38, which an
+# older glibc 2.36 does not export -> lld --no-allow-shlib-undefined rejects the
+# link). Both arches now use noble-glibc-based Swift SDKs -- arm64's swift.org
+# artifactbundle, and armhf's swift-embedded-linux armv7 SDK built against a noble
+# sysroot -- so both augment from Ubuntu noble (armhf is an Ubuntu ports arch too).
 # The mirror layout (dists/<suite>/<component>/binary-<arch>/Packages.gz and the
 # pool/ Filename paths) is identical for Debian and Ubuntu, so the same fetch
 # code drives both. Override any of these explicitly for a different base.
-case "$DEB_ARCH" in
-  armhf) _def_mirror=http://deb.debian.org/debian
-         # base bookworm has every lib we pull; deb.debian.org serves no
-         # bookworm-updates/main/binary-armhf index (404), so don't list it.
-         _def_pockets="bookworm"
-         _def_components=main ;;
-  *)     _def_mirror=http://ports.ubuntu.com/ubuntu-ports
-         _def_pockets="noble noble-updates noble-security"
-         _def_components="main universe" ;;
-esac
+_def_mirror=http://ports.ubuntu.com/ubuntu-ports
+_def_pockets="noble noble-updates noble-security"
+_def_components="main universe"
 PORTS_MIRROR="${PORTS_MIRROR:-$_def_mirror}"
 UBUNTU_POCKETS="${UBUNTU_POCKETS:-$_def_pockets}"
 UBUNTU_COMPONENTS="${UBUNTU_COMPONENTS:-$_def_components}"

@@ -19,11 +19,12 @@
 #   arm64 — a modern artifactbundle SDK under ~/.swiftpm/swift-sdks; its sysroot
 #           is user-writable, so we extract straight into it. Needs libcurl
 #           (the default build ships the RestAPI trait).
-#   armhf — the legacy swift-embedded-linux/armhf-debian SDK under /opt, selected
-#           at build time via SWIFT_DESTINATION_JSON. Its sysroot already bundles
-#           libsystemd, and the armhf target is CONSTRAINED (REST off) so libcurl
-#           is not needed. /opt is not user-writable, so we stage into $WORK_DIR
-#           and `sudo cp` the tree in (the one privileged step).
+#   armhf — the swift-embedded-linux armv7 SDK under /opt (now built against an
+#           Ubuntu noble sysroot), selected at build time via SWIFT_DESTINATION_
+#           JSON. Its sysroot already bundles libsystemd, and the armhf target is
+#           CONSTRAINED (REST off) so libcurl is not needed. /opt is not user-
+#           writable, so we stage into $WORK_DIR and `sudo cp` the tree in (the
+#           one privileged step).
 #
 # Idempotent: re-running just re-extracts. Override the package set with
 # SYSROOT_PKGS, the mirror with PORTS_MIRROR, the suites with UBUNTU_POCKETS, or
@@ -35,12 +36,11 @@ set -euo pipefail
 # armhf is the constrained (REST-off) target: no libcurl, and libsystemd is
 # already in the SDK sysroot. arm64 keeps both for the RestAPI trait.
 case "$DEB_ARCH" in
-  # armhf augments its glibc-linked libraries from Debian bookworm (see common.sh)
-  # so every overlaid .so links the same glibc 2.36 as the armhf-debian SDK -- no
-  # __isoc23_* / GLIBC_2.38 symbol mismatch, and lld's --no-allow-shlib-undefined
-  # check stays on. linux-libc-dev is handled separately (UAPI_* below): kernel
-  # uapi is decoupled from glibc, so it is overlaid from a newer suite to supply
-  # post-6.1 constants without disturbing the glibc generation.
+  # armhf augments its glibc-linked libraries from Ubuntu noble (see common.sh),
+  # matching the noble glibc 2.39 of the swift-embedded-linux armv7 SDK -- no
+  # __isoc23_* / GLIBC_2.38 symbol skew, and lld's --no-allow-shlib-undefined
+  # check stays on. The noble sysroot already ships current kernel uapi, so no
+  # separate linux-libc-dev overlay is needed (cf. arm64).
   armhf) _pkgs_default="liburing2 liburing-dev \
     libnl-3-200 libnl-3-dev libnl-route-3-200 libnl-route-3-dev \
     libnl-nf-3-200 libnl-nf-3-dev libnl-genl-3-200 libnl-genl-3-dev" ;;
@@ -51,19 +51,16 @@ case "$DEB_ARCH" in
 esac
 PKGS="${SYSROOT_PKGS:-$_pkgs_default}"
 
-# ---- kernel-uapi overlay (per arch) -------------------------------------
-# The armhf-debian SDK bundles bookworm's 6.1 kernel uapi, which predates several
-# constants the stack uses: DCB_APP_SEL_PCP / DCB_ATTR_DCB_APP (added 6.3) and the
-# newer io_uring setup/msg-ring flags (6.5-6.6). Overlay a newer linux-libc-dev
-# from Debian trixie (6.12) so these are defined at build time. Kernel uapi headers
-# carry no glibc symbol versions, so this is independent of the glibc generation --
-# libnl/liburing stay bookworm, so there is no __isoc23_*/GLIBC_2.38 link skew.
-# arm64's noble SDK already ships current uapi, so it needs no overlay.
+# ---- kernel-uapi overlay (optional) -------------------------------------
+# Both SDKs are now noble-based and ship current kernel uapi (6.8+), which already
+# defines DCB_APP_SEL_PCP / DCB_ATTR_DCB_APP (6.3) and the newer io_uring setup/
+# msg-ring flags (6.5-6.6) -- so no overlay is needed by default (the old armhf
+# bookworm SDK shipped 6.1 uapi and required a trixie linux-libc-dev overlay
+# here). The hook remains for pulling a still-newer linux-libc-dev from another
+# suite should a future UAPI constant be required (set UAPI_PKGS + UAPI_POCKETS).
+# Kernel uapi headers carry no glibc symbol versions, so an overlay stays
+# independent of the glibc generation.
 UAPI_PKGS="${UAPI_PKGS:-}"; UAPI_POCKETS="${UAPI_POCKETS:-}"
-if [ "$DEB_ARCH" = armhf ]; then
-  UAPI_PKGS="${UAPI_PKGS:-linux-libc-dev}"
-  UAPI_POCKETS="${UAPI_POCKETS:-trixie}"
-fi
 
 # ---- locate the sysroot -------------------------------------------------
 # armhf (or any --destination JSON SDK): read the "sdk" path out of the JSON.
@@ -71,7 +68,7 @@ fi
 if [ -n "${SYSROOT:-}" ]; then
   : # caller pinned it (e.g. for testing)
 elif [ "$DEB_ARCH" = armhf ] || [ -n "${SWIFT_DESTINATION_JSON:-}" ]; then
-  json="${SWIFT_DESTINATION_JSON:-/opt/swift-6.3.2-RELEASE-debian-bookworm-armv7/debian-bookworm-static.json}"
+  json="${SWIFT_DESTINATION_JSON:-/opt/swift-6.3.2-RELEASE-ubuntu-noble-armv7/ubuntu-noble-static.json}"
   [ -f "$json" ] || die "destination JSON not found: $json (set SWIFT_DESTINATION_JSON)"
   SYSROOT="$(sed -n 's/.*"sdk"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$json" | head -1)"
   [ -n "$SYSROOT" ] || die "could not read \"sdk\" path from $json"
