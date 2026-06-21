@@ -19,6 +19,13 @@ CONFIG_MVNETA_BM_ENABLE=y
 CONFIG_PCI_MVEBU=y
 CONFIG_USB_EHCI_HCD_ORION=y
 CONFIG_ORION_WATCHDOG=y
+# Armada-38x has no Synopsys DesignWare I2C (it uses i2c-mv64xxx, in common).
+# The DesignWare *master* driver does a raw 64-bit divide -> __aeabi_uldivmod,
+# unprovided on 32-bit ARM, which breaks the vmlinux link. Kept on in common for
+# the arm64 ESPRESSObin (Armada 3700), whose CPU does use this controller and
+# divides 64-bit natively.
+# CONFIG_I2C_DESIGNWARE_PLATFORM is not set
+# CONFIG_I2C_DESIGNWARE_CORE is not set
 # Marvell CESA + ARM-accelerated crypto (arm64 uses the *_ARM64_CE variants)
 CONFIG_CRYPTO_DEV_MARVELL_CESA=y
 CONFIG_CRYPTO_AES_ARM=y
