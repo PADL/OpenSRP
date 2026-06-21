@@ -62,25 +62,14 @@ msg "Building $PKG (Swift / $DEB_ARCH / $BUILD_CONFIG / static stdlib) version $
 # armhf target once --static-swift-stdlib removes the Swift stdlib from the
 # dynamic linkage; the remaining non-glibc deps (libsystemd/liburing/libnl/
 # jemalloc) resolve by soname on-target.
-extra_link_args=()
 if [ -n "${SWIFT_DESTINATION_JSON:-}" ]; then
   [ -f "$SWIFT_DESTINATION_JSON" ] || die "SWIFT_DESTINATION_JSON not found: $SWIFT_DESTINATION_JSON"
   sdk_sel=(--destination "$SWIFT_DESTINATION_JSON")
-  # Relax lld's --no-allow-shlib-undefined for the armhf link. The SDK sysroot
-  # ships Debian-bookworm glibc (2.36), but augment-sysroot overlays Ubuntu-noble
-  # libnl, built with GCC 13+ so it references the C23 __isoc23_* scanf/strtol
-  # variants (__isoc23_strtoul@GLIBC_2.38 etc). bookworm's libc.so lacks those,
-  # so the strict check rejects the link even though the symbols are undefined in
-  # libnl (linked by soname), not in our binary. The target runs noble glibc
-  # (2.39), where they resolve at runtime — same forward-compat basis as the
-  # static-stdlib choice above. arm64's noble sysroot already has them, so this
-  # is armhf-only and the strict check stays on there.
-  extra_link_args+=(-Xlinker --allow-shlib-undefined)
 else
   [ -n "$SWIFT_SDK" ] || die "no Swift SDK: set SWIFT_SDK ($DEB_ARCH artifactbundle id) or SWIFT_DESTINATION_JSON (armhf)"
   sdk_sel=(--swift-sdk "$SWIFT_SDK")
 fi
-build_args=(-c "$BUILD_CONFIG" "${sdk_sel[@]}" --static-swift-stdlib "${extra_link_args[@]}")
+build_args=(-c "$BUILD_CONFIG" "${sdk_sel[@]}" --static-swift-stdlib)
 if [ -n "${CONSTRAINED:-}" ]; then
   msg "CONSTRAINED profile: REST API off, -Osize (small-RAM/flash target)"
   build_args+=(-Xswiftc -Osize)

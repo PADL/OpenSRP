@@ -26,8 +26,8 @@
 #           and `sudo cp` the tree in (the one privileged step).
 #
 # Idempotent: re-running just re-extracts. Override the package set with
-# SYSROOT_PKGS, the mirror with PORTS_MIRROR, the suite with UBUNTU_SUITE, or the
-# sysroot location with SYSROOT.
+# SYSROOT_PKGS, the mirror with PORTS_MIRROR, the suites with UBUNTU_POCKETS, or
+# the sysroot location with SYSROOT.
 set -euo pipefail
 . "$(dirname "$0")/common.sh"
 
@@ -35,15 +35,13 @@ set -euo pipefail
 # armhf is the constrained (REST-off) target: no libcurl, and libsystemd is
 # already in the SDK sysroot. arm64 keeps both for the RestAPI trait.
 case "$DEB_ARCH" in
-  # linux-libc-dev: the armhf-debian SDK bundles bookworm's kernel uapi headers
-  # (kernel ~6.1), but we drop in noble's liburing 2.5, whose inline helpers
-  # reference newer uapi (e.g. IORING_MSG_RING_FLAGS_PASS). liburing's bundled
-  # <liburing/io_uring.h> shares an include guard with the system
-  # <linux/io_uring.h>, so the older system header wins and the macro goes
-  # undefined. Overlaying noble's linux-libc-dev brings the uapi up to match
-  # (the arm64 noble SDK already ships these headers). glibc stays bookworm --
-  # kernel uapi and glibc version independently.
-  armhf) _pkgs_default="linux-libc-dev liburing2 liburing-dev \
+  # armhf augments its glibc-linked libraries from Debian bookworm (see common.sh)
+  # so every overlaid .so links the same glibc 2.36 as the armhf-debian SDK -- no
+  # __isoc23_* / GLIBC_2.38 symbol mismatch, and lld's --no-allow-shlib-undefined
+  # check stays on. linux-libc-dev is handled separately (UAPI_* below): kernel
+  # uapi is decoupled from glibc, so it is overlaid from a newer suite to supply
+  # post-6.1 constants without disturbing the glibc generation.
+  armhf) _pkgs_default="liburing2 liburing-dev \
     libnl-3-200 libnl-3-dev libnl-route-3-200 libnl-route-3-dev \
     libnl-nf-3-200 libnl-nf-3-dev libnl-genl-3-200 libnl-genl-3-dev" ;;
   *)     _pkgs_default="liburing2 liburing-dev libsystemd0 libsystemd-dev \
@@ -52,6 +50,20 @@ case "$DEB_ARCH" in
     libcurl4t64" ;;
 esac
 PKGS="${SYSROOT_PKGS:-$_pkgs_default}"
+
+# ---- kernel-uapi overlay (per arch) -------------------------------------
+# The armhf-debian SDK bundles bookworm's 6.1 kernel uapi, which predates several
+# constants the stack uses: DCB_APP_SEL_PCP / DCB_ATTR_DCB_APP (added 6.3) and the
+# newer io_uring setup/msg-ring flags (6.5-6.6). Overlay a newer linux-libc-dev
+# from Debian trixie (6.12) so these are defined at build time. Kernel uapi headers
+# carry no glibc symbol versions, so this is independent of the glibc generation --
+# libnl/liburing stay bookworm, so there is no __isoc23_*/GLIBC_2.38 link skew.
+# arm64's noble SDK already ships current uapi, so it needs no overlay.
+UAPI_PKGS="${UAPI_PKGS:-}"; UAPI_POCKETS="${UAPI_POCKETS:-}"
+if [ "$DEB_ARCH" = armhf ]; then
+  UAPI_PKGS="${UAPI_PKGS:-linux-libc-dev}"
+  UAPI_POCKETS="${UAPI_POCKETS:-trixie}"
+fi
 
 # ---- locate the sysroot -------------------------------------------------
 # armhf (or any --destination JSON SDK): read the "sdk" path out of the JSON.
@@ -72,16 +84,45 @@ fi
 msg "augmenting sysroot: $SYSROOT"
 
 # ---- download + extract the target packages into the sysroot ------------
-# If the sysroot is writable extract straight in; otherwise (the /opt SDK)
-# stage into $WORK_DIR and copy the tree in with one sudo step.
+# If the sysroot is writable extract straight in; otherwise (the /opt SDK) stage
+# into $WORK_DIR and copy the tree in with one sudo step. The glibc-linked libs
+# come from the per-arch source (common.sh); any UAPI_PKGS are fetched separately
+# from UAPI_POCKETS (a newer suite, kernel uapi only) into the same tree.
 if [ -w "$SYSROOT/usr" ]; then
-  fetch_ports_debs "$SYSROOT" $PKGS
+  dest="$SYSROOT"
 else
   msg "sysroot not writable; staging then installing with sudo"
-  overlay="$WORK_DIR/sysroot-overlay-$DEB_ARCH"; rm -rf "$overlay"; mkdir -p "$overlay"
-  fetch_ports_debs "$overlay" $PKGS
+  dest="$WORK_DIR/sysroot-overlay-$DEB_ARCH"; rm -rf "$dest"; mkdir -p "$dest"
+fi
+fetch_ports_debs "$dest" $PKGS
+if [ -n "$UAPI_PKGS" ]; then
+  msg "overlaying kernel uapi from ${UAPI_POCKETS:-$UBUNTU_POCKETS}: $UAPI_PKGS"
+  UBUNTU_POCKETS="${UAPI_POCKETS:-$UBUNTU_POCKETS}" fetch_ports_debs "$dest" $UAPI_PKGS
+fi
+# Debian's non-merged-usr layout puts core libraries under /lib, not /usr/lib
+# (e.g. bookworm's libnl-3-200/-dev land in /lib/<triple>; the route/nf/genl
+# variants use /usr/lib). The SDK sysroot is merged-usr (/lib -> usr/lib) and we
+# install only the usr/ tree, so fold any extracted /lib into usr/lib first or
+# those libs (and their dev symlinks) are silently dropped.
+if [ -d "$dest/lib" ] && [ ! -L "$dest/lib" ]; then
+  mkdir -p "$dest/usr/lib"
+  cp -a "$dest/lib/." "$dest/usr/lib/"
+  rm -rf "$dest/lib"
+fi
+if [ "$dest" != "$SYSROOT" ]; then
   msg "copying staged libraries into $SYSROOT (sudo)"
-  sudo cp -a "$overlay/usr/." "$SYSROOT/usr/"
+  sudo cp -a "$dest/usr/." "$SYSROOT/usr/"
+fi
+
+# ---- ensure the merged-usr /lib symlink exists --------------------------
+# glibc's libc.so is a linker script that references /lib/<triple>/libc.so.6 and
+# the dynamic loader by absolute path; lld resolves these *inside* the sysroot,
+# so the merged-usr /lib -> usr/lib symlink must be present or the link fails with
+# "cannot find /lib/<triple>/libc.so.6 inside <sysroot>". Some SDK tarballs omit
+# it / it can be lost on re-extract, so restore it here (idempotent).
+if [ ! -e "$SYSROOT/lib" ] && [ ! -L "$SYSROOT/lib" ]; then
+  if [ -w "$SYSROOT" ]; then ln -s usr/lib "$SYSROOT/lib"; else sudo ln -s usr/lib "$SYSROOT/lib"; fi
+  msg "restored $SYSROOT/lib -> usr/lib"
 fi
 
 # ---- repair the libcurl.so linker symlink if dangling -------------------

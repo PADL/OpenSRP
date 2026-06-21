@@ -98,20 +98,40 @@ git_checkout() {
   printf '%s' "$dir"
 }
 
-# ---- fetching genuine target .debs from ports.ubuntu.com ----------------
-# Used to supply $DEB_ARCH system libraries that the cross toolchains lack,
-# without touching the host (amd64) sysroot. Arch is driven by DEB_ARCH
-# (arm64|armhf); Ubuntu ports carries binary-armhf for noble.
-PORTS_MIRROR="${PORTS_MIRROR:-http://ports.ubuntu.com/ubuntu-ports}"
-UBUNTU_SUITE="${UBUNTU_SUITE:-noble}"
-UBUNTU_POCKETS="${UBUNTU_POCKETS:-$UBUNTU_SUITE $UBUNTU_SUITE-updates $UBUNTU_SUITE-security}"
-UBUNTU_COMPONENTS="${UBUNTU_COMPONENTS:-main universe}"
+# ---- fetching genuine target .debs to augment the SDK sysroot -----------
+# Supplies $DEB_ARCH system libraries that the cross toolchains lack, without
+# touching the host (amd64) sysroot. The apt source MUST match the SDK's glibc
+# generation, or libraries built against a newer glibc drag in symbols the SDK's
+# libc.so lacks (e.g. noble's libnl references __isoc23_strtoul@GLIBC_2.38, which
+# Debian-bookworm glibc 2.36 does not export -> lld --no-allow-shlib-undefined
+# rejects the link). So:
+#   arm64  -> Ubuntu noble (its Swift SDK sysroot is noble-glibc based)
+#   armhf  -> Debian bookworm (the armhf-debian Swift SDK is bookworm-glibc based)
+# The mirror layout (dists/<suite>/<component>/binary-<arch>/Packages.gz and the
+# pool/ Filename paths) is identical for Debian and Ubuntu, so the same fetch
+# code drives both. Override any of these explicitly for a different base.
+case "$DEB_ARCH" in
+  armhf) _def_mirror=http://deb.debian.org/debian
+         # base bookworm has every lib we pull; deb.debian.org serves no
+         # bookworm-updates/main/binary-armhf index (404), so don't list it.
+         _def_pockets="bookworm"
+         _def_components=main ;;
+  *)     _def_mirror=http://ports.ubuntu.com/ubuntu-ports
+         _def_pockets="noble noble-updates noble-security"
+         _def_components="main universe" ;;
+esac
+PORTS_MIRROR="${PORTS_MIRROR:-$_def_mirror}"
+UBUNTU_POCKETS="${UBUNTU_POCKETS:-$_def_pockets}"
+UBUNTU_COMPONENTS="${UBUNTU_COMPONENTS:-$_def_components}"
 
 # _ports_index : ensure the merged $DEB_ARCH Packages index exists; echo its
-# path. The index + cache are arch-tagged so switching DEB_ARCH can't reuse a
-# stale other-arch index.
+# path. The merged index is keyed by arch AND a hash of the apt source (mirror +
+# pockets + components), so switching DEB_ARCH or pointing at a different suite
+# (e.g. a separate fetch of a newer linux-libc-dev from trixie) builds its own
+# index instead of silently reusing a stale one.
 _ports_index() {
-  local idx="$WORK_DIR/Packages.$DEB_ARCH.merged"
+  local tag; tag="$(printf '%s|%s|%s' "$PORTS_MIRROR" "$UBUNTU_POCKETS" "$UBUNTU_COMPONENTS" | cksum | cut -d' ' -f1)"
+  local idx="$WORK_DIR/Packages.$DEB_ARCH.$tag.merged"
   [ -s "$idx" ] && { printf '%s' "$idx"; return; }
   local cache="$WORK_DIR/ports-cache"; mkdir -p "$cache"
   : > "$idx"
