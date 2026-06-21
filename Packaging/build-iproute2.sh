@@ -18,6 +18,17 @@ msg "Building iproute2 ($DEB_ARCH) version $VER"
 # for -rpath-link resolution); nothing from the host sysroot is used.
 overlay="$WORK_DIR/iproute2-sysroot"
 rm -rf "$overlay"; mkdir -p "$overlay"
+# iproute2 is a plain gcc-built C daemon that runs on the noble armhf TARGET and
+# has no tie to the bookworm Swift SDK. Source its overlay libs from noble (the
+# runtime distro) regardless of where common.sh points armhf for the SDK augment,
+# so package names (libelf1t64) and lib paths match the system it runs on. The
+# suite-hashed _ports_index lets this noble index coexist with the bookworm
+# augment index. arm64 already defaults to noble.
+if [ "$DEB_ARCH" = armhf ]; then
+  PORTS_MIRROR=http://ports.ubuntu.com/ubuntu-ports
+  UBUNTU_POCKETS="noble noble-updates noble-security"
+  UBUNTU_COMPONENTS="main universe"
+fi
 # libelf1 was renamed libelf1t64 in noble (64-bit time_t transition).
 fetch_ports_debs "$overlay" \
   libmnl0 libmnl-dev libelf1t64 libelf-dev libselinux1 libselinux1-dev \
