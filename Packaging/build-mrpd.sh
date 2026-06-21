@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Build the mrpd .deb (Swift, arm64, release, statically-linked Swift stdlib).
+# Build the mrpd .deb (Swift, cross-compiled for DEB_ARCH, release, statically-linked Swift stdlib).
 # Produces /usr/sbin/mrpd plus the portmon and pmctool helpers.
 set -euo pipefail
 . "$(dirname "$0")/common.sh"
 
 cd "$SWIFTMRP_DIR"
 
-# The cross SDK (6.3-RELEASE) was built with Swift 6.3; a different default
-# compiler (e.g. 6.3.2) cannot import its stdlib. Build with a matching
-# swiftly toolchain. Override the version with SWIFT_TOOLCHAIN.
-SWIFT_TOOLCHAIN="${SWIFT_TOOLCHAIN:-6.3.0}"
+# Build with the swiftly toolchain that matches the cross SDK: a different
+# compiler cannot import the SDK's stdlib. common.sh sets SWIFT_TOOLCHAIN per
+# arch (arm64 -> 6.3.0 for the 6.3-RELEASE artifactbundle; armhf -> 6.3.2 for
+# the armhf-debian SDK). Override the version with SWIFT_TOOLCHAIN.
 tc_bin="$HOME/.local/share/swiftly/toolchains/$SWIFT_TOOLCHAIN/usr/bin"
 if [ -d "$tc_bin" ]; then
   export PATH="$tc_bin:$PATH"
@@ -55,19 +55,32 @@ msg "Building $PKG (Swift / $DEB_ARCH / $BUILD_CONFIG / static stdlib) version $
 # via a systemd drop-in below, not baked into the shared Configs/mrpd.service.
 # SDK selector. arm64 uses a modern artifactbundle SDK (--swift-sdk <id>). The
 # armhf path uses the legacy destination JSON from swift-embedded-linux/armhf-
-# debian (set SWIFT_DESTINATION_JSON to its …-armv7/debian-bookworm.json). That
+# debian (set SWIFT_DESTINATION_JSON to its …-armv7/debian-bookworm-static.json
+# — the -static variant whose resource-dir points at usr/lib/swift_static, which
+# is where --static-swift-stdlib's static-stdlib-args.lnk lives). That
 # Debian-bookworm SDK's older glibc is forward-compatible with the Ubuntu-noble
 # armhf target once --static-swift-stdlib removes the Swift stdlib from the
 # dynamic linkage; the remaining non-glibc deps (libsystemd/liburing/libnl/
 # jemalloc) resolve by soname on-target.
+extra_link_args=()
 if [ -n "${SWIFT_DESTINATION_JSON:-}" ]; then
   [ -f "$SWIFT_DESTINATION_JSON" ] || die "SWIFT_DESTINATION_JSON not found: $SWIFT_DESTINATION_JSON"
   sdk_sel=(--destination "$SWIFT_DESTINATION_JSON")
+  # Relax lld's --no-allow-shlib-undefined for the armhf link. The SDK sysroot
+  # ships Debian-bookworm glibc (2.36), but augment-sysroot overlays Ubuntu-noble
+  # libnl, built with GCC 13+ so it references the C23 __isoc23_* scanf/strtol
+  # variants (__isoc23_strtoul@GLIBC_2.38 etc). bookworm's libc.so lacks those,
+  # so the strict check rejects the link even though the symbols are undefined in
+  # libnl (linked by soname), not in our binary. The target runs noble glibc
+  # (2.39), where they resolve at runtime — same forward-compat basis as the
+  # static-stdlib choice above. arm64's noble sysroot already has them, so this
+  # is armhf-only and the strict check stays on there.
+  extra_link_args+=(-Xlinker --allow-shlib-undefined)
 else
   [ -n "$SWIFT_SDK" ] || die "no Swift SDK: set SWIFT_SDK ($DEB_ARCH artifactbundle id) or SWIFT_DESTINATION_JSON (armhf)"
   sdk_sel=(--swift-sdk "$SWIFT_SDK")
 fi
-build_args=(-c "$BUILD_CONFIG" "${sdk_sel[@]}" --static-swift-stdlib)
+build_args=(-c "$BUILD_CONFIG" "${sdk_sel[@]}" --static-swift-stdlib "${extra_link_args[@]}")
 if [ -n "${CONSTRAINED:-}" ]; then
   msg "CONSTRAINED profile: REST API off, -Osize (small-RAM/flash target)"
   build_args+=(-Xswiftc -Osize)
@@ -100,7 +113,7 @@ install -D -m0755 "$SWIFTMRP_DIR/Tools/mrp" "$stage/usr/bin/mrp"
 install -D -m0755 "$SWIFTMRP_DIR/Tools/atu-snapshot.py" "$stage/usr/bin/atu-snapshot"
 
 # Strip symbols/debug info — static Swift stdlib makes these binaries ~50M each
-# otherwise. Use the cross strip so it understands arm64 objects. Skipped when
+# otherwise. Use the cross strip so it understands the target-arch objects. Skipped when
 # NOSTRIP=1 (debug builds, or release+symbols) so perf can resolve symbols.
 if [ -n "${NOSTRIP:-}" ]; then
   msg "NOSTRIP set — keeping symbols; binaries will be large (~70M each)"

@@ -1,5 +1,6 @@
 # Shared configuration and helpers for building Debian (.deb) packages for the
-# AVB/TSN switch stack, cross-compiled on this x86_64 Ubuntu host for arm64.
+# AVB/TSN switch stack, cross-compiled on this x86_64 Ubuntu host for DEB_ARCH
+# (arm64 or armhf).
 #
 # Sourced by the build-*.sh scripts; not meant to be run on its own.
 #
@@ -18,14 +19,30 @@ set -euo pipefail
 # Override any of them explicitly if your toolchain differs. Known targets:
 # arm64 (aarch64), armhf (32-bit armv7, arm-linux-gnueabihf).
 export DEB_ARCH="${DEB_ARCH:-arm64}"
+# Per-arch defaults: cross-triple, Linux `make ARCH=`, the Swift toolchain that
+# matches the SDK (swiftly id), and the Swift SDK selector. arm64 uses a modern
+# artifactbundle (SWIFT_SDK, --swift-sdk). armhf has no swift.org SDK: it uses
+# the swift-embedded-linux/armhf-debian destination JSON in /opt (SWIFT_
+# DESTINATION_JSON, --destination), built with Swift 6.3.2 — so its toolchain
+# must be 6.3.2, not the arm64 default of 6.3.0.
+_def_dest_json=""
 case "$DEB_ARCH" in
-  arm64) _def_triple=aarch64-linux-gnu;   _def_karch=arm64; _def_sdk="6.3-RELEASE_ubuntu_noble_aarch64" ;;
-  armhf) _def_triple=arm-linux-gnueabihf; _def_karch=arm;   _def_sdk="" ;; # supply SWIFT_SDK (no swift.org armv7 SDK)
+  arm64) _def_triple=aarch64-linux-gnu;   _def_karch=arm64; _def_sdk="6.3-RELEASE_ubuntu_noble_aarch64"; _def_tc=6.3.0 ;;
+  armhf) _def_triple=arm-linux-gnueabihf; _def_karch=arm;   _def_sdk=""; _def_tc=6.3.2
+         # Use the *-static.json destination: its resource-dir/rpaths point at
+         # usr/lib/swift_static, where static-stdlib-args.lnk lives. mrpd always
+         # builds with --static-swift-stdlib; the plain debian-bookworm.json
+         # (resource-dir usr/lib/swift) makes the driver look for that .lnk under
+         # usr/lib/swift/linux, where it does not exist -> fatal "not found".
+         _def_dest_json="/opt/swift-6.3.2-RELEASE-debian-bookworm-armv7/debian-bookworm-static.json" ;;
   *) printf 'ERROR: unsupported DEB_ARCH %s (known: arm64, armhf)\n' "$DEB_ARCH" >&2; exit 1 ;;
 esac
 export CROSS_TRIPLE="${CROSS_TRIPLE:-$_def_triple}"
 export CROSS_COMPILE="${CROSS_COMPILE:-${CROSS_TRIPLE}-}"
 export KERNEL_ARCH="${KERNEL_ARCH:-$_def_karch}"   # Linux `make ARCH=` (arm64|arm)
+export SWIFT_TOOLCHAIN="${SWIFT_TOOLCHAIN:-$_def_tc}"  # swiftly toolchain matching the SDK
+# armhf: default the destination JSON to the /opt SDK if present (overridable).
+[ -n "${SWIFT_DESTINATION_JSON:-}" ] || { [ -n "$_def_dest_json" ] && [ -f "$_def_dest_json" ] && export SWIFT_DESTINATION_JSON="$_def_dest_json"; }
 # Swift cross SDK (see `swift sdk list`); MUST match DEB_ARCH. swift.org ships no
 # 32-bit ARM Linux SDK, so for armhf set SWIFT_SDK to a community/self-built
 # armv7 SDK (e.g. swift-embedded-linux/armhf-debian). Regenerate the aarch64 one
