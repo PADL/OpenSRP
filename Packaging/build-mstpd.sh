@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Build the mstpd .deb (Multiple Spanning Tree Protocol daemon), cross-compiled
-# for arm64. Source is cloned from upstream HEAD.
+# for the target arch (DEB_ARCH; arm64 or armhf). Source is cloned from upstream HEAD.
 set -euo pipefail
 . "$(dirname "$0")/common.sh"
 
 src="$(git_checkout mstpd "$MSTPD_GIT" "$MSTPD_REF")"
 
 VER="$(resolve_version "$src" "${MSTPD_BASE_VERSION:-0.2.0}")"
-msg "Building mstpd (arm64) version $VER"
+msg "Building mstpd ($DEB_ARCH) version $VER"
 
 # mstpd is autotools-based: generate configure, then cross-configure + build.
 ( cd "$src"

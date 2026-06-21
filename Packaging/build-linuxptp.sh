@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # Build the linuxptp .deb (ptp4l/phc2sys/pmc/... from the PADL fork),
-# cross-compiled for arm64. Ships ptp4l.service and /etc/gPTP.cfg.
+# cross-compiled for the target arch (DEB_ARCH). Ships ptp4l.service and /etc/gPTP.cfg.
 set -euo pipefail
 . "$(dirname "$0")/common.sh"
 
 src="$(git_checkout linuxptp "$LINUXPTP_GIT" "$LINUXPTP_REF")"
 
 VER="$(resolve_version "$src" "${LINUXPTP_BASE_VERSION:-4.4}")"
-msg "Building linuxptp (arm64) version $VER"
+msg "Building linuxptp ($DEB_ARCH) version $VER"
 
 # incdefs.sh probes for optional libraries (nettle/gnutls/gnupg/openssl for PTP
 # security, libcap). With a cross CC it still finds the *headers* under the host
-# multiarch /usr/include, but the matching arm64 shared libs aren't in the cross
+# multiarch /usr/include, but the matching target-arch shared libs aren't in the cross
 # sysroot, so the link fails. Drop those features for the cross build (none are
 # needed for a gPTP switch). Override the list via LINUXPTP_DROP_FEATURES.
 INCDEFS="$(CC="${CROSS_COMPILE}gcc" "$src/incdefs.sh")"

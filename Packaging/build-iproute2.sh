@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the iproute2 .deb (ip/tc/bridge/...) from the PADL fork, cross-compiled
-# for arm64. The brport-filter-stream-reserved branch carries the patched
+# for the target arch (DEB_ARCH). The brport-filter-stream-reserved branch carries the patched
 # `bridge` needed by the SRP stream-reserved port filtering.
 #
 # This package is named "iproute2" and replaces the stock distro package.
@@ -10,10 +10,10 @@ set -euo pipefail
 src="$(git_checkout iproute2 "$IPROUTE2_GIT" "$IPROUTE2_REF")"
 
 VER="$(resolve_version "$src" "${IPROUTE2_BASE_VERSION:-7.0.0}")"
-msg "Building iproute2 (arm64) version $VER"
+msg "Building iproute2 ($DEB_ARCH) version $VER"
 
 # configure enables libmnl/libelf/libselinux from the (arch-independent) host
-# headers, so the build needs the matching arm64 libraries to link against.
+# headers, so the build needs the matching target-arch libraries to link against.
 # Supply them from ports.ubuntu.com into a local overlay (incl. transitive deps
 # for -rpath-link resolution); nothing from the host sysroot is used.
 overlay="$WORK_DIR/iproute2-sysroot"
