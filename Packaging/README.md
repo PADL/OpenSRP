@@ -46,6 +46,43 @@ swiftly install 6.3.0      # toolchain matching the SDK
 ./augment-sysroot.sh       # adds arm64 liburing + libsystemd to the SDK sysroot
 ```
 
+### Building for armhf (32-bit ARM)
+
+`DEB_ARCH=armhf` targets the 32-bit silicon. Swift ships no official 32-bit ARM
+Linux SDK, so mrpd builds against a **self-built Ubuntu-noble armv7 SDK** from
+[swift-embedded-linux/armhf-debian](https://github.com/swift-embedded-linux/armhf-debian),
+installed at `/opt/swift-6.3.2-RELEASE-ubuntu-noble-armv7/` and selected
+automatically (legacy `--destination`, via `SWIFT_DESTINATION_JSON`). Building
+against a *native noble* SDK — rather than an older Debian-bookworm one bridged by
+glibc forward-compat — means the binary links noble glibc 2.39 directly, with no
+lib overlay and no kernel-uapi graft. Build the SDK once (needs Docker
+multi-platform + host Swift 6.3.2):
+
+```sh
+git clone https://github.com/swift-embedded-linux/armhf-debian && cd armhf-debian
+./build-sysroot.sh ubuntu noble
+STAGING_DIR=/src/sysroot-ubuntu-noble SWIFT_VERSION=6.3.2 SWIFT_TARGET_ARCH=armv7 \
+  STATIC_SWIFT_STDLIB=1 ./build-in-container.sh
+SWIFT_TARGET_ARCH=armv7 ./build-linux-cross-sdk.sh swift-6.3.2-RELEASE ubuntu-noble
+sudo tar -xzf artifacts/swift-6.3.2-RELEASE-ubuntu-noble-armv7.tar.gz -C /opt
+```
+
+Two gotchas if you reproduce this: the host `qemu-arm` binfmt must carry the `F`
+flag or armhf containers fail with `exec /bin/bash: no such file` — fix with
+`docker run --privileged --rm tonistiigi/binfmt --uninstall qemu-arm,qemu-armeb`
+then `… --install arm` (no host sudo; `flags` should read `POCF`). And
+`STAGING_DIR` must be the **absolute** in-container path (`/src/...`): clang
+validates `--gcc-install-dir` against the current dir, which breaks on a relative
+sysroot. Then build as usual:
+
+```sh
+DEB_ARCH=armhf ./augment-sysroot.sh   # noble armhf liburing + libnl (no overlays)
+DEB_ARCH=armhf ./build-mrpd.sh
+```
+
+The resulting binary requires glibc ≥ 2.38 on the target (i.e. it is noble-specific
+by design — it no longer pretends to be bookworm).
+
 No `rpmbuild` / `mock` is involved — these are `.deb`s built by repackaging the
 cross-compiled binaries (the cross toolchains do the compiling, `dpkg-deb`
 just assembles the archive).
@@ -93,7 +130,8 @@ Set as environment variables (see `common.sh` for the full list):
 |-------------------|--------------------------------------|-------------------------------|
 | `DEB_ARCH`        | `arm64`                              | target Debian architecture    |
 | `CROSS_COMPILE`   | `aarch64-linux-gnu-`                 | cross toolchain prefix        |
-| `SWIFT_SDK`       | `6.3-RELEASE_ubuntu_noble_aarch64`   | Swift cross SDK id            |
+| `SWIFT_SDK`       | `6.3-RELEASE_ubuntu_noble_aarch64`   | Swift cross SDK id (arm64)    |
+| `SWIFT_DESTINATION_JSON` | `/opt/swift-6.3.2-RELEASE-ubuntu-noble-armv7/ubuntu-noble-static.json` | armhf `--destination` SDK |
 | `SWIFT_TOOLCHAIN` | `6.3.0`                              | swiftly toolchain for mrpd    |
 | `MSTPD_GIT`       | `github.com/mstpd/mstpd.git`         | mstpd upstream                |
 | `LINUXPTP_GIT` / `LINUXPTP_REF` | `PADL/linuxptp` / `inferno` | linuxptp repo + branch    |
