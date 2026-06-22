@@ -29,6 +29,9 @@ Environment=MALLOC_CONF=narenas:2,background_thread:true,dirty_decay_ms:5000,muz
 Environment=SWIFT_IORING_QUEUE_ENTRIES=64
 EnvironmentFile=/etc/default/avb
 
+#ExecStartPre=/sbin/ip link set br0 type bridge mcast_vlan_snooping 1
+#ExecStartPre=/sbin/bridge vlan set dev br0 vid 1 mcast_querier on
+
 # configure MVRP hook
 ExecStartPre=/usr/sbin/nft add table bridge nat
 ExecStartPre=/usr/sbin/nft add chain bridge nat PREROUTING { type filter hook prerouting priority dstnat; policy accept; }
