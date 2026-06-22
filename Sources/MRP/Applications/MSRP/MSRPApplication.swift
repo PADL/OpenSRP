@@ -1051,7 +1051,7 @@ extension MSRPApplication {
             accumulatedLatency: accumulatedLatency
           )
           _logger
-            .debug(
+            .notice(
               "MSRP: propagating talker advertise \(talkerAdvertise) to port \(port)"
             )
           try participant.join(
@@ -1079,7 +1079,7 @@ extension MSRPApplication {
             failureCode: error.failureCode
           )
           _logger
-            .debug(
+            .notice(
               "MSRP: propagating talker failed \(talkerFailed) on port \(port), error \(error)"
             )
           try participant.join(
@@ -1101,7 +1101,7 @@ extension MSRPApplication {
           failureCode: failureInformation!.failureCode
         )
         _logger
-          .debug(
+          .notice(
             "MSRP: propagating talker failed \(talkerFailed) to port \(port), transitive"
           )
         try participant.join(
@@ -1543,6 +1543,38 @@ extension MSRPApplication {
     ) else { return nil }
 
     let streamID = talkerRegistration.1.streamID
+
+    // tripwire: a non-ready declaration toward the talker is the failure onset; dump the deciding inputs
+    if mergedDeclarationType != .listenerReady {
+      var listeners: [String] = []
+      if let port, let declarationType { listeners.append("\(port)=\(declarationType)(trigger)") }
+      var talkers: [String] = []
+      apply(for: contextIdentifier) { participant in
+        for l in participant.findAllAttributesUnchecked(
+          attributeType: MSRPAttributeType.listener.rawValue,
+          matching: .matchAnyIndex(streamID.id),
+          isolation: self
+        ) {
+          guard participant.port != port, participant.port != talkerRegistration.0.port,
+                let dt = try? MSRPDeclarationType(attributeSubtype: l.attributeSubtype) else { continue }
+          listeners.append("\(participant.port)=\(dt)")
+        }
+        for _ in participant.findAllAttributesUnchecked(
+          attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
+          matching: .matchAnyIndex(streamID.id),
+          isolation: self
+        ) { talkers.append("\(participant.port)=advertise") }
+        for _ in participant.findAllAttributesUnchecked(
+          attributeType: MSRPAttributeType.talkerFailed.rawValue,
+          matching: .matchAnyIndex(streamID.id),
+          isolation: self
+        ) { talkers.append("\(participant.port)=failed") }
+      }
+      _logger
+        .notice(
+          "MSRP non-ready listener declaration: streamID \(streamID) merged \(mergedDeclarationType) talkerFailed \(talkerRegistration.1 is MSRPTalkerFailedValue) talker \(talkerRegistration.0) listeners [\(listeners.joined(separator: ", "))] talkers [\(talkers.joined(separator: ", "))]"
+        )
+    }
 
     _logger
       .info(
