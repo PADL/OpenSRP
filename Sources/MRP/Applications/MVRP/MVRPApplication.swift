@@ -28,12 +28,6 @@ protocol MVRPAwareBridge<P>: Bridge where P: Port {
   // allow use of platform MVRP applicant (e.g. in-kernel Linux MVRP implementation)
   var hasLocalMVRPApplicant: Bool { get }
 
-  // the bridge's default PVID (native/untagged management VLAN), if any; MVRP
-  // must never add or remove this VLAN. Nonisolated/synchronous so the exclusion
-  // check adds no suspension point — and thus no reentrancy — to the indication
-  // handlers.
-  var defaultPVid: UInt16? { get }
-
   func register(vlan: VLAN, on port: P) async throws
   func deregister(vlan: VLAN, from port: P) async throws
 }
@@ -150,15 +144,14 @@ public actor MVRPApplication<P: Port>: BaseApplication, BaseApplicationEventObse
   }
 
   // Never let MVRP add/remove a port's PVID (native VLAN) or operator-excluded VLANs.
-  private func _isVlanExcluded(
-    _ vlan: VLAN,
-    port: P,
-    bridge: any MVRPAwareBridge<P>
-  ) -> Bool {
-    if _vlanExclusions.contains(vlan) { return true }
-    if let pvid = port.pvid, vlan.vid == pvid { return true }
-    if let defaultPVid = bridge.defaultPVid, vlan.vid == defaultPVid { return true }
-    return false
+  private func _isVlanExcluded(_ vlan: VLAN, port: P) -> Bool {
+    if _vlanExclusions.contains(vlan) {
+      true
+    } else if let pvid = port.pvid {
+      vlan.vid == pvid
+    } else {
+      false
+    }
   }
 
   public func periodic(for contextIdentifier: MAPContextIdentifier?) async throws {
@@ -195,7 +188,7 @@ extension MVRPApplication {
     switch attributeType {
     case .vid:
       let vlan = (attributeValue as! VLAN)
-      guard !_isVlanExcluded(vlan, port: port, bridge: bridge) else {
+      guard !_isVlanExcluded(vlan, port: port) else {
         throw MRPError.doNotPropagateAttribute
       }
       guard !bridge.hasLocalMVRPApplicant || eventSource != .local
@@ -230,7 +223,7 @@ extension MVRPApplication {
     switch attributeType {
     case .vid:
       let vlan = (attributeValue as! VLAN)
-      guard !_isVlanExcluded(vlan, port: port, bridge: bridge) else {
+      guard !_isVlanExcluded(vlan, port: port) else {
         throw MRPError.doNotPropagateAttribute
       }
       guard !bridge.hasLocalMVRPApplicant || eventSource != .local

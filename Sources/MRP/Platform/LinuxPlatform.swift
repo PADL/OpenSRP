@@ -509,10 +509,6 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   private let _bridgeName: String
   private var _bridgeIndex: Int = 0
   private var _bridgePort: P?
-  // The bridge's default PVID, mirrored into nonisolated storage so MVRP's
-  // exclusion check can read it synchronously — no actor hop, and therefore no
-  // suspension point (reentrancy window) in the MVRP indication handlers.
-  private let _defaultPVid = Mutex<UInt16?>(nil)
   // Per-port tagged VLANs learned from RTM_NEWVLAN/DELVLAN after the initial
   // dump (kernel-MVRP or manual `bridge vlan add`). _rtnl is a frozen snapshot
   // that won't reflect later changes, so LinuxPort.vlans merges this in. Keyed
@@ -568,8 +564,6 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     if port._isBridgeSelf, port._rtnl.index == _bridgeIndex {
       if case .new = linkMessage {
         _bridgePort = port
-        // Don't clobber the AF_BRIDGE-seeded value with this AF_UNSPEC notification's nil.
-        if let pvid = port._pvid { _defaultPVid.withLock { $0 = pvid } }
       } else {
         _logger.debug("LinuxBridge: bridge device itself removed")
         throw Errno.noSuchAddressOrDevice
@@ -633,18 +627,13 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
         if map[vlandb.ifIndex]?.isEmpty == true { map[vlandb.ifIndex] = nil }
       }
     }
-    // Keep the per-port PVID live (and the bridge default when it is the bridge-self).
+    // Keep the per-port PVID live.
     if isNew, let pvid = vlandb.entries.first(where: { $0.isPVID })?.vid {
       _portPVID.withLock { $0[vlandb.ifIndex] = pvid }
-      if vlandb.ifIndex == _bridgeIndex { _defaultPVid.withLock { $0 = pvid } }
     }
     _logger.debug(
       "LinuxBridge: VLAN \(isNew ? "new" : "del") on ifindex \(vlandb.ifIndex): \(vlandb.entries)"
     )
-  }
-
-  public nonisolated var defaultPVid: UInt16? {
-    _defaultPVid.withLock { $0 }
   }
 
   public func getVlans(controller: isolated MRPController<P>) async -> Set<VLAN> {
@@ -773,7 +762,6 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   public func run(controller: MRPController<P>) async throws {
     _bridgePort = try await _getBridgePort(name: _bridgeName)
     _bridgeIndex = _bridgePort!._rtnl.index
-    _defaultPVid.withLock { $0 = _bridgePort?._pvid }
 
     try _nlLinkSocket.subscribeLinks()
     try _nlLinkSocket.subscribeTC()
