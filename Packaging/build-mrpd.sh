@@ -139,6 +139,16 @@ install -D -m0644 "$SWIFTMRP_DIR/Configs/avb.target" \
   "$stage/lib/systemd/system/avb.target"
 # Shared bridge/interface configuration sourced by mrpd.service and ptp4l.service.
 install -D -m0644 "$SWIFTMRP_DIR/Configs/avb.default" "$stage/etc/default/avb"
+# The CONSTRAINED binary is built without the RestAPI trait, so its mrpd does
+# not understand --rest-server-port. The committed avb.default enables it
+# (MRPD_OPTS="--rest-server-port 80"); shipping that unchanged would feed the
+# minimal mrpd an unknown flag and it would fail to start. Disable the REST
+# server in the config the minimal package ships.
+if [ -n "${CONSTRAINED:-}" ]; then
+  sed -i \
+    -e 's|^MRPD_OPTS=.*|# REST API not compiled into the minimal build; leave empty.\nMRPD_OPTS=""|' \
+    "$stage/etc/default/avb"
+fi
 
 # /etc/default/avb is configuration — preserve local edits across upgrades.
 install -d "$stage/DEBIAN"
