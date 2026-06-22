@@ -406,7 +406,8 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
   }
 
   public var pvid: UInt16? {
-    _pvid
+    // Live PVID, falling back to the frozen AF_BRIDGE snapshot.
+    _bridge?._portPVID.withLock { $0[id] } ?? _pvid
   }
 
   public var vlans: Set<VLAN> {
@@ -517,6 +518,8 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   // that won't reflect later changes, so LinuxPort.vlans merges this in. Keyed
   // by port ifindex; a Mutex so LinuxPort.vlans can read it synchronously.
   let _portTaggedVLANs = Mutex<[Int: Set<UInt16>]>([:])
+  // Per-port PVID by ifindex; seeded from the AF_BRIDGE dump, kept live by VLAN DB.
+  let _portPVID = Mutex<[Int: UInt16]>([:])
   private let _portNotificationChannel = AsyncChannel<PortNotification<P>>()
   private let _rxPacketsChannel = AsyncThrowingChannel<(P.ID, IEEE802Packet), Error>()
   private var _linkLocalRegistrations = Set<FilterRegistration>()
@@ -565,7 +568,8 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     if port._isBridgeSelf, port._rtnl.index == _bridgeIndex {
       if case .new = linkMessage {
         _bridgePort = port
-        _defaultPVid.withLock { $0 = port._pvid }
+        // Don't clobber the AF_BRIDGE-seeded value with this AF_UNSPEC notification's nil.
+        if let pvid = port._pvid { _defaultPVid.withLock { $0 = pvid } }
       } else {
         _logger.debug("LinuxBridge: bridge device itself removed")
         throw Errno.noSuchAddressOrDevice
@@ -580,6 +584,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
         try _cancelLinkLocalRxTask(port: port)
         _portPropertiesCache[port.id] = nil
         _portTaggedVLANs.withLock { $0[port.id] = nil }
+        _portPVID.withLock { $0[port.id] = nil }
         portNotification = .removed(port)
       }
     } else {
@@ -627,6 +632,11 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
         map[vlandb.ifIndex]?.subtract(taggedVids)
         if map[vlandb.ifIndex]?.isEmpty == true { map[vlandb.ifIndex] = nil }
       }
+    }
+    // Keep the per-port PVID live (and the bridge default when it is the bridge-self).
+    if isNew, let pvid = vlandb.entries.first(where: { $0.isPVID })?.vid {
+      _portPVID.withLock { $0[vlandb.ifIndex] = pvid }
+      if vlandb.ifIndex == _bridgeIndex { _defaultPVid.withLock { $0 = pvid } }
     }
     _logger.debug(
       "LinuxBridge: VLAN \(isNew ? "new" : "del") on ifindex \(vlandb.ifIndex): \(vlandb.entries)"
@@ -763,6 +773,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   public func run(controller: MRPController<P>) async throws {
     _bridgePort = try await _getBridgePort(name: _bridgeName)
     _bridgeIndex = _bridgePort!._rtnl.index
+    _defaultPVid.withLock { $0 = _bridgePort?._pvid }
 
     try _nlLinkSocket.subscribeLinks()
     try _nlLinkSocket.subscribeTC()
@@ -794,6 +805,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
 
     let ports = try await _getMemberPorts()
     for port in ports {
+      if let pvid = port._pvid { _portPVID.withLock { $0[port.id] = pvid } }
       await _portNotificationChannel.send(.added(port))
       if !_portExclusions.contains(port.name) {
         try _addLinkLocalRxTask(port: port)

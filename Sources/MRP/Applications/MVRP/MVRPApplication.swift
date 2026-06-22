@@ -149,13 +149,14 @@ public actor MVRPApplication<P: Port>: BaseApplication, BaseApplicationEventObse
     )
   }
 
-  // The bridge's default PVID (the native/untagged management VLAN, e.g. VID 1)
-  // is statically provisioned and must never be added or removed by MVRP: an
-  // MVRP Leave/LeaveAll from a peer that doesn't declare the native VLAN would
-  // otherwise strip the PVID and black-hole the management interface. Treat it
-  // as implicitly excluded, alongside any operator-configured --exclude-vlan.
-  private func _isVlanExcluded(_ vlan: VLAN, bridge: any MVRPAwareBridge<P>) -> Bool {
+  // Never let MVRP add/remove a port's PVID (native VLAN) or operator-excluded VLANs.
+  private func _isVlanExcluded(
+    _ vlan: VLAN,
+    port: P,
+    bridge: any MVRPAwareBridge<P>
+  ) -> Bool {
     if _vlanExclusions.contains(vlan) { return true }
+    if let pvid = port.pvid, vlan.vid == pvid { return true }
     if let defaultPVid = bridge.defaultPVid, vlan.vid == defaultPVid { return true }
     return false
   }
@@ -194,7 +195,7 @@ extension MVRPApplication {
     switch attributeType {
     case .vid:
       let vlan = (attributeValue as! VLAN)
-      guard !_isVlanExcluded(vlan, bridge: bridge) else {
+      guard !_isVlanExcluded(vlan, port: port, bridge: bridge) else {
         throw MRPError.doNotPropagateAttribute
       }
       guard !bridge.hasLocalMVRPApplicant || eventSource != .local
@@ -229,7 +230,7 @@ extension MVRPApplication {
     switch attributeType {
     case .vid:
       let vlan = (attributeValue as! VLAN)
-      guard !_isVlanExcluded(vlan, bridge: bridge) else {
+      guard !_isVlanExcluded(vlan, port: port, bridge: bridge) else {
         throw MRPError.doNotPropagateAttribute
       }
       guard !bridge.hasLocalMVRPApplicant || eventSource != .local
