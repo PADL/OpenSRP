@@ -89,6 +89,7 @@ rm -rf "$stage"; mkdir -p "$stage"
 install -D -m0755 "$BIN/mrpd"    "$stage/usr/sbin/mrpd"
 install -D -m0755 "$BIN/portmon" "$stage/usr/bin/portmon"
 install -D -m0755 "$BIN/pmctool" "$stage/usr/bin/pmctool"
+install -D -m0755 "$BIN/mstptool" "$stage/usr/bin/mstptool"
 # NetLinkSwift diagnostic tools (built as mrpd target deps; see Package.swift
 # PlatformTargetDependencies). Useful on the target for inspecting bridge/VLAN/
 # FDB/MDB state, e.g. nlmonitor to watch RTM_NEWVLAN notifications.
@@ -107,7 +108,7 @@ install -D -m0755 "$SWIFTMRP_DIR/Tools/atu-snapshot.py" "$stage/usr/bin/atu-snap
 if [ -n "${NOSTRIP:-}" ]; then
   msg "NOSTRIP set — keeping symbols; binaries will be large (~70M each)"
 else
-  for b in usr/sbin/mrpd usr/bin/portmon usr/bin/pmctool \
+  for b in usr/sbin/mrpd usr/bin/portmon usr/bin/pmctool usr/bin/mstptool \
            usr/bin/nlmonitor usr/bin/nldump usr/bin/nltool; do
     "${CROSS_COMPILE}strip" --strip-unneeded "$stage/$b"
   done

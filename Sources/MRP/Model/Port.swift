@@ -68,6 +68,26 @@ public enum PortNotification<P: Port>: Sendable {
   }
 }
 
+// MRP-native spanning-tree CIST status for a port; platforms map their STP source onto this
+// so MRP core stays independent of any particular STP implementation.
+public enum STPPortRole: Sendable {
+  case disabled, root, designated, alternate, backup, master
+}
+
+public enum STPPortState: Sendable {
+  case disabled, listening, learning, forwarding, blocking
+}
+
+public struct STPPortStatus: Sendable {
+  public let role: STPPortRole
+  public let state: STPPortState
+
+  public init(role: STPPortRole, state: STPPortState) {
+    self.role = role
+    self.state = state
+  }
+}
+
 public enum SRClassPriorityMapNotification<P: Port>: Sendable {
   case added((P.ID, SRClassPriorityMap))
   case removed((P.ID, SRClassPriorityMap))

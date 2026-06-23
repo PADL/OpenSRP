@@ -90,6 +90,8 @@ struct MockBridge: MRP.Bridge, CustomStringConvertible {
   var description: String { "MockBridge" }
   func getVlans(controller: isolated MRPController<P>) async -> Set<MRP.VLAN> { [] }
 
+  func getStpPortStatus(port: P) async -> STPPortStatus? { nil }
+
   func register(
     groupAddress: EUI48,
     etherType: UInt16,

@@ -55,6 +55,10 @@ PlatformProducts = [
     targets: ["portmon"]
   ),
   .executable(
+    name: "mstptool",
+    targets: ["mstptool"]
+  ),
+  .executable(
     name: "pmctool",
     targets: ["pmctool"]
   ),
@@ -87,6 +91,16 @@ PlatformTargets = [
     name: "pmctool",
     dependencies: ["PMC"],
     path: "Examples/pmctool",
+    cSettings: PlatformCSettings,
+    swiftSettings: PlatformSwiftSettings
+  ),
+  .executableTarget(
+    name: "mstptool",
+    dependencies: [
+      "MSTP",
+      .product(name: "Logging", package: "swift-log"),
+    ],
+    path: "Examples/mstptool",
     cSettings: PlatformCSettings,
     swiftSettings: PlatformSwiftSettings
   ),
@@ -144,12 +158,22 @@ let CommonTargets: [Target] = [
     linkerSettings: PlatformLinkerSettings
   ),
   .target(
+    name: "MSTP",
+    dependencies: [
+      "SocketAddress",
+    ] + PlatformTargetDependencies,
+    cSettings: PlatformCSettings,
+    swiftSettings: PlatformSwiftSettings,
+    linkerSettings: PlatformLinkerSettings
+  ),
+  .target(
     name: "MRP",
     dependencies: [
       "IEEE802",
       "AsyncExtensions",
       "SocketAddress",
       "PMC",
+      "MSTP",
       .product(name: "Algorithms", package: "swift-algorithms"),
       .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
       .product(name: "Logging", package: "swift-log"),
