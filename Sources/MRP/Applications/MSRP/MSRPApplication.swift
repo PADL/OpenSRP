@@ -1599,18 +1599,18 @@ extension MSRPApplication {
         ) {
           guard participant.port != port, participant.port != talkerRegistration.0.port,
                 let dt = try? MSRPDeclarationType(attributeSubtype: l.attributeSubtype) else { continue }
-          listeners.append("\(participant.port)=\(dt)")
+          listeners.append("\(participant.port)=\(dt)(\(l.isRegistered ? "reg" : "decl"))")
         }
-        for _ in participant.findAllAttributesUnchecked(
+        for t in participant.findAllAttributesUnchecked(
           attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
           matching: .matchAnyIndex(streamID.id),
           isolation: self
-        ) { talkers.append("\(participant.port)=advertise") }
-        for _ in participant.findAllAttributesUnchecked(
+        ) { talkers.append("\(participant.port)=advertise(\(t.isRegistered ? "reg" : "decl"))") }
+        for t in participant.findAllAttributesUnchecked(
           attributeType: MSRPAttributeType.talkerFailed.rawValue,
           matching: .matchAnyIndex(streamID.id),
           isolation: self
-        ) { talkers.append("\(participant.port)=failed") }
+        ) { talkers.append("\(participant.port)=failed(\(t.isRegistered ? "reg" : "decl"))") }
       }
       _logger
         .notice(
