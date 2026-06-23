@@ -1020,6 +1020,18 @@ extension MSRPApplication {
     try await apply(for: contextIdentifier) { participant in
       guard participant.port != port else { return } // don't propagate to source port
 
+      // Directionality (10.3, 35.2.4.3): a Talker registered on a port is declared only on
+      // other ports — never back onto a port that already has it registered (which would be
+      // declaring towards the talker source and reflect around an inter-switch link).
+      guard _findTalkerRegistration(for: talkerValue.streamID, participant: participant) == nil
+      else {
+        _logger
+          .notice(
+            "MSRP: not declaring talker stream \(talkerValue.streamID) on \(participant.port.name) which already has it registered (source \(port.name))"
+          )
+        return
+      }
+
       let port = participant.port
 
       // tripwire: declaring a Talker on a port that already has it registered is a MAP reflection
