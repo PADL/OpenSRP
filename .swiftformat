@@ -12,4 +12,8 @@
 --varattributes prev-line
 --disable andOperator
 --disable typeSugar
+--disable redundantSendable
+--disable docComments
+--disable wrapPropertyBodies
+--disable wrapFunctionBodies
 --swiftversion 5.10
