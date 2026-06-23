@@ -193,6 +193,8 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
   fileprivate let _maxFanInPorts: Int
   fileprivate let _maxSRClass: SRclassID
   fileprivate var _portStates: [P.ID: MSRPPortState<P>] = [:]
+  // tripwire: per-stream in-flight port stack to detect actor reentrancy in _onRegisterStreamIndication
+  private var _talkerIndicationInFlight: [MSRPStreamID: [String]] = [:]
   fileprivate let _mmrp: MMRPApplication<P>?
   fileprivate var _priorityMapNotificationTask: Task<(), Error>?
 
@@ -958,6 +960,21 @@ extension MSRPApplication {
   ) async throws {
     let declarationType = talkerValue.declarationType!
 
+    // tripwire: detect actor reentrancy on the same stream (interleave during an await)
+    _talkerIndicationInFlight[talkerValue.streamID, default: []].append(port.name)
+    if let inflight = _talkerIndicationInFlight[talkerValue.streamID], inflight.count > 1 {
+      _logger
+        .notice(
+          "MSRP REENTRANCY: stream \(talkerValue.streamID) register indication on port \(port.name) re-entered; in-flight ports \(inflight)"
+        )
+    }
+    defer {
+      _talkerIndicationInFlight[talkerValue.streamID]?.removeLast()
+      if _talkerIndicationInFlight[talkerValue.streamID]?.isEmpty == true {
+        _talkerIndicationInFlight[talkerValue.streamID] = nil
+      }
+    }
+
     guard await !_isMaxTalkerAttributesRegistered else {
       _logger
         .info(
@@ -971,6 +988,22 @@ extension MSRPApplication {
         "MSRP: register stream indication from port \(port) streamID \(talkerValue.streamID) declarationType \(declarationType) dataFrameParameters \(talkerValue.dataFrameParameters) isNew \(isNew) source \(eventSource)"
       )
 
+    // tripwire: in a loop-free single-talker topology a stream has exactly one registered Talker
+    if eventSource == .peer {
+      var registeredPorts: [String] = []
+      apply(for: contextIdentifier) { participant in
+        if _findTalkerRegistration(for: talkerValue.streamID, participant: participant) != nil {
+          registeredPorts.append(participant.port.name)
+        }
+      }
+      if registeredPorts.count > 1 {
+        _logger
+          .notice(
+            "MSRP DUPLICATE talker registration: stream \(talkerValue.streamID) registered on \(registeredPorts); this indication from \(port.name)"
+          )
+      }
+    }
+
     // Deregister the opposite talker type from the peer to ensure mutual exclusion
     if eventSource == .peer {
       let sourceParticipant = try findParticipant(for: contextIdentifier, port: port)
@@ -983,10 +1016,19 @@ extension MSRPApplication {
     }
 
     // TL;DR: propagate Talker declarations to other ports
+    let sourcePortName = port.name
     try await apply(for: contextIdentifier) { participant in
       guard participant.port != port else { return } // don't propagate to source port
 
       let port = participant.port
+
+      // tripwire: declaring a Talker on a port that already has it registered is a MAP reflection
+      if _findTalkerRegistration(for: talkerValue.streamID, participant: participant) != nil {
+        _logger
+          .notice(
+            "MSRP REFLECTION: declaring talker stream \(talkerValue.streamID) on port \(port.name) which already has it registered (source \(sourcePortName))"
+          )
+      }
 
       guard await !_shouldPruneTalkerDeclaration(
         port: port,
