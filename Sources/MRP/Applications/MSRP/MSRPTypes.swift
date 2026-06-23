@@ -27,7 +27,7 @@ enum MSRPDirection {
   case listener
 }
 
-public enum MSRPDeclarationType: Sendable {
+public enum MSRPDeclarationType: Sendable, Equatable {
   case talkerAdvertise
   case talkerFailed
   case listenerAskingFailed

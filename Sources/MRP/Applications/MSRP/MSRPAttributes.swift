@@ -78,6 +78,24 @@ private extension MSRPTalkerValue {
   }
 }
 
+extension MSRPTalkerValue {
+  // re-derive an Advertise/Failed declaration from this talker with a fresh accumulated latency
+  func makeAdvertise(accumulatedLatency: UInt32) -> MSRPTalkerAdvertiseValue {
+    MSRPTalkerAdvertiseValue(
+      streamID: streamID, dataFrameParameters: dataFrameParameters, tSpec: tSpec,
+      priorityAndRank: priorityAndRank, accumulatedLatency: accumulatedLatency
+    )
+  }
+
+  func makeFailed(accumulatedLatency: UInt32, failure: MSRPFailure) -> MSRPTalkerFailedValue {
+    MSRPTalkerFailedValue(
+      streamID: streamID, dataFrameParameters: dataFrameParameters, tSpec: tSpec,
+      priorityAndRank: priorityAndRank, accumulatedLatency: accumulatedLatency,
+      systemID: failure.systemID, failureCode: failure.failureCode
+    )
+  }
+}
+
 struct MSRPTalkerAdvertiseValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equatable, Hashable {
   let streamID: MSRPStreamID
   let dataFrameParameters: MSRPDataFrameParameters

@@ -48,7 +48,7 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
 
   var pvid: UInt16? { nil }
 
-  var vlans: Set<MRP.VLAN> { [] }
+  var vlans: Set<MRP.VLAN> { [VLAN(vid: 2)] }
 
   var macAddress: EUI48 { [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF] }
 
@@ -77,12 +77,54 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
   }
 }
 
+// Records the kernel-facing effects (CBS idleslope + FDB reservation entries) so
+// recompute tests can assert on convergence and idempotency.
+actor MSRPTestRecorder {
+  private(set) var cbs = [(port: Int, queue: UInt, idleSlope: Int)]()
+  private(set) var fdbRegister = [(mac: EUI48, vlan: VLAN?, ports: Set<Int>)]()
+  private(set) var fdbDeregister = [(mac: EUI48, vlan: VLAN?, ports: Set<Int>)]()
+
+  func recordCBS(port: Int, queue: UInt, idleSlope: Int) {
+    cbs.append((port, queue, idleSlope))
+  }
+
+  func recordFDBRegister(mac: EUI48, vlan: VLAN?, ports: Set<Int>) {
+    fdbRegister.append((mac, vlan, ports))
+  }
+
+  func recordFDBDeregister(mac: EUI48, vlan: VLAN?, ports: Set<Int>) {
+    fdbDeregister.append((mac, vlan, ports))
+  }
+}
+
+// is an attribute of this type declared (Applicant) on a port for the stream?
+// Free function (not a method) so it can be used inside _waitFor's @Sendable closure.
+private func _isDeclared(
+  _ msrp: MSRPApplication<MockPort>, _ attributeType: MSRPAttributeType,
+  _ streamID: MSRPStreamID, port: Int
+) async -> Bool {
+  guard let participant = try? await msrp.findParticipant(port: MockPort(id: port))
+  else { return false }
+  return await participant.findAllAttributes(
+    attributeType: attributeType.rawValue, matching: .matchAnyIndex(streamID.id)
+  ).contains(where: \.isDeclared)
+}
+
 struct MockBridge: MRP.Bridge, CustomStringConvertible {
   var notifications = AsyncEmptySequence<MRP.PortNotification<MockPort>>().eraseToAnyAsyncSequence()
   var rxPackets = AsyncEmptySequence<(Int, IEEE802Packet)>().eraseToAnyAsyncSequence()
+  var ports: Set<MockPort> = [MockPort(id: 0)]
+  var recorder = MSRPTestRecorder()
+
+  init() {}
+
+  init(ports: Set<MockPort>, recorder: MSRPTestRecorder) {
+    self.ports = ports
+    self.recorder = recorder
+  }
 
   func getPorts(controller: isolated MRPController<P>) async throws -> Set<MockPort> {
-    [MockPort(id: 0)]
+    ports
   }
 
   typealias P = MockPort
@@ -144,13 +186,42 @@ extension MockBridge: MSRPAwareBridge {
     sendSlope: Int,
     hiCredit: Int,
     loCredit: Int
-  ) async throws {}
+  ) async throws {
+    await recorder.recordCBS(port: port.id, queue: queue, idleSlope: idleSlope)
+  }
 
-  func getSRClassPriorityMap(port: P) async throws -> SRClassPriorityMap? { nil }
+  func getSRClassPriorityMap(port: P) async throws -> SRClassPriorityMap? {
+    [.A: .CA, .B: .EE]
+  }
 
   var srClassPriorityMapNotifications: AnyAsyncSequence<SRClassPriorityMapNotification<P>> {
     AsyncEmptySequence<SRClassPriorityMapNotification<P>>().eraseToAnyAsyncSequence()
   }
+}
+
+extension MockBridge: MMRPAwareBridge {
+  func register(
+    macAddress: EUI48,
+    vlan: VLAN?,
+    flags: MMRPRegistrationFlags,
+    on ports: Set<P>
+  ) async throws {
+    await recorder.recordFDBRegister(mac: macAddress, vlan: vlan, ports: Set(ports.map(\.id)))
+  }
+
+  func deregister(macAddress: EUI48, vlan: VLAN?, from ports: Set<P>) async throws {
+    await recorder.recordFDBDeregister(mac: macAddress, vlan: vlan, ports: Set(ports.map(\.id)))
+  }
+
+  func register(
+    serviceRequirement: MMRPServiceRequirementValue,
+    on ports: Set<P>
+  ) async throws {}
+
+  func deregister(
+    serviceRequirement: MMRPServiceRequirementValue,
+    from ports: Set<P>
+  ) async throws {}
 }
 
 final class MRPTests: XCTestCase {
@@ -2594,3 +2665,423 @@ private enum EnqueuedEvent<A: Application>: Equatable {
 }
 
 private typealias MSRPEnqueuedEvent = EnqueuedEvent<MSRPApplication<MockPort>>
+
+// MARK: - MSRP per-stream recompute tests
+
+extension MRPTests {
+  private func _makeRecomputeMSRP(portIDs: [Int]) async throws
+    -> (MRPController<MockPort>, MSRPApplication<MockPort>, MSRPTestRecorder)
+  {
+    let recorder = MSRPTestRecorder()
+    let ports = Set(portIDs.map { MockPort(id: $0) })
+    let bridge = MockBridge(ports: ports, recorder: recorder)
+    let controller = try await MRPController(
+      bridge: bridge,
+      logger: Logger(label: "com.padl.MRPTests.recompute")
+    )
+    let msrp = try await MSRPApplication(controller: controller)
+    try await msrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
+    return (controller, msrp, recorder)
+  }
+
+  private func _talkerAdvertise(
+    _ streamID: MSRPStreamID,
+    dest: EUI48 = [0x91, 0xE0, 0xF0, 0x00, 0x00, 0x01]
+  ) -> MSRPTalkerAdvertiseValue {
+    MSRPTalkerAdvertiseValue(
+      streamID: streamID,
+      dataFrameParameters: MSRPDataFrameParameters(destinationAddress: dest, vlanIdentifier: 2),
+      tSpec: MSRPTSpec(maxFrameSize: 64, maxIntervalFrames: 1),
+      priorityAndRank: MSRPPriorityAndRank(dataFramePriority: .CA, rank: false),
+      accumulatedLatency: 1000
+    )
+  }
+
+  private func _drive(
+    _ msrp: MSRPApplication<MockPort>,
+    port: Int,
+    attributeType: MSRPAttributeType,
+    value: some Value,
+    event: AttributeEvent,
+    subtype: MSRPAttributeSubtype? = nil
+  ) async throws {
+    let vectorAttribute = VectorAttribute(
+      leaveAllEvent: .NullLeaveAllEvent,
+      firstValue: AnyValue(value),
+      attributeEvents: [event],
+      applicationEvents: subtype.map { [$0.rawValue] }
+    )
+    let message = Message(attributeType: attributeType.rawValue, attributeList: [vectorAttribute])
+    let pdu = MRPDU(protocolVersion: 0, messages: [message])
+    // a non-local source MAC makes this a .peer registration
+    try await msrp.rx(
+      pdu: pdu,
+      for: MAPBaseSpanningTreeContext,
+      from: MockPort(id: port),
+      sourceMacAddress: [0x02, 0x00, 0x00, 0x00, 0x00, 0x0A]
+    )
+  }
+
+  @discardableResult
+  private func _waitFor(
+    timeoutMs: Int = 3000,
+    _ condition: @Sendable () async -> Bool
+  ) async -> Bool {
+    var waited = 0
+    while waited < timeoutMs {
+      if await condition() { return true }
+      try? await Task.sleep(nanoseconds: 10_000_000)
+      waited += 10
+    }
+    return await condition()
+  }
+
+  // talker on one port + a Ready listener on another -> reservation programmed on the
+  // listener port only (CBS idleslope + FDB entry), never on the talker's port.
+  func testRecomputeProgramsListenerReservationNoReflection() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0001)
+
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise,
+                     value: _talkerAdvertise(streamID), event: .JoinIn)
+    try await _drive(msrp, port: 1, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready)
+
+    let converged = await _waitFor { await recorder.cbs.contains { $0.port == 1 } }
+    XCTAssertTrue(converged, "expected a CBS reservation on the listener port (1)")
+
+    let cbs = await recorder.cbs
+    XCTAssertTrue(cbs.contains { $0.port == 1 && $0.idleSlope > 0 },
+                  "listener port should get a positive idleslope")
+    XCTAssertFalse(cbs.contains { $0.port == 0 },
+                   "talker port must never receive a reservation (reflection)")
+
+    let fdb = await recorder.fdbRegister
+    XCTAssertTrue(fdb.contains { $0.ports.contains(1) },
+                  "listener port should get a dynamic FDB reservation entry")
+    _ = controller
+  }
+
+  // re-running the recompute with unchanged registrations must not touch the kernel.
+  func testRecomputeIdempotentReapply() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0002)
+
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise,
+                     value: _talkerAdvertise(streamID), event: .JoinIn)
+    try await _drive(msrp, port: 1, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready)
+    _ = await _waitFor { await recorder.cbs.contains { $0.port == 1 } }
+
+    let cbsBefore = await recorder.cbs.count
+    let fdbBefore = await recorder.fdbRegister.count
+
+    // force several extra recomputes of the same, unchanged stream
+    for _ in 0..<3 { await msrp._streamDidUpdate(streamID) }
+    try? await Task.sleep(nanoseconds: 200_000_000)
+
+    let cbsAfter = await recorder.cbs.count
+    let fdbAfter = await recorder.fdbRegister.count
+    XCTAssertEqual(cbsAfter, cbsBefore, "idempotent recompute must not re-program CBS")
+    XCTAssertEqual(fdbAfter, fdbBefore, "idempotent recompute must not re-program FDB")
+    _ = controller
+  }
+
+  // the same stream advertised by a talker on two ports yields a single bound talker:
+  // exactly one listener-port reservation, and no reservation on either talker port.
+  func testRecomputeDuplicateTalkerSingleBoundTalker() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0, 1, 2])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0003)
+
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise,
+                     value: _talkerAdvertise(streamID), event: .JoinIn)
+    try await _drive(msrp, port: 1, attributeType: .talkerAdvertise,
+                     value: _talkerAdvertise(streamID), event: .JoinIn)
+    try await _drive(msrp, port: 2, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready)
+
+    let converged = await _waitFor { await recorder.cbs.contains { $0.port == 2 } }
+    XCTAssertTrue(converged, "expected a reservation on the listener port (2)")
+
+    let cbs = await recorder.cbs
+    XCTAssertFalse(cbs.contains { $0.port == 0 || $0.port == 1 },
+                   "neither talker port may receive a reservation")
+    _ = controller
+  }
+}
+
+// MARK: - MSRP recompute: review-driven regression tests
+
+extension MRPTests {
+  // ignore-subtype (don't-care) listener must not produce a reservation
+  func testRecomputeIgnoreSubtypeListenerGetsNoReservation() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0010)
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise,
+                     value: _talkerAdvertise(streamID), event: .JoinIn)
+    try await _drive(msrp, port: 1, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ignore)
+    try? await Task.sleep(nanoseconds: 300_000_000)
+    let cbs = await recorder.cbs
+    XCTAssertFalse(cbs.contains { $0.port == 1 },
+                   "an ignore-subtype listener must not get a reservation")
+    _ = controller
+  }
+
+  // removing and re-adding a port must drop its cached reservation so it reprograms
+  func testRecomputePortReaddReprogramsReservation() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0011)
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise,
+                     value: _talkerAdvertise(streamID), event: .JoinIn)
+    try await _drive(msrp, port: 1, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready)
+    _ = await _waitFor { await recorder.cbs.contains { $0.port == 1 } }
+    let before = await recorder.cbs.filter { $0.port == 1 }.count
+
+    try await msrp.didRemove(contextIdentifier: MAPBaseSpanningTreeContext,
+                             with: Set([MockPort(id: 1)]))
+    try await msrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext,
+                          with: Set([MockPort(id: 1)]))
+    try await _drive(msrp, port: 1, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready)
+
+    let reprogrammed = await _waitFor { await recorder.cbs.filter { $0.port == 1 }.count > before }
+    XCTAssertTrue(reprogrammed,
+                  "reservation must be reprogrammed after a port is removed and re-added")
+    _ = controller
+  }
+
+  // once a port also registers the talker, our prior declaration toward it must be withdrawn
+  func testRecomputeWithdrawsTalkerDeclarationWhenPortBecomesRegistrar() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0012)
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise,
+                     value: _talkerAdvertise(streamID), event: .JoinIn)
+    let declared = await _waitFor {
+      await _isDeclared(msrp, .talkerAdvertise, streamID, port: 1)
+    }
+    XCTAssertTrue(declared, "talker should be declared toward port 1")
+
+    try await _drive(msrp, port: 1, attributeType: .talkerAdvertise,
+                     value: _talkerAdvertise(streamID), event: .JoinIn)
+    let withdrawn = await _waitFor {
+      await !_isDeclared(msrp, .talkerAdvertise, streamID, port: 1)
+    }
+    XCTAssertTrue(withdrawn,
+                  "talker declaration on port 1 must be withdrawn once port 1 registers it")
+    _ = controller
+  }
+}
+
+extension MRPTests {
+  // two listener egress ports in different states: only the Ready one reserves idleslope;
+  // the AskingFailed one must not (regression for the global-merge over-reservation).
+  func testRecomputePerPortReservationMixedListenerStates() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0, 1, 2])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0020)
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise,
+                     value: _talkerAdvertise(streamID), event: .JoinIn)
+    try await _drive(msrp, port: 1, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready)
+    try await _drive(msrp, port: 2, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamID), event: .JoinIn,
+                     subtype: .askingFailed)
+
+    let converged = await _waitFor { await recorder.cbs.contains { $0.port == 1 && $0.idleSlope > 0 } }
+    XCTAssertTrue(converged, "ready listener port (1) should reserve idleslope")
+    try? await Task.sleep(nanoseconds: 200_000_000)
+
+    let cbs = await recorder.cbs
+    XCTAssertFalse(cbs.contains { $0.port == 2 && $0.idleSlope > 0 },
+                   "asking-failed listener port (2) must not reserve idleslope")
+    _ = controller
+  }
+}
+
+// MARK: - MSRP recompute: failed-talker, withdrawal, admission, port-removal
+
+extension MRPTests {
+  private func _talkerFailed(
+    _ streamID: MSRPStreamID,
+    dest: EUI48 = [0x91, 0xE0, 0xF0, 0x00, 0x00, 0x01]
+  ) -> MSRPTalkerFailedValue {
+    MSRPTalkerFailedValue(
+      streamID: streamID,
+      dataFrameParameters: MSRPDataFrameParameters(destinationAddress: dest, vlanIdentifier: 2),
+      tSpec: MSRPTSpec(maxFrameSize: 64, maxIntervalFrames: 1),
+      priorityAndRank: MSRPPriorityAndRank(dataFramePriority: .CA, rank: true),
+      accumulatedLatency: 1000,
+      systemID: MSRPSystemID(id: 0x1234),
+      failureCode: .insufficientBandwidth
+    )
+  }
+
+  // a Failed talker propagates Failed and reserves nothing even with a Ready listener
+  func testRecomputeTalkerFailedNoReservationAndPropagates() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0030)
+    try await _drive(msrp, port: 0, attributeType: .talkerFailed,
+                     value: _talkerFailed(streamID), event: .JoinIn)
+    try await _drive(msrp, port: 1, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready)
+    let propagated = await _waitFor {
+      await _isDeclared(msrp, .talkerFailed, streamID, port: 1)
+    }
+    XCTAssertTrue(propagated, "talkerFailed should propagate to the other port")
+    try? await Task.sleep(nanoseconds: 200_000_000)
+    let cbs = await recorder.cbs
+    XCTAssertFalse(cbs.contains { $0.port == 1 && $0.idleSlope > 0 },
+                   "a failed talker must not reserve idleslope")
+    _ = controller
+  }
+
+  // withdrawing the listener tears down its reservation (FDB deregistered)
+  func testRecomputeListenerWithdrawalTearsDownReservation() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0031)
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise,
+                     value: _talkerAdvertise(streamID), event: .JoinIn)
+    try await _drive(msrp, port: 1, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready)
+    _ = await _waitFor { await recorder.fdbRegister.contains { $0.ports.contains(1) } }
+    let deregBefore = await recorder.fdbDeregister.count
+
+    // re-declaring with a different subtype (.ignore) is treated by rx as an immediate leave
+    try await _drive(msrp, port: 1, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ignore)
+    let withdrawn = await _waitFor { await recorder.fdbDeregister.count > deregBefore }
+    XCTAssertTrue(withdrawn, "withdrawing the listener should deregister its FDB reservation")
+    _ = controller
+  }
+
+  // a talker that fails admission control on the egress is declared Failed, not Advertise
+  func testRecomputeBandwidthExceededDemotesToFailed() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0032)
+    let bigTalker = MSRPTalkerAdvertiseValue(
+      streamID: streamID,
+      dataFrameParameters: MSRPDataFrameParameters(
+        destinationAddress: [0x91, 0xE0, 0xF0, 0x00, 0x00, 0x02], vlanIdentifier: 2
+      ),
+      tSpec: MSRPTSpec(maxFrameSize: 1000, maxIntervalFrames: 1000),
+      priorityAndRank: MSRPPriorityAndRank(dataFramePriority: .CA, rank: false),
+      accumulatedLatency: 1000
+    )
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise, value: bigTalker, event: .JoinIn)
+    let failed = await _waitFor {
+      await _isDeclared(msrp, .talkerFailed, streamID, port: 1)
+    }
+    XCTAssertTrue(failed, "an unbridgeable talker must be declared talkerFailed on the egress")
+    let advertised = await _isDeclared(msrp, .talkerAdvertise, streamID, port: 1)
+    XCTAssertFalse(advertised, "should not also be advertised")
+    _ = controller
+  }
+
+  // gap probe: removing the talker's port should tear down the listener-port reservation
+  func testRecomputeTalkerPortRemovalWithdrawsReservation() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0033)
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise,
+                     value: _talkerAdvertise(streamID), event: .JoinIn)
+    try await _drive(msrp, port: 1, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready)
+    _ = await _waitFor { await recorder.fdbRegister.contains { $0.ports.contains(1) } }
+    let deregBefore = await recorder.fdbDeregister.count
+
+    try await msrp.didRemove(contextIdentifier: MAPBaseSpanningTreeContext,
+                             with: Set([MockPort(id: 0)]))
+    let withdrawn = await _waitFor(timeoutMs: 1500) {
+      await recorder.fdbDeregister.count > deregBefore
+    }
+    XCTAssertTrue(withdrawn, "removing the talker port should withdraw the listener reservation")
+    _ = controller
+  }
+}
+
+// MARK: - MSRP recompute: multi-listener / multi-talker / talker-type transitions
+
+extension MRPTests {
+  // three listener egress ports in ready / readyFailed / askingFailed: the first two reserve
+  // idleslope, the asking-failed one does not.
+  func testRecomputeThreeListenerStates() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0, 1, 2, 3])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0040)
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise,
+                     value: _talkerAdvertise(streamID), event: .JoinIn)
+    try await _drive(msrp, port: 1, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready)
+    try await _drive(msrp, port: 2, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamID), event: .JoinIn,
+                     subtype: .readyFailed)
+    try await _drive(msrp, port: 3, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamID), event: .JoinIn,
+                     subtype: .askingFailed)
+    _ = await _waitFor { await recorder.cbs.contains { $0.port == 2 && $0.idleSlope > 0 } }
+    try? await Task.sleep(nanoseconds: 250_000_000)
+    let cbs = await recorder.cbs
+    XCTAssertTrue(cbs.contains { $0.port == 1 && $0.idleSlope > 0 }, "ready reserves")
+    XCTAssertTrue(cbs.contains { $0.port == 2 && $0.idleSlope > 0 }, "readyFailed reserves")
+    XCTAssertFalse(cbs.contains { $0.port == 3 && $0.idleSlope > 0 }, "askingFailed does not reserve")
+    _ = controller
+  }
+
+  // two independent streams (talkers on different ingress ports) sharing one listener egress
+  // port: both reserve there, bound to their own talker, and neither talker port reserves.
+  func testRecomputeMultipleStreamsShareListenerPort() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0, 1, 2])
+    let sA = MSRPStreamID(0x0001_0000_0000_0041)
+    let sB = MSRPStreamID(0x0001_0000_0000_0042)
+    let macA: EUI48 = [0x91, 0xE0, 0xF0, 0x00, 0x00, 0x41]
+    let macB: EUI48 = [0x91, 0xE0, 0xF0, 0x00, 0x00, 0x42]
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise,
+                     value: _talkerAdvertise(sA, dest: macA), event: .JoinIn)
+    try await _drive(msrp, port: 1, attributeType: .talkerAdvertise,
+                     value: _talkerAdvertise(sB, dest: macB), event: .JoinIn)
+    try await _drive(msrp, port: 2, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: sA), event: .JoinIn, subtype: .ready)
+    try await _drive(msrp, port: 2, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: sB), event: .JoinIn, subtype: .ready)
+
+    let bothReserved = await _waitFor {
+      let onPort2 = await recorder.fdbRegister.filter { $0.ports.contains(2) }
+      return Set(onPort2.map { UInt64(eui48: $0.mac) }).count == 2
+    }
+    XCTAssertTrue(bothReserved, "both streams reserve FDB on the shared listener port (2)")
+    let fdb = await recorder.fdbRegister
+    XCTAssertFalse(fdb.contains { $0.ports.contains(0) || $0.ports.contains(1) },
+                   "no reservation on either talker port")
+    _ = controller
+  }
+
+  // a talker that flips Advertise -> Failed -> Advertise: the listener reservation is torn down
+  // when it fails and re-established when it recovers (peer mutual exclusion clears the opposite).
+  func testRecomputeTalkerAdvertiseFailedTransitions() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0043)
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise,
+                     value: _talkerAdvertise(streamID), event: .JoinIn)
+    try await _drive(msrp, port: 1, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready)
+    _ = await _waitFor { await recorder.fdbRegister.contains { $0.ports.contains(1) } }
+    let deregBefore = await recorder.fdbDeregister.count
+
+    // Advertise -> Failed
+    try await _drive(msrp, port: 0, attributeType: .talkerFailed,
+                     value: _talkerFailed(streamID), event: .JoinIn)
+    let torn = await _waitFor { await recorder.fdbDeregister.count > deregBefore }
+    XCTAssertTrue(torn, "advertise -> failed must withdraw the listener reservation")
+    let failedDeclared = await _isDeclared(msrp, .talkerFailed, streamID, port: 1)
+    XCTAssertTrue(failedDeclared, "failed talker should be propagated")
+
+    // Failed -> Advertise
+    let regBefore = await recorder.fdbRegister.filter { $0.ports.contains(1) }.count
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise,
+                     value: _talkerAdvertise(streamID), event: .JoinIn)
+    let reestablished = await _waitFor {
+      await recorder.fdbRegister.filter { $0.ports.contains(1) }.count > regBefore
+    }
+    XCTAssertTrue(reestablished, "failed -> advertise must re-establish the reservation")
+    _ = controller
+  }
+}
