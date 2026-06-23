@@ -1314,6 +1314,9 @@ extension MSRPApplication {
         matching: .matchAnyIndex(streamID.id),
         isolation: self
       ) {
+        // only registered (received) listener declarations merge toward the talker,
+        // never our own declared ones — declarations propagate towards registrars
+        guard listenerAttribute.isRegistered else { continue }
         guard let declarationType = try? MSRPDeclarationType(attributeSubtype: listenerAttribute
           .attributeSubtype)
         else { continue }
