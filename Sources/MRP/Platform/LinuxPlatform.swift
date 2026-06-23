@@ -26,6 +26,7 @@ import IEEE802
 import IORing
 import IORingUtils
 import Logging
+import MSTP
 import NetLink
 import PMC
 import SocketAddress
@@ -593,6 +594,17 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
 
   public nonisolated var notifications: AnyAsyncSequence<PortNotification<P>> {
     _portNotificationChannel.eraseToAnyAsyncSequence()
+  }
+
+  // Poll mstpd over its control socket for the port's CIST role/state. Soft-fails to nil if
+  // mstpd is absent; a fresh connection per call keeps it robust to mstpd restarts (this is
+  // only invoked on port events, not on the hot path).
+  public func getStpPortStatus(port: P) async -> STPPortStatus? {
+    guard _bridgeIndex != 0, let client = try? await MSTPControlClient() else { return nil }
+    return await client.cistPortStatus(
+      bridgeIndex: Int32(_bridgeIndex),
+      portIndex: Int32(port.id)
+    )?.stpPortStatus
   }
 
   private func _handleTCNotification(_ tcMessage: RTNLTCMessage) async throws {
@@ -1335,6 +1347,38 @@ fileprivate extension UnsafeMutablePointer {
   {
     guard let offset = MemoryLayout<Pointee>.offset(of: property) else { return nil }
     return (UnsafeMutableRawPointer(self) + offset).assumingMemoryBound(to: Property.self)
+  }
+}
+
+// map mstpd's CIST status onto the MRP-native STP types (this file is the only MSTP importer)
+private extension MSTPPortRole {
+  var stpPortRole: STPPortRole {
+    switch self {
+    case .disabled: .disabled
+    case .root: .root
+    case .designated: .designated
+    case .alternate: .alternate
+    case .backup: .backup
+    case .master: .master
+    }
+  }
+}
+
+private extension MSTPPortState {
+  var stpPortState: STPPortState {
+    switch self {
+    case .disabled: .disabled
+    case .listening: .listening
+    case .learning: .learning
+    case .forwarding: .forwarding
+    case .blocking: .blocking
+    }
+  }
+}
+
+private extension MSTPCISTPortStatus {
+  var stpPortStatus: STPPortStatus {
+    STPPortStatus(role: role.stpPortRole, state: state.stpPortState)
   }
 }
 #endif

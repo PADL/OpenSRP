@@ -57,6 +57,8 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
 
   private var _applications = [UInt16: any Application<P>]()
   private var _ports = [P.ID: P]()
+  // last seen "is this port the Designated port" per port, for topology-change detection
+  private var _stpDesignated = [P.ID: Bool]()
   private var _periodicTimer: Timer?
   private var _administrativeControl = AdministrativeControl.normalParticipant
   private var _taskGroup: ThrowingTaskGroup<(), Error>?
@@ -263,6 +265,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
 
     try await _applyContextIdentifierChanges(beforeAddingOrUpdating: port, isNewPort: true)
     _ports[port.id] = port
+    await _checkTopologyChange(port: port)
   }
 
   private func _didRemove(port: P) async throws {
@@ -270,6 +273,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
 
     try await _applyContextIdentifierChanges(beforeRemoving: port)
     _ports[port.id] = nil
+    _stpDesignated[port.id] = nil
 
     if timerConfiguration.periodicTime != .zero { _stopPeriodicTimer() }
   }
@@ -279,6 +283,25 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
 
     try await _applyContextIdentifierChanges(beforeAddingOrUpdating: port, isNewPort: false)
     _ports[port.id] = port
+    await _checkTopologyChange(port: port)
+  }
+
+  // On a port event, poll the bridge's STP role. A transition into Designated is a topology
+  // change (802.1Q Flush!, 10.7.5.2): rapidly deregister this port's attributes across all
+  // applications so they re-register. Soft no-op when the bridge has no STP integration.
+  private func _checkTopologyChange(port: P) async {
+    guard let status = await bridge.getStpPortStatus(port: port) else { return }
+    // the poll suspends: bail if the port was removed meanwhile (avoid resurrecting its
+    // cache entry / flushing a gone port). The cache read-modify-write below is await-free.
+    guard _ports[port.id] != nil else { return }
+    let isDesignated = status.role == .designated
+    let wasDesignated = _stpDesignated[port.id] ?? false
+    _stpDesignated[port.id] = isDesignated
+    guard isDesignated, !wasDesignated else { return }
+    logger.debug("MRP: port \(port.id) became STP Designated (state \(status.state)); flushing")
+    await _apply { application in
+      try? await application.flush(for: MAPBaseSpanningTreeContext, port: port)
+    }
   }
 
   private func _handleBridgeNotifications() async throws {

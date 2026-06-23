@@ -40,6 +40,7 @@ public protocol Bridge<P>: Sendable {
   // though the actual implementation may need separate paths for handling link-
   // local and non-link-local packets
   func getVlans(controller: isolated MRPController<P>) async -> Set<VLAN>
+  func getStpPortStatus(port: P) async -> STPPortStatus?
 
   func tx(_ packet: IEEE802Packet, on: P, controller: isolated MRPController<P>) async throws
   var rxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)> { get throws }

@@ -206,6 +206,10 @@ extension Application {
     try apply(for: contextIdentifier) { try $0.flush() }
   }
 
+  func flush(for contextIdentifier: MAPContextIdentifier, port: P) throws {
+    try findParticipant(for: contextIdentifier, port: port).flush()
+  }
+
   func redeclare(for contextIdentifier: MAPContextIdentifier) throws {
     try apply(for: contextIdentifier) { try $0.redeclare() }
   }
