@@ -1794,6 +1794,53 @@ extension MSRPApplication {
     // behavior described in 35.2.4.4.1.
     guard let talkerParticipant = try? findParticipant(port: port) else { return }
 
+    // 35.2.4.3: Talker attributes are withdrawn from the other ports only when *no*
+    // Talker remains registered for the StreamID. If the stream is still served by a
+    // Talker registered on another port (a redundant or transiently duplicated path
+    // going away), re-bind the Listeners to that survivor rather than withdrawing the
+    // talker declarations and tearing down the reservations — otherwise losing one
+    // path destroys a reservation the surviving path still serves.
+    var survivingTalker: TalkerRegistration?
+    apply { participant in
+      guard participant.port != port,
+            let talker = _findTalkerRegistration(for: streamID, participant: participant)
+      else { return }
+      if survivingTalker == nil ||
+        (survivingTalker!.1 is MSRPTalkerFailedValue && talker is MSRPTalkerAdvertiseValue) {
+        survivingTalker = (participant, talker)
+      }
+    }
+
+    if let survivingTalker {
+      _logger
+        .info(
+          "MSRP: talker stream \(streamID) deregistered on \(port) but still registered on \(survivingTalker.0.port); re-binding listeners to surviving talker"
+        )
+      // withdraw any Listener declarations made toward the departing Talker
+      apply { participant in
+        guard participant.port != port,
+              let listenerRegistration = _findListenerRegistration(
+                for: streamID,
+                participant: participant
+              )
+        else { return }
+        try? talkerParticipant.leave(
+          attributeType: MSRPAttributeType.listener.rawValue,
+          attributeSubtype: listenerRegistration.1.rawValue,
+          attributeValue: listenerRegistration.0,
+          eventSource: .map
+        )
+      }
+      // re-bind the Listeners (and their reservations) to the surviving Talker
+      await _updateExistingListeners(
+        contextIdentifier: contextIdentifier,
+        talkerPort: survivingTalker.0.port,
+        talkerValue: survivingTalker.1,
+        eventSource: eventSource
+      )
+      return
+    }
+
     try await apply { participant in
       guard participant.port != port else { return } // don't propagate to source port
 
