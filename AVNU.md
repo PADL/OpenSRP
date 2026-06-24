@@ -17,8 +17,12 @@ in progress on that branch and not yet merged to main.
 
 * NA: implement the Credit Based Shaper (802.1Q Clause 34) — hardware shaper
 * c0b74d4: support SR Class A and SR Class B (`SRclassID` .A/.B throughout — per-class queues, delta bandwidths, domain declaration and CBS params; default maxSRClass .B)
-* TODO: on a non-boundary port, filter a frame carrying an SR class priority when
-  its destination MAC is not one used by a reserved stream (branch filter-stream-reserved)
+* NA: on a non-boundary port, filter a frame carrying an SR class priority when
+  its destination MAC is not one used by a reserved stream — a datapath concern
+  outside OpenSRP scope. Handled by the Marvell switch in enhanced AVB mode, or in
+  the software bridge via the TC flower `dynamic_reservation_hit` match
+  (linux.git e8f78bb2a8d11b02c7450800cb72a39c57608615). See
+  [[reference_mv88e6xxx_bad_avb_no_reservation]]
 * msrp-dcb-pcp-frame-priority (5a9bd39): SRP domain boundary-port priority
   regeneration override (802.1Q Cl.6.9.4, default values Table 6-5) — map ingress
   PCP to frame priority, not queue. See [[reference_dcb_pcp_fpri]]
