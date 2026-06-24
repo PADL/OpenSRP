@@ -624,12 +624,13 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     streamID: MSRPStreamID
   ) throws {
     // DEREGISTER_STREAM.request (35.2.3.1.3): leave the locally declared Talker attribute
-    apply(for: MAPBaseSpanningTreeContext) { participant in
+    let wasDeclared = apply(for: MAPBaseSpanningTreeContext) { participant in
       _leaveDeclaredAttributes(
         participant, streamID: streamID,
         types: [.talkerAdvertise, .talkerFailed], eventSource: .application
       )
-    }
+    }.reduce(false) { $0 || $1 }
+    guard wasDeclared else { throw MRPError.participantNotFound }
   }
 
   // On receipt of a REGISTER_ATTACH.request the MSRP Participant shall issue a
