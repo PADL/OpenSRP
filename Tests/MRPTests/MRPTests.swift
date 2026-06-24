@@ -3416,6 +3416,96 @@ extension MRPTests {
     _ = controller
   }
 
+  // a class-A talker sized so that two streams together exceed the 75% class-A limit on a
+  // 1 Gbps link but one fits: 6 frames * (1000+43) bytes * 64 = 400,512 kbps (limit 750,000).
+  private func _halfLimitClassATalker(
+    _ streamID: MSRPStreamID, dest: EUI48
+  ) -> MSRPTalkerAdvertiseValue {
+    MSRPTalkerAdvertiseValue(
+      streamID: streamID,
+      dataFrameParameters: MSRPDataFrameParameters(destinationAddress: dest, vlanIdentifier: 2),
+      tSpec: MSRPTSpec(maxFrameSize: 1000, maxIntervalFrames: 6),
+      priorityAndRank: MSRPPriorityAndRank(dataFramePriority: .CA, rank: false),
+      accumulatedLatency: 1000
+    )
+  }
+
+  // #1: bandwidth is accounted from actual per-port reservations. Two ~half-limit streams
+  // share an egress; the second cannot also reserve, but once the first's listener leaves and
+  // its reservation is released, the second is admitted.
+  func testRecomputeBandwidthAccountingFollowsReservations() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0, 1, 2])
+    let streamA = MSRPStreamID(0x0001_0000_0000_0040)
+    let streamB = MSRPStreamID(0x0001_0000_0000_0041)
+
+    // A reserves on the shared egress (port 2)
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise,
+                     value: _halfLimitClassATalker(streamA, dest: [0x91, 0xE0, 0xF0, 0, 0, 1]),
+                     event: .JoinIn)
+    try await _drive(msrp, port: 2, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamA), event: .JoinIn, subtype: .ready)
+    let aReserved = await _waitFor {
+      await recorder.cbs.contains { $0.port == 2 && $0.idleSlope > 0 }
+    }
+    XCTAssertTrue(aReserved, "stream A reserves on the shared egress")
+
+    // B cannot also be admitted on port 2 while A holds its reservation
+    try await _drive(msrp, port: 1, attributeType: .talkerAdvertise,
+                     value: _halfLimitClassATalker(streamB, dest: [0x91, 0xE0, 0xF0, 0, 0, 2]),
+                     event: .JoinIn)
+    try await _drive(msrp, port: 2, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamB), event: .JoinIn, subtype: .ready)
+    let bFailed = await _waitFor { await _isDeclared(msrp, .talkerFailed, streamB, port: 2) }
+    XCTAssertTrue(bFailed, "B fails admission against A's reservation on the shared egress")
+
+    // release A's reservation (its listener leaves); re-evaluate B only once A is withdrawn
+    // (the drain order over the pending set is not guaranteed)
+    let deregBefore = await recorder.fdbDeregister.count
+    try await _drive(msrp, port: 2, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamA), event: .JoinIn, subtype: .ignore)
+    _ = await _waitFor { await recorder.fdbDeregister.count > deregBefore }
+    await msrp._streamDidUpdate(streamB)
+    let bAdmitted = await _waitFor { await _isDeclared(msrp, .talkerAdvertise, streamB, port: 2) }
+    XCTAssertTrue(bAdmitted, "B is admitted once A's reservation is released")
+    _ = controller
+  }
+
+  // #1 (distinguishing reservation- from registration-based accounting): a stream that is
+  // still registered but holds NO reservation (its talker source is blocked, so nothing is
+  // programmed) must not consume bandwidth. Counting raw registrations would keep B failed.
+  func testRecomputeRegisteredButUnreservedStreamFreesBandwidth() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0, 1, 2])
+    let streamA = MSRPStreamID(0x0001_0000_0000_0042)
+    let streamB = MSRPStreamID(0x0001_0000_0000_0043)
+
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise,
+                     value: _halfLimitClassATalker(streamA, dest: [0x91, 0xE0, 0xF0, 0, 0, 3]),
+                     event: .JoinIn)
+    try await _drive(msrp, port: 2, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamA), event: .JoinIn, subtype: .ready)
+    _ = await _waitFor { await recorder.cbs.contains { $0.port == 2 && $0.idleSlope > 0 } }
+
+    try await _drive(msrp, port: 1, attributeType: .talkerAdvertise,
+                     value: _halfLimitClassATalker(streamB, dest: [0x91, 0xE0, 0xF0, 0, 0, 4]),
+                     event: .JoinIn)
+    try await _drive(msrp, port: 2, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamB), event: .JoinIn, subtype: .ready)
+    let bFailedFirst = await _waitFor { await _isDeclared(msrp, .talkerFailed, streamB, port: 2) }
+    XCTAssertTrue(bFailedFirst, "B fails admission against A's reservation")
+
+    // block A's talker SOURCE: A's reservation is withdrawn, but A's listener (port 2) and
+    // talker (port 0) registrations persist — so registration-based accounting would still
+    // count A and keep B failed.
+    let deregBefore = await recorder.fdbDeregister.count
+    try await _setStpStates(msrp, portIDs: [0, 1, 2], [0: .blocking])
+    _ = await _waitFor { await recorder.fdbDeregister.count > deregBefore }
+    await msrp._streamDidUpdate(streamB)
+    let bAdmitted = await _waitFor { await _isDeclared(msrp, .talkerAdvertise, streamB, port: 2) }
+    XCTAssertTrue(bAdmitted,
+                  "B is admitted once A (still registered) no longer holds a reservation")
+    _ = controller
+  }
+
   // a listener on an egress whose talker fails admission control must NOT get a bandwidth
   // reservation: the bridge declares TalkerFailed out that port, so the stream cannot flow and
   // no CBS/FDB reservation may be programmed for it (the listener is AskingFailed)
