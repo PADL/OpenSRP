@@ -26,6 +26,9 @@ public protocol Port: Hashable, Sendable, Identifiable where ID: Hashable & Send
   var isOperational: Bool { get }
   var isEnabled: Bool { get }
   var isPointToPoint: Bool { get }
+  // spanning-tree port state; declarations are not propagated out a non-Forwarding (blocked)
+  // port (IEEE 802.1Q 35.1.3.1, 10.3). End stations / ports without STP are Forwarding.
+  var stpPortState: STPPortState { get }
 
   var macAddress: EUI48 { get }
 

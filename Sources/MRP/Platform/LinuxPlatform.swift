@@ -378,6 +378,20 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
     _operPointToPointMAC || _rtnl.flags & IFF_POINTOPOINT != 0
   }
 
+  // A bridge member's BR_STATE_*; non-members (no master) are always Forwarding. With STP
+  // disabled the kernel reports member ports as Forwarding, so gating is a no-op then. This
+  // is a synchronous read of the cached netlink link object — no actor transition.
+  public var stpPortState: STPPortState {
+    guard _rtnl.master != 0, let brport = _rtnl as? RTNLLinkBridge else { return .forwarding }
+    switch brport.bridgePortState {
+    case 1: return .listening
+    case 2: return .learning
+    case 3: return .forwarding
+    case 4: return .blocking
+    default: return .disabled
+    }
+  }
+
   private var _operPointToPointMAC: Bool {
     _linkSettings.0.duplex == DUPLEX_FULL
   }

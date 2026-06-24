@@ -97,6 +97,8 @@ private let DefaultDeltaBandwidths: [SRclassID: Int] = [.A: 75, .B: 0]
 struct MSRPPortState<P: AVBPort>: Sendable {
   var mediaType: MSRPPortMediaType { .accessControlPort }
   var msrpPortEnabledStatus: Bool
+  var stpPortState: STPPortState // blocked (non-Forwarding) ports don't propagate (35.1.3.1)
+  var isForwarding: Bool { stpPortState == .forwarding }
   var streamEpochs = [MSRPStreamID: UInt32]()
   // last Domain value declared per SR class, so we only re-emit on an actual change (the Domain
   // attribute is declared New, which the Applicant does not suppress)
@@ -148,6 +150,7 @@ struct MSRPPortState<P: AVBPort>: Sendable {
   init(msrp: MSRPApplication<P>, port: P) throws {
     let isAvbCapable = port.isAvbCapable || msrp._forceAvbCapable
     msrpPortEnabledStatus = isAvbCapable
+    stpPortState = port.stpPortState
     srpDomainBoundaryPort = .init(uniqueKeysWithValues: msrp._allSRClassIDs.map { (
       $0,
       !isAvbCapable
@@ -397,10 +400,41 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
       }
     }
 
+    // refresh spanning-tree state from the fresh port (a synchronous read, no actor hop); a
+    // change is a topology change, so re-derive the active streams
+    var stpChanged = false
+    for port in context {
+      guard let index = _portStates.index(forKey: port.id) else { continue }
+      if _portStates.values[index].stpPortState != port.stpPortState {
+        _logger.info("MSRP: port \(port) spanning-tree state now \(port.stpPortState)")
+        _portStates.values[index].stpPortState = port.stpPortState
+        stpChanged = true
+      }
+    }
+    if stpChanged { _forceUpdateActiveStreams() }
+
     for port in context {
       _logger.debug("MSRP: re-declaring domains for port \(port)")
       try _declareDomains(port: port)
     }
+  }
+
+  // re-derive every stream with a registered talker or a programmed reservation; used when a
+  // port's Forwarding state changes (the active topology, and thus propagation, has changed)
+  private func _forceUpdateActiveStreams() {
+    var streamIDs = Set(_reservations.values.flatMap { $0.keys })
+    apply(for: MAPBaseSpanningTreeContext) { participant in
+      for type in [MSRPAttributeType.talkerAdvertise, .talkerFailed] {
+        for attr in participant.findAllAttributesUnchecked(
+          attributeType: type.rawValue, matching: .matchAny, isolation: self
+        ) where attr.isRegistered {
+          if let talker = attr.attributeValue as? any MSRPTalkerValue {
+            streamIDs.insert(talker.streamID)
+          }
+        }
+      }
+    }
+    for streamID in streamIDs { _streamDidUpdate(streamID) }
   }
 
   func onContextRemoved(
@@ -1051,11 +1085,18 @@ extension MSRPApplication {
   }
 
   private func _findTalkerRegistration(
-    for streamID: MSRPStreamID
+    for streamID: MSRPStreamID,
+    requireForwarding: Bool = false
   ) -> TalkerRegistration? {
     var talkerRegistration: TalkerRegistration?
 
     apply { participant in
+      // a talker registered on a blocked (non-Forwarding) port is "blocked" (35.1.3.1) and
+      // must not be selected as the bound talker: its declaration is not forwarded out the
+      // other ports and no reservation is programmed from it (10.3). Registration is still
+      // allowed on any port regardless of state (8.4); only propagation is gated.
+      if requireForwarding, _portStates[participant.port.id]?.isForwarding != true { return }
+
       guard let participantTalker = _findTalkerRegistration(
         for: streamID,
         participant: participant
@@ -1335,12 +1376,20 @@ extension MSRPApplication {
   private func _makeStreamPlan(_ streamID: MSRPStreamID) -> StreamPlan {
     var plan = StreamPlan(streamID: streamID)
 
-    guard let boundTalker = _findTalkerRegistration(for: streamID) else { return plan }
+    // the bound talker must be on a Forwarding port: a talker registered on a blocked port
+    // propagates nothing (35.1.3.1, 10.3)
+    guard let boundTalker = _findTalkerRegistration(
+      for: streamID, requireForwarding: true
+    ) else { return plan }
     plan.boundTalker = boundTalker
 
     let failed = boundTalker.1 as? MSRPTalkerFailedValue
 
     apply(for: MAPBaseSpanningTreeContext) { participant in
+      // a blocked (non-Forwarding) port propagates nothing — no declaration is forwarded out
+      // it and no reservation is programmed on it (35.1.3.1, 10.3)
+      guard _portStates[participant.port.id]?.isForwarding ?? false else { return }
+
       // a listener reserves on its own port using its own declaration (a failed talker
       // forces askingFailed); .ignore subtypes don't reserve
       if let listener = _findListenerRegistration(for: streamID, participant: participant),

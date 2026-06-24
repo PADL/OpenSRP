@@ -29,6 +29,7 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
   AVBPort
 {
   var id: Int
+  var stpPortState: STPPortState = .forwarding // equality/hash are by id only, so a re-add can flip this
 
   static func == (lhs: MockPort, rhs: MockPort) -> Bool {
     lhs.id == rhs.id
@@ -2952,6 +2953,182 @@ extension MRPTests {
                      value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ignore)
     let withdrawn = await _waitFor { await recorder.fdbDeregister.count > deregBefore }
     XCTAssertTrue(withdrawn, "withdrawing the listener should deregister its FDB reservation")
+    _ = controller
+  }
+
+  // drive a spanning-tree state update through didUpdate. MockPort equality is by id, so the
+  // ports built here replace the cached state for the given ids (others stay Forwarding).
+  private func _setStpStates(
+    _ msrp: MSRPApplication<MockPort>,
+    portIDs: [Int],
+    _ states: [Int: STPPortState]
+  ) async throws {
+    let ports = Set(portIDs.map { id -> MockPort in
+      var port = MockPort(id: id)
+      port.stpPortState = states[id] ?? .forwarding
+      return port
+    })
+    try await msrp.didUpdate(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
+  }
+
+  // a port moving to a blocked (non-Forwarding) spanning-tree state stops propagating and
+  // withdraws its reservation; restoring Forwarding reprograms it (35.1.3.1)
+  func testRecomputeBlockedPortWithdrawsAndRestores() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0033)
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise,
+                     value: _talkerAdvertise(streamID), event: .JoinIn)
+    try await _drive(msrp, port: 1, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready)
+    _ = await _waitFor { await recorder.fdbRegister.contains { $0.ports.contains(1) } }
+    let reserved = await recorder.cbs.contains { $0.port == 1 && $0.idleSlope > 0 }
+    XCTAssertTrue(reserved, "listener port reserves while Forwarding")
+
+    let deregBefore = await recorder.fdbDeregister.count
+    try await _setStpStates(msrp, portIDs: [0, 1], [1: .blocking])
+    let withdrawn = await _waitFor { await recorder.fdbDeregister.count > deregBefore }
+    XCTAssertTrue(withdrawn, "a blocked port must withdraw its reservation (35.1.3.1)")
+    let stillDeclared = await _isDeclared(msrp, .talkerAdvertise, streamID, port: 1)
+    XCTAssertFalse(stillDeclared, "a blocked port must not propagate the talker declaration")
+
+    // restore Forwarding -> the surviving talker reprograms the reservation
+    let regBefore = await recorder.fdbRegister.count
+    try await _setStpStates(msrp, portIDs: [0, 1], [:])
+    let restored = await _waitFor { await recorder.fdbRegister.count > regBefore }
+    XCTAssertTrue(restored, "restoring Forwarding should reprogram the reservation")
+    _ = controller
+  }
+
+  // a listener that joins while its port is already blocked is never programmed (35.1.3.1)
+  func testRecomputeBlockedListenerGetsNoReservation() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0034)
+    try await _setStpStates(msrp, portIDs: [0, 1], [1: .blocking])
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise,
+                     value: _talkerAdvertise(streamID), event: .JoinIn)
+    try await _drive(msrp, port: 1, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready)
+    // give the recompute time to (not) program anything
+    try? await Task.sleep(nanoseconds: 200_000_000)
+    let cbs = await recorder.cbs
+    XCTAssertFalse(cbs.contains { $0.port == 1 && $0.idleSlope > 0 },
+                   "a blocked listener port must not be programmed")
+    let fdb = await recorder.fdbRegister
+    XCTAssertFalse(fdb.contains { $0.ports.contains(1) },
+                   "a blocked listener port must not get an FDB reservation")
+    _ = controller
+  }
+
+  // talker declarations are not forwarded out a blocked port: a second, Forwarding egress
+  // still gets the advertise while the blocked one does not (35.1.3.1, 10.3)
+  func testRecomputeBlockedPortBlocksTalkerPropagation() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1, 2])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0035)
+    try await _setStpStates(msrp, portIDs: [0, 1, 2], [2: .blocking])
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise,
+                     value: _talkerAdvertise(streamID), event: .JoinIn)
+    let propagated = await _waitFor { await _isDeclared(msrp, .talkerAdvertise, streamID, port: 1) }
+    XCTAssertTrue(propagated, "advertise should reach the Forwarding egress (1)")
+    let blockedDeclared = await _isDeclared(msrp, .talkerAdvertise, streamID, port: 2)
+    XCTAssertFalse(blockedDeclared, "advertise must not be forwarded out the blocked egress (2)")
+    _ = controller
+  }
+
+  // a non-Forwarding transient state (Learning) gates exactly like Blocking: the gate is
+  // "== .forwarding", not "!= .blocking"
+  func testRecomputeLearningStateAlsoGates() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0036)
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise,
+                     value: _talkerAdvertise(streamID), event: .JoinIn)
+    try await _drive(msrp, port: 1, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready)
+    _ = await _waitFor { await recorder.fdbRegister.contains { $0.ports.contains(1) } }
+
+    let deregBefore = await recorder.fdbDeregister.count
+    try await _setStpStates(msrp, portIDs: [0, 1], [1: .learning])
+    let withdrawn = await _waitFor { await recorder.fdbDeregister.count > deregBefore }
+    XCTAssertTrue(withdrawn, "a Learning (non-Forwarding) port must also withdraw its reservation")
+    _ = controller
+  }
+
+  // blocking one of two listener ports withdraws only that port; the Forwarding listener keeps
+  // its reservation
+  func testRecomputeOneOfTwoListenersBlocked() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0, 1, 2])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0037)
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise,
+                     value: _talkerAdvertise(streamID), event: .JoinIn)
+    try await _drive(msrp, port: 1, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready)
+    try await _drive(msrp, port: 2, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready)
+    _ = await _waitFor { await recorder.fdbRegister.contains { $0.ports.contains(1) } }
+    _ = await _waitFor { await recorder.fdbRegister.contains { $0.ports.contains(2) } }
+
+    let deregBefore = await recorder.fdbDeregister.count
+    try await _setStpStates(msrp, portIDs: [0, 1, 2], [1: .blocking])
+    let withdrawn = await _waitFor { await recorder.fdbDeregister.count > deregBefore }
+    XCTAssertTrue(withdrawn, "the blocked listener (1) must be withdrawn")
+    let deregs = await recorder.fdbDeregister
+    XCTAssertTrue(deregs.contains { $0.ports.contains(1) }, "blocked listener (1) deregistered")
+    XCTAssertFalse(deregs.contains { $0.ports.contains(2) },
+                   "the Forwarding listener (2) must keep its reservation")
+    _ = controller
+  }
+
+  // a talker registered on a blocked (non-Forwarding) source port is "blocked" (35.1.3.1):
+  // its declaration is not forwarded out the other (Forwarding) ports and no reservation is
+  // programmed from it (10.3)
+  func testRecomputeBlockedTalkerSourceNoPropagation() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0038)
+    // port 0 (the talker source) is blocked before anything is declared
+    try await _setStpStates(msrp, portIDs: [0, 1], [0: .blocking])
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise,
+                     value: _talkerAdvertise(streamID), event: .JoinIn)
+    try await _drive(msrp, port: 1, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready)
+    // give the recompute time to (not) propagate anything
+    try? await Task.sleep(nanoseconds: 200_000_000)
+    let propagated = await _isDeclared(msrp, .talkerAdvertise, streamID, port: 1)
+    XCTAssertFalse(propagated,
+                   "a talker on a blocked source port must not be forwarded out a Forwarding port")
+    let cbs = await recorder.cbs
+    XCTAssertFalse(cbs.contains { $0.port == 1 && $0.idleSlope > 0 },
+                   "no reservation may be programmed from a blocked talker source")
+    let fdb = await recorder.fdbRegister
+    XCTAssertFalse(fdb.contains { $0.ports.contains(1) },
+                   "no FDB reservation may be programmed from a blocked talker source")
+    _ = controller
+  }
+
+  // a talker source that moves Forwarding -> Blocking after propagation withdraws the egress
+  // declaration and reservation; restoring Forwarding reprograms them (35.1.3.1, 10.3)
+  func testRecomputeTalkerSourceBlockedAfterPropagation() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0039)
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise,
+                     value: _talkerAdvertise(streamID), event: .JoinIn)
+    try await _drive(msrp, port: 1, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready)
+    _ = await _waitFor { await recorder.fdbRegister.contains { $0.ports.contains(1) } }
+    let propagated = await _isDeclared(msrp, .talkerAdvertise, streamID, port: 1)
+    XCTAssertTrue(propagated, "talker propagates to the Forwarding egress while its source is Forwarding")
+
+    let deregBefore = await recorder.fdbDeregister.count
+    try await _setStpStates(msrp, portIDs: [0, 1], [0: .blocking])
+    let withdrawn = await _waitFor { await recorder.fdbDeregister.count > deregBefore }
+    XCTAssertTrue(withdrawn, "blocking the talker source must withdraw the egress reservation")
+    let stillDeclared = await _isDeclared(msrp, .talkerAdvertise, streamID, port: 1)
+    XCTAssertFalse(stillDeclared,
+                   "blocking the talker source must withdraw the propagated declaration")
+
+    // restore Forwarding -> the talker reprograms the reservation
+    let regBefore = await recorder.fdbRegister.count
+    try await _setStpStates(msrp, portIDs: [0, 1], [:])
+    let restored = await _waitFor { await recorder.fdbRegister.count > regBefore }
+    XCTAssertTrue(restored, "restoring the talker source to Forwarding should reprogram the reservation")
     _ = controller
   }
 

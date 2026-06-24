@@ -57,8 +57,11 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
 
   private var _applications = [UInt16: any Application<P>]()
   private var _ports = [P.ID: P]()
-  // last seen "is this port the Designated port" per port, for topology-change detection
-  private var _stpDesignated = [P.ID: Bool]()
+  // last seen spanning-tree status per port, for topology-change (Flush!) detection. This is
+  // the role, polled from the STP source (mstpd); the per-port Forwarding *state* used to gate
+  // declarations (35.1.3.1) is read synchronously from the netlink port snapshot in the
+  // applications, so the recompute never takes an actor transition.
+  private var _stpPortStatus = [P.ID: STPPortStatus]()
   private var _periodicTimer: Timer?
   private var _administrativeControl = AdministrativeControl.normalParticipant
   private var _taskGroup: ThrowingTaskGroup<(), Error>?
@@ -273,7 +276,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
 
     try await _applyContextIdentifierChanges(beforeRemoving: port)
     _ports[port.id] = nil
-    _stpDesignated[port.id] = nil
+    _stpPortStatus[port.id] = nil
 
     if timerConfiguration.periodicTime != .zero { _stopPeriodicTimer() }
   }
@@ -294,10 +297,9 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
     // the poll suspends: bail if the port was removed meanwhile (avoid resurrecting its
     // cache entry / flushing a gone port). The cache read-modify-write below is await-free.
     guard _ports[port.id] != nil else { return }
-    let isDesignated = status.role == .designated
-    let wasDesignated = _stpDesignated[port.id] ?? false
-    _stpDesignated[port.id] = isDesignated
-    guard isDesignated, !wasDesignated else { return }
+    let wasDesignated = _stpPortStatus[port.id]?.role == .designated
+    _stpPortStatus[port.id] = status
+    guard status.role == .designated, !wasDesignated else { return }
     logger.debug("MRP: port \(port.id) became STP Designated (state \(status.state)); flushing")
     await _apply { application in
       try? await application.flush(for: MAPBaseSpanningTreeContext, port: port)
