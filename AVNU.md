@@ -16,7 +16,7 @@ in progress on that branch and not yet merged to main.
 # 6 CBS
 
 * NA: implement the Credit Based Shaper (802.1Q Clause 34) — hardware shaper
-* TODO: support SR Class A and SR Class B
+* c0b74d4: support SR Class A and SR Class B (`SRclassID` .A/.B throughout — per-class queues, delta bandwidths, domain declaration and CBS params; default maxSRClass .B)
 * TODO: on a non-boundary port, filter a frame carrying an SR class priority when
   its destination MAC is not one used by a reserved stream (branch filter-stream-reserved)
 * msrp-dcb-pcp-frame-priority (5a9bd39): SRP domain boundary-port priority
