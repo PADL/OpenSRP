@@ -312,13 +312,7 @@ private func _getEthLinkSettingsCompat(
 }
 
 public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
-  public static func timeSinceEpoch() throws -> UInt32 {
-    var tv = timeval()
-    guard gettimeofday(&tv, nil) == 0 else {
-      throw Errno(rawValue: errno)
-    }
-    return UInt32(tv.tv_sec)
-  }
+  public static var now: ContinuousClock.Instant { .now }
 
   public typealias ID = Int
 

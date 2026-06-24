@@ -70,13 +70,7 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
     self.id = id
   }
 
-  static func timeSinceEpoch() throws -> UInt32 {
-    var tv = timeval()
-    guard gettimeofday(&tv, nil) == 0 else {
-      throw Errno(rawValue: errno)
-    }
-    return UInt32(tv.tv_sec)
-  }
+  static var now: ContinuousClock.Instant { .now }
 }
 
 // Records the kernel-facing effects (CBS idleslope + FDB reservation entries) so
@@ -3927,6 +3921,174 @@ extension MRPTests {
     XCTAssertTrue(
       listenerWithdrawn, "the bridge must withdraw the Listener toward the departed talker"
     )
+    _ = controller
+  }
+
+  // builds a Class-A Talker Advertise; maxIntervalFrames scales the reserved bandwidth, rank=false
+  // is Emergency (more important), rank=true is Non-emergency
+  private func _classATalker(
+    _ streamID: MSRPStreamID, dest: UInt8, frames: UInt16, rank: Bool
+  ) -> MSRPTalkerAdvertiseValue {
+    MSRPTalkerAdvertiseValue(
+      streamID: streamID,
+      dataFrameParameters: MSRPDataFrameParameters(
+        destinationAddress: [0x91, 0xE0, 0xF0, 0x00, 0x00, dest], vlanIdentifier: 2
+      ),
+      tSpec: MSRPTSpec(maxFrameSize: 1000, maxIntervalFrames: frames),
+      priorityAndRank: MSRPPriorityAndRank(dataFramePriority: .CA, rank: rank),
+      accumulatedLatency: 0
+    )
+  }
+
+  private func _reserve(
+    _ msrp: MSRPApplication<MockPort>, _ talker: MSRPTalkerAdvertiseValue
+  ) async throws {
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise, value: talker, event: .JoinIn)
+    try await _drive(
+      msrp, port: 1, attributeType: .listener,
+      value: MSRPListenerValue(streamID: talker.streamID), event: .JoinIn, subtype: .ready
+    )
+  }
+
+  // Avnu ProAV Bridge §9.1: a higher-importance (Emergency, Rank reset) stream that does not fit
+  // preempts a lower-importance (Non-emergency) reserved stream, which is declared Talker Failed
+  // with streamPreemptedByHigherRank; the Emergency stream is admitted.
+  func testRecomputePreemptsLowerRankStream() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    // class-A budget is 75% of 1 Gbps = 750_000 kbps; each N frames ~ 66_752 kbps
+    let lowID = MSRPStreamID(0x0001_0000_0000_0100) // Non-emergency, 8 frames ~ 534 Mbps
+    let highID = MSRPStreamID(0x0001_0000_0000_0101) // Emergency, 4 frames ~ 267 Mbps
+
+    try await _reserve(msrp, _classATalker(lowID, dest: 0x10, frames: 8, rank: true))
+    let lowAdvertised = await _waitFor { await _isDeclared(msrp, .talkerAdvertise, lowID, port: 1) }
+    XCTAssertTrue(lowAdvertised, "the first stream fits and is admitted")
+
+    // low + high exceed the budget; high is Emergency so it preempts low
+    try await _reserve(msrp, _classATalker(highID, dest: 0x11, frames: 4, rank: false))
+
+    let highAdvertised = await _waitFor {
+      await _isDeclared(msrp, .talkerAdvertise, highID, port: 1)
+    }
+    XCTAssertTrue(highAdvertised, "the Emergency stream must be admitted")
+    let lowFailed = await _waitFor { await _isDeclared(msrp, .talkerFailed, lowID, port: 1) }
+    XCTAssertTrue(lowFailed, "the Non-emergency stream must be preempted")
+    let code = await _declaredTalkerFailureCode(msrp, lowID, port: 1)
+    XCTAssertEqual(code, .streamPreemptedByHigherRank)
+    _ = controller
+  }
+
+  // Avnu §9.1 "if a stream that would have been cancelled need not be, then it should not be":
+  // only the youngest (least important) stream is preempted to make room — an older, more
+  // important stream that need not be cancelled is kept.
+  func testRecomputePreemptsOnlyYoungestToMakeRoom() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let oldID = MSRPStreamID(0x0001_0000_0000_0200) // Non-emergency, oldest, 6 frames ~ 400 Mbps
+    let youngID =
+      MSRPStreamID(0x0001_0000_0000_0201) // Non-emergency, youngest, 5 frames ~ 334 Mbps
+    let emergID = MSRPStreamID(0x0001_0000_0000_0202) // Emergency, 3 frames ~ 200 Mbps
+
+    // old + young fit together (~734 Mbps <= 750 Mbps)
+    try await _reserve(msrp, _classATalker(oldID, dest: 0x20, frames: 6, rank: true))
+    try await _reserve(msrp, _classATalker(youngID, dest: 0x21, frames: 5, rank: true))
+    let bothFit = await _waitFor {
+      let o = await _isDeclared(msrp, .talkerAdvertise, oldID, port: 1)
+      let y = await _isDeclared(msrp, .talkerAdvertise, youngID, port: 1)
+      return o && y
+    }
+    XCTAssertTrue(bothFit, "both Non-emergency streams fit within the budget")
+
+    // an Emergency stream arrives; cancelling the youngest alone frees enough, so the older
+    // stream is kept (not over-cancelled)
+    try await _reserve(msrp, _classATalker(emergID, dest: 0x22, frames: 3, rank: false))
+
+    let emergAdvertised = await _waitFor {
+      await _isDeclared(msrp, .talkerAdvertise, emergID, port: 1)
+    }
+    XCTAssertTrue(emergAdvertised, "the Emergency stream must be admitted")
+    let youngFailed = await _waitFor { await _isDeclared(msrp, .talkerFailed, youngID, port: 1) }
+    XCTAssertTrue(youngFailed, "the youngest stream is preempted to make room")
+    let youngCode = await _declaredTalkerFailureCode(msrp, youngID, port: 1)
+    XCTAssertEqual(youngCode, .streamPreemptedByHigherRank)
+    // the older, more important stream need not be cancelled, so it is kept
+    let oldKept = await _isDeclared(msrp, .talkerAdvertise, oldID, port: 1)
+    XCTAssertTrue(oldKept, "the older stream that need not be cancelled must be kept")
+    let oldFailed = await _isDeclared(msrp, .talkerFailed, oldID, port: 1)
+    XCTAssertFalse(oldFailed, "the older stream must not be preempted")
+    _ = controller
+  }
+
+  // Avnu §9.1 "streams of higher importance need not be dropped, even if some streams of lower
+  // importance would need to be dropped": when preemption frees headroom that only fits one of
+  // several cancelled streams, the trim must re-admit the *more* important one. Here an Emergency
+  // stream forces three Non-emergency streams to be cancelled; afterwards only one of them fits
+  // back in, and it must be the more important (lower-StreamID) one, not the least important.
+  func testRecomputePreemptTrimReadmitsMoreImportantStream() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    // class-A budget 750_000 kbps; each frame ~ 66_752 kbps, so 11 frames fit (734_272) but 12
+    // do not (801_024). Lower StreamID is more important when ranks/ages tie.
+    let bigID = MSRPStreamID(0x0001_0000_0000_0300) // Non-emergency, most important, 6 frames
+    let midID = MSRPStreamID(0x0001_0000_0000_0301) // Non-emergency, mid importance, 3 frames
+    let smallID = MSRPStreamID(0x0001_0000_0000_0302) // Non-emergency, least important, 2 frames
+    let emergID = MSRPStreamID(0x0001_0000_0000_0303) // Emergency, 7 frames
+
+    // big + mid + small = 11 frames, exactly fitting the budget
+    try await _reserve(msrp, _classATalker(bigID, dest: 0x30, frames: 6, rank: true))
+    try await _reserve(msrp, _classATalker(midID, dest: 0x31, frames: 3, rank: true))
+    try await _reserve(msrp, _classATalker(smallID, dest: 0x32, frames: 2, rank: true))
+    let allFit = await _waitFor {
+      let b = await _isDeclared(msrp, .talkerAdvertise, bigID, port: 1)
+      let m = await _isDeclared(msrp, .talkerAdvertise, midID, port: 1)
+      let s = await _isDeclared(msrp, .talkerAdvertise, smallID, port: 1)
+      return b && m && s
+    }
+    XCTAssertTrue(allFit, "the three Non-emergency streams fit within the budget")
+
+    // the Emergency stream (7 frames) does not fit alongside any other; cancelling all three frees
+    // room, then only `mid` (3) fits back with it (7+3=10), not `small` (7+3+2=12 > budget). `big`
+    // (7+6=13) cannot return either. So the more important `mid` is kept over the lesser `small`.
+    try await _reserve(msrp, _classATalker(emergID, dest: 0x33, frames: 7, rank: false))
+
+    let emergAdvertised = await _waitFor {
+      await _isDeclared(msrp, .talkerAdvertise, emergID, port: 1)
+    }
+    XCTAssertTrue(emergAdvertised, "the Emergency stream must be admitted")
+    let midKept = await _waitFor { await _isDeclared(msrp, .talkerAdvertise, midID, port: 1) }
+    XCTAssertTrue(midKept, "the more important cancelled stream must be re-admitted by the trim")
+    let smallFailed = await _waitFor { await _isDeclared(msrp, .talkerFailed, smallID, port: 1) }
+    XCTAssertTrue(smallFailed, "the least important stream stays cancelled")
+    let midFailed = await _isDeclared(msrp, .talkerFailed, midID, port: 1)
+    XCTAssertFalse(midFailed, "the more important stream must not be the one dropped")
+    let smallCode = await _declaredTalkerFailureCode(msrp, smallID, port: 1)
+    XCTAssertEqual(smallCode, .streamPreemptedByHigherRank)
+    _ = controller
+  }
+
+  // A stream that exceeds the SR-class budget even on its own has not been preempted — no amount of
+  // cancelling other streams would admit it — so it must fail insufficientBandwidth, not
+  // streamPreemptedByHigherRank, even though a more important stream is reserved on the port.
+  func testRecomputeOversizedStreamFailsInsufficientNotPreempted() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    // class-A budget 750_000 kbps ~ 11 frames; 12 frames (801_024) does not fit even alone
+    let highID = MSRPStreamID(0x0001_0000_0000_0400) // Emergency, small, 2 frames
+    let bigID = MSRPStreamID(0x0001_0000_0000_0401) // Non-emergency, 12 frames — oversized alone
+
+    try await _reserve(msrp, _classATalker(highID, dest: 0x40, frames: 2, rank: false))
+    let highAdvertised = await _waitFor {
+      await _isDeclared(msrp, .talkerAdvertise, highID, port: 1)
+    }
+    XCTAssertTrue(highAdvertised, "the small Emergency stream is admitted")
+
+    try await _reserve(msrp, _classATalker(bigID, dest: 0x41, frames: 12, rank: true))
+    let bigFailed = await _waitFor { await _isDeclared(msrp, .talkerFailed, bigID, port: 1) }
+    XCTAssertTrue(bigFailed, "an oversized stream cannot be admitted")
+    let bigCode = await _declaredTalkerFailureCode(msrp, bigID, port: 1)
+    XCTAssertEqual(
+      bigCode, .insufficientBandwidth,
+      "a stream that does not fit even alone fails insufficientBandwidth, not preempted"
+    )
+    // the more important stream is untouched
+    let highKept = await _isDeclared(msrp, .talkerAdvertise, highID, port: 1)
+    XCTAssertTrue(highKept, "the Emergency stream must not be affected")
     _ = controller
   }
 

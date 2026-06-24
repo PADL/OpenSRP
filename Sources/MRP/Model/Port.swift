@@ -18,7 +18,9 @@ import AsyncExtensions
 import IEEE802
 
 public protocol Port: Hashable, Sendable, Identifiable where ID: Hashable & Sendable & Codable {
-  static func timeSinceEpoch() throws -> UInt32
+  // a monotonic reference instant, used to order stream reservations by age (youngest-first
+  // preemption, Avnu §9.1); monotonic so it never runs backwards like a wall clock can
+  static var now: ContinuousClock.Instant { get }
 
   var id: ID { get }
   var name: String { get }
