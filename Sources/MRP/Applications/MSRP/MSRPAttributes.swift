@@ -47,6 +47,17 @@ enum MSRPAttributeType: AttributeType, CaseIterable {
       return nil
     }
   }
+
+  var oppositeAttributeType: Self? {
+    switch self {
+    case .talkerAdvertise:
+      return .talkerFailed
+    case .talkerFailed:
+      return .talkerAdvertise
+    default:
+      return nil
+    }
+  }
 }
 
 enum MSRPAttributeSubtype: AttributeSubtype {

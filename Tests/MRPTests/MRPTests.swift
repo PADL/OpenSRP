@@ -3498,4 +3498,48 @@ extension MRPTests {
     XCTAssertTrue(bFailed, "a second stream reusing the destination address must be TalkerFailed")
     _ = controller
   }
+
+  // 35.2.6: a local Talker Advertise -> Failed transition replaces the declaration; at most one
+  // Talker declaration per StreamID per port may exist
+  func testRegisterStreamAdvertiseToFailedReplacesDeclaration() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0057)
+    let talker = _talker(streamID, maxFrameSize: 100)
+    try await msrp.registerStream(
+      streamID: streamID, declarationType: .talkerAdvertise,
+      dataFrameParameters: talker.dataFrameParameters, tSpec: talker.tSpec,
+      priorityAndRank: talker.priorityAndRank, accumulatedLatency: talker.accumulatedLatency
+    )
+    let advertised = await _waitFor { await _isDeclared(msrp, .talkerAdvertise, streamID, port: 0) }
+    XCTAssertTrue(advertised, "the Talker Advertise must be declared")
+    try await msrp.registerStream(
+      streamID: streamID, declarationType: .talkerFailed,
+      dataFrameParameters: talker.dataFrameParameters, tSpec: talker.tSpec,
+      priorityAndRank: talker.priorityAndRank, accumulatedLatency: talker.accumulatedLatency,
+      failureInformation: MSRPFailure(systemID: MSRPSystemID(id: 0x1234),
+                                      failureCode: .insufficientBandwidth)
+    )
+    let replaced = await _waitFor {
+      let failed = await _isDeclared(msrp, .talkerFailed, streamID, port: 0)
+      let stillAdvertised = await _isDeclared(msrp, .talkerAdvertise, streamID, port: 0)
+      return failed && !stillAdvertised
+    }
+    XCTAssertTrue(replaced, "Advertise->Failed must leave only the Talker Failed declaration")
+    _ = controller
+  }
+
+  // 35.2.6: a local Listener Declaration Type change replaces the existing declaration
+  func testRegisterAttachListenerSubtypeChangeReplaces() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0058)
+    try await msrp.registerAttach(streamID: streamID, declarationType: .listenerReady, on: MockPort(id: 1))
+    let ready = await _waitFor { await _declaredListenerSubtype(msrp, streamID, port: 1) == .ready }
+    XCTAssertTrue(ready, "the Listener Ready must be declared")
+    try await msrp.registerAttach(streamID: streamID, declarationType: .listenerAskingFailed, on: MockPort(id: 1))
+    let changed = await _waitFor {
+      await _declaredListenerSubtype(msrp, streamID, port: 1) == .askingFailed
+    }
+    XCTAssertTrue(changed, "the Listener subtype change to Asking Failed must replace Ready")
+    _ = controller
+  }
 }

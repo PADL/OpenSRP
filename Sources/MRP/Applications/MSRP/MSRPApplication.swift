@@ -422,7 +422,7 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
   // re-derive every stream with a registered talker or a programmed reservation; used when a
   // port's Forwarding state changes (the active topology, and thus propagation, has changed)
   private func _forceUpdateActiveStreams() {
-    var streamIDs = Set(_reservations.values.flatMap { $0.keys })
+    var streamIDs = Set(_reservations.values.flatMap(\.keys))
     apply(for: MAPBaseSpanningTreeContext) { participant in
       for type in [MSRPAttributeType.talkerAdvertise, .talkerFailed] {
         for attr in participant.findAllAttributesUnchecked(
@@ -434,7 +434,9 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
         }
       }
     }
-    for streamID in streamIDs { _streamDidUpdate(streamID) }
+    for streamID in streamIDs {
+      _streamDidUpdate(streamID)
+    }
   }
 
   func onContextRemoved(
@@ -589,23 +591,28 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
         systemID: failureInformation.systemID,
         failureCode: failureInformation.failureCode
       )
-    case .listenerAskingFailed:
-      fallthrough
-    case .listenerReady:
-      fallthrough
-    case .listenerReadyFailed:
+    case .listenerAskingFailed, .listenerReady, .listenerReadyFailed:
       throw MRPError.invalidMSRPDeclarationType
     }
 
-    try join(
-      attributeType: (
-        failureInformation != nil ? MSRPAttributeType.talkerFailed : MSRPAttributeType
-          .talkerAdvertise
-      ).rawValue,
-      attributeValue: attributeValue,
-      isNew: true,
-      for: MAPBaseSpanningTreeContext
-    )
+    let attributeType = declarationType.attributeType
+    let oppositeAttributeType = attributeType.oppositeAttributeType!
+
+    // 35.2.6: at most one Talker declaration per StreamID per port. A type change (e.g.
+    // Advertise->Failed) behaves as if the old declaration was withdrawn before the new one,
+    // so leave the opposite declared Talker type first.
+    try apply(for: MAPBaseSpanningTreeContext) { participant in
+      let replacing = _leaveDeclaredAttributes(
+        participant, streamID: streamID,
+        types: [oppositeAttributeType], eventSource: .application
+      )
+      try participant.join(
+        attributeType: attributeType.rawValue,
+        attributeValue: attributeValue,
+        isNew: !replacing,
+        eventSource: .application
+      )
+    }
   }
 
   // On receipt of a DEREGISTER_STREAM.request the MSRP Participant shall issue
@@ -635,14 +642,23 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     declarationType: MSRPDeclarationType,
     on port: P? = nil
   ) throws {
+    guard declarationType.attributeType == .listener else {
+      throw MRPError.invalidMSRPDeclarationType
+    }
     try apply { participant in
       if let port, port != participant.port { return }
-      try join(
+      // 35.2.6: a Declaration Type change for an existing Listener declaration replaces it
+      // (isNew false drives Participant.join's subtype-replacement path)
+      let alreadyDeclared = participant.findAllAttributesUnchecked(
+        attributeType: MSRPAttributeType.listener.rawValue,
+        matching: .matchAnyIndex(streamID.id), isolation: self
+      ).contains { $0.isDeclared }
+      try participant.join(
         attributeType: MSRPAttributeType.listener.rawValue,
         attributeSubtype: declarationType.attributeSubtype?.rawValue,
         attributeValue: MSRPListenerValue(streamID: streamID),
-        isNew: true,
-        for: MAPBaseSpanningTreeContext
+        isNew: !alreadyDeclared,
+        eventSource: .application
       )
     }
   }
@@ -1612,20 +1628,26 @@ extension MSRPApplication {
   // Any declared attribute is left, including one that is also registered: leaving with
   // eventSource .map withdraws our Applicant declaration without clearing the Registrar,
   // which is what stops us declaring toward a port that now registers the stream itself.
+  @discardableResult
   private func _leaveDeclaredAttributes(
     _ participant: Participant<MSRPApplication>, streamID: MSRPStreamID,
     types: [MSRPAttributeType], eventSource: EventSource = .map
-  ) {
+  ) -> Bool {
+    // true if any declaration existed (not necessarily that the leave succeeded): callers use
+    // this to decide whether a subsequent join replaces a prior declaration (isNew: false).
+    var hadDeclaration = false
     for type in types {
       for attr in participant.findAllAttributesUnchecked(
         attributeType: type.rawValue, matching: .matchAnyIndex(streamID.id), isolation: self
       ) where attr.isDeclared {
+        hadDeclaration = true
         try? participant.leave(
           attributeType: type.rawValue, attributeSubtype: attr.attributeSubtype,
           attributeValue: attr.attributeValue, eventSource: eventSource
         )
       }
     }
+    return hadDeclaration
   }
 
   private func _clearReservation(portID: P.ID, streamID: MSRPStreamID) {
@@ -1695,7 +1717,8 @@ extension MSRPApplication {
   ) throws {
     // Domain is not propagated by MSRP MAP (35.2.4) and is never "blocked" (35.1.3.1) — it is a
     // local per-port announcement. Re-declare only when the value actually changed, since a port
-    // event can fire many context updates and the Domain is declared New (not Applicant-suppressed).
+    // event can fire many context updates and the Domain is declared New (not
+    // Applicant-suppressed).
     let toDeclare: MSRPDomainValue? = try withPortState(port: participant.port) { portState in
       guard let domain = portState.getDomain(for: srClassID, defaultSRPVid: _srPVid) else {
         _logger
