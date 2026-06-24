@@ -92,7 +92,6 @@ extension MSRPAwareBridge {
       let (frameSize, bandwidthUsed) = try calculateBandwidthUsed(
         srClassID: srClassID,
         tSpec: stream,
-        maxFrameSize: application._latencyMaxFrameSize,
         nominalBandwidth: false
       )
       idleslope += bandwidthUsed
@@ -201,12 +200,13 @@ func calcFrameSize(_ tSpec: MSRPTSpec) -> UInt16 {
 func calculateBandwidthUsed(
   srClassID: SRclassID,
   tSpec: MSRPTSpec,
-  maxFrameSize: UInt16,
   nominalBandwidth: Bool
 ) throws -> (UInt16, Int) {
+  // bandwidth/CBS use the actual frame size + media overhead (+1 octet for clock drift);
+  // msrpLatencyMaxFrameSize is only for latency calculations, not bandwidth (35.2.4.2,
+  // 35.2.1.4(g)) and must not cap the reserved bandwidth or CBS credits
   var frameSize = calcFrameSize(tSpec)
   if !nominalBandwidth { frameSize += 1 }
-  if frameSize > maxFrameSize { frameSize = maxFrameSize }
   let classMeasurementInterval = try srClassID
     .classMeasurementInterval // number of intervals in usec
   let maxFrameRate = Double(tSpec.maxIntervalFrames) *

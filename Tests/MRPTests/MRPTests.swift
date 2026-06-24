@@ -1259,12 +1259,10 @@ final class MRPTests: XCTestCase {
     // Test for a stream with 8000 packets per second and frame size of 224 bytes
     let srClassID = SRclassID.A // Class A has 125 microsecond intervals (8000 Hz)
     let tSpec = MSRPTSpec(maxFrameSize: 224, maxIntervalFrames: 1) // 1 frame per 125us = 8000 fps
-    let maxFrameSize: UInt16 = 1500
 
     let (frameSize, bandwidthUsed) = try calculateBandwidthUsed(
       srClassID: srClassID,
       tSpec: tSpec,
-      maxFrameSize: maxFrameSize,
       nominalBandwidth: true
     )
 
@@ -3459,6 +3457,45 @@ extension MRPTests {
       await _declaredListenerSubtype(msrp, streamID, port: 1) == nil
     }
     XCTAssertTrue(withdrawn, "deregisterAttach must withdraw the declared Listener attribute")
+    _ = controller
+  }
+
+  // 35.2.2.8.3: SRP only supports multicast or locally-administered destination addresses; a
+  // globally-administered unicast destination must be declared TalkerFailed on the egress
+  func testCanBridgeTalkerRejectsGloballyAdministeredUnicastDestination() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0054)
+    let talker = MSRPTalkerAdvertiseValue(
+      streamID: streamID,
+      dataFrameParameters: MSRPDataFrameParameters(
+        destinationAddress: [0x00, 0x11, 0x22, 0x33, 0x44, 0x55], vlanIdentifier: 2
+      ),
+      tSpec: MSRPTSpec(maxFrameSize: 64, maxIntervalFrames: 1),
+      priorityAndRank: MSRPPriorityAndRank(dataFramePriority: .CA, rank: false),
+      accumulatedLatency: 1000
+    )
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise, value: talker, event: .JoinIn)
+    let failed = await _waitFor { await _isDeclared(msrp, .talkerFailed, streamID, port: 1) }
+    XCTAssertTrue(failed, "a globally-administered unicast destination must be TalkerFailed")
+    _ = controller
+  }
+
+  // 35.2.2.8.3: only one Stream is allowed per destination_address; a second stream reusing the
+  // same destination MAC must be declared TalkerFailed on the egress
+  func testCanBridgeTalkerRejectsDuplicateDestinationAddress() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let dest: EUI48 = [0x91, 0xE0, 0xF0, 0x00, 0x00, 0x60]
+    let sA = MSRPStreamID(0x0001_0000_0000_0055)
+    let sB = MSRPStreamID(0x0001_0000_0000_0056)
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise,
+                     value: _talkerAdvertise(sA, dest: dest), event: .JoinIn)
+    let aAdvertised = await _waitFor { await _isDeclared(msrp, .talkerAdvertise, sA, port: 1) }
+    XCTAssertTrue(aAdvertised, "first stream must be advertised")
+    // a second, different stream reusing the same destination address must fail
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise,
+                     value: _talkerAdvertise(sB, dest: dest), event: .JoinIn)
+    let bFailed = await _waitFor { await _isDeclared(msrp, .talkerFailed, sB, port: 1) }
+    XCTAssertTrue(bFailed, "a second stream reusing the destination address must be TalkerFailed")
     _ = controller
   }
 }

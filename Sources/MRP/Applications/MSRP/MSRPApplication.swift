@@ -828,7 +828,6 @@ extension MSRPApplication {
     let (_, bandwidthUsed) = try calculateBandwidthUsed(
       srClassID: srClassID,
       tSpec: talker.tSpec,
-      maxFrameSize: _latencyMaxFrameSize,
       nominalBandwidth: nominalBandwidth
     )
 
@@ -842,11 +841,15 @@ extension MSRPApplication {
   ) throws -> [SRclassID: Int] {
     var bandwidthUsed = [SRclassID: Int]()
 
-    // Find all active talkers (those with listeners in ready or readyFailed state)
-    var talkers = _findActiveTalkers(participant: participant)
+    // the talkers already reserving bandwidth on this port
+    var talkers = _findReservedTalkers(participant: participant)
 
-    // Add provisional talker if provided (for bandwidth admission control check)
-    if let provisionalTalker { talkers.insert(provisionalTalker) }
+    // add the provisional talker (admission control), replacing any existing reservation for
+    // the same stream so a changed TSpec/priority is not double-counted
+    if let provisionalTalker {
+      talkers = talkers.filter { $0.streamID != provisionalTalker.streamID }
+      talkers.insert(provisionalTalker)
+    }
 
     for talker in talkers {
       guard let srClassID = portState
@@ -934,6 +937,30 @@ extension MSRPApplication {
             "MSRP: stream \(talker.streamID) is already registered on port \(port) with \(talker.dataFrameParameters)"
           )
         throw MSRPFailure(systemID: port.systemID, failureCode: .streamIDAlreadyInUse)
+      }
+
+      // 35.2.2.8.3: SRP only supports multicast or locally-administered destination addresses
+      let firstOctet = talker.dataFrameParameters.destinationAddress[0]
+      let isMulticast = (firstOctet & 0x01) != 0
+      let isLocallyAdministered = (firstOctet & 0x02) != 0
+      guard isMulticast || isLocallyAdministered else {
+        _logger.error(
+          "MSRP: stream \(talker.streamID) destination address is not multicast/local"
+        )
+        throw MSRPFailure(systemID: port.systemID, failureCode: .useDifferentDestinationAddress)
+      }
+
+      // 35.2.2.8.3: only one Stream is allowed per destination_address
+      if _destinationAddressInUse(
+        byOtherStream: talker.streamID,
+        address: talker.dataFrameParameters.destinationAddress
+      ) {
+        _logger.error(
+          "MSRP: stream \(talker.streamID) destination address already in use by another stream"
+        )
+        throw MSRPFailure(
+          systemID: port.systemID, failureCode: .streamDestinationAddressAlreadyInUse
+        )
       }
 
       // TODO: should we check explicitly for false
@@ -1143,24 +1170,42 @@ extension MSRPApplication {
     }
   }
 
-  private func _findActiveTalkers(
+  // 35.2.2.8.3: a destination_address may be used by at most one Stream. Returns true if any
+  // registered Talker for a *different* StreamID already uses this destination address.
+  private func _destinationAddressInUse(
+    byOtherStream streamID: MSRPStreamID, address: EUI48
+  ) -> Bool {
+    var inUse = false
+    apply(for: MAPBaseSpanningTreeContext) { participant in
+      for type in [MSRPAttributeType.talkerAdvertise, .talkerFailed] {
+        for attr in participant.findAllAttributesUnchecked(
+          attributeType: type.rawValue, matching: .matchAny, isolation: self
+        ) where attr.isRegistered {
+          guard let talker = attr.attributeValue as? any MSRPTalkerValue,
+                talker.streamID != streamID,
+                _isEqualMacAddress(talker.dataFrameParameters.destinationAddress, address)
+          else { continue }
+          inUse = true
+        }
+      }
+    }
+    return inUse
+  }
+
+  private func _findReservedTalkers(
     participant: Participant<MSRPApplication<P>>
   ) -> Set<MSRPTalkerAdvertiseValue> {
-    // Find all active talkers by querying listeners on this port and finding their corresponding
-    // talkers
-    Set(participant.findAttributes(
-      attributeType: MSRPAttributeType.listener.rawValue,
-      matching: .matchAny
-    ).compactMap {
-      guard let attributeSubtype = $0.0,
-            let attributeSubtype = MSRPAttributeSubtype(rawValue: attributeSubtype),
-            attributeSubtype == .ready || attributeSubtype == .readyFailed else { return nil }
-
-      let listener = $0.1 as! MSRPListenerValue
-      guard let talkerRegistration = _findTalkerRegistration(for: listener.streamID),
-            let talkerAdvertise = talkerRegistration.1 as? MSRPTalkerAdvertiseValue
+    // the talkers actually reserving bandwidth on this port are those whose applied per-port
+    // reservation is Listener Ready/Ready Failed (a Forwarding dynamic reservation entry); a
+    // stream filtered on this egress (no listener, Asking Failed, or admission/STP failure)
+    // does not consume bandwidth (35.2.4.2, Table 35-13/35-14)
+    guard let reservations = _reservations[participant.port.id] else { return [] }
+    return Set(reservations.values.compactMap { reservation in
+      guard reservation.declarationType == .listenerReady ||
+        reservation.declarationType == .listenerReadyFailed,
+        let talker = reservation.talker as? MSRPTalkerAdvertiseValue
       else { return nil }
-      return talkerAdvertise
+      return talker
     })
   }
 
@@ -1180,7 +1225,7 @@ extension MSRPApplication {
       return
     }
 
-    var talkers = _findActiveTalkers(participant: participant)
+    var talkers = _findReservedTalkers(participant: participant)
 
     // Remove the specific talker stream that is the subject of this
     // registration or deregistration; we will add it back conditionally
