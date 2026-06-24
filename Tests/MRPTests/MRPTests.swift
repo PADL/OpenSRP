@@ -1050,8 +1050,8 @@ final class MRPTests: XCTestCase {
     XCTAssertTrue(txOpp1) // Entered AN state
     XCTAssertEqual(applicant.description, "AN")
 
-    // Test tx event from AN -> QA with sN action
-    let (action2, txOpp2) = applicant.action(for: .tx, flags: normalFlags)
+    // Test tx event from AN -> QA with sN action (Table 10-3 fn 8: QA because Registrar is IN)
+    let (action2, txOpp2) = applicant.action(for: .tx, registrarState: .IN, flags: normalFlags)
     XCTAssertEqual(action2, .sN)
     XCTAssertFalse(txOpp2) // QA is not in the list
     XCTAssertEqual(applicant.description, "QA")
@@ -1106,6 +1106,52 @@ final class MRPTests: XCTestCase {
     XCTAssertNil(periodicAction)
     XCTAssertTrue(periodicTxOpp) // Entered AA state
     XCTAssertEqual(applicant.description, "AA")
+  }
+
+  // 802.1Q-2022 Table 10-3 footnote 8: on tx! from AN the Applicant goes to QA only when the
+  // Registrar is IN, and to AA otherwise (the registrar being LV or MT means a Leave may have
+  // been lost between Applicants, so AA keeps re-transmitting Joins). txLA! from AN is always QA.
+  func testApplicantTxFromANDependsOnRegistrarState() {
+    func toAN() -> Applicant {
+      let a = Applicant()
+      _ = a.action(for: .New, flags: []) // VO -> VN
+      _ = a.action(for: .tx, flags: []) // VN -> AN
+      XCTAssertEqual(a.description, "AN")
+      return a
+    }
+
+    // tx! with Registrar IN -> QA
+    let aIn = toAN()
+    let (actIn, txOppIn) = aIn.action(for: .tx, registrarState: .IN, flags: [])
+    XCTAssertEqual(actIn, .sN)
+    XCTAssertFalse(txOppIn) // QA does not request a tx opportunity
+    XCTAssertEqual(aIn.description, "QA")
+
+    // tx! with Registrar LV -> AA (registered, but not IN)
+    let aLv = toAN()
+    let (actLv, txOppLv) = aLv.action(for: .tx, registrarState: .LV, flags: [])
+    XCTAssertEqual(actLv, .sN)
+    XCTAssertTrue(txOppLv) // AA requests a tx opportunity
+    XCTAssertEqual(aLv.description, "AA")
+
+    // tx! with Registrar MT -> AA
+    let aMt = toAN()
+    let (actMt, _) = aMt.action(for: .tx, registrarState: .MT, flags: [])
+    XCTAssertEqual(actMt, .sN)
+    XCTAssertEqual(aMt.description, "AA")
+
+    // tx! with no Registrar (Applicant-only, defaults to MT) -> AA
+    let aNil = toAN()
+    _ = aNil.action(for: .tx, flags: [])
+    XCTAssertEqual(aNil.description, "AA")
+
+    // txLA! from AN is unconditionally QA, regardless of Registrar state (no footnote on that cell)
+    for state: Registrar.State in [.IN, .LV, .MT] {
+      let a = toAN()
+      let (act, _) = a.action(for: .txLA, registrarState: state, flags: [])
+      XCTAssertEqual(act, .sN)
+      XCTAssertEqual(a.description, "QA", "txLA! from AN must be QA for registrar \(state)")
+    }
   }
 
   func testRegistrarStateMachine() {
@@ -1238,10 +1284,10 @@ final class MRPTests: XCTestCase {
     let applicant = Applicant()
     let normalFlags: StateMachineHandlerFlags = []
 
-    // Set up to QA state
+    // Set up to QA state (AN -> QA requires the Registrar be IN, Table 10-3 fn 8)
     _ = applicant.action(for: .New, flags: normalFlags)
     _ = applicant.action(for: .tx, flags: normalFlags)
-    _ = applicant.action(for: .tx, flags: normalFlags)
+    _ = applicant.action(for: .tx, registrarState: .IN, flags: normalFlags)
     XCTAssertEqual(applicant.description, "QA")
 
     // Test txLA event from QA -> QA with sJ action
@@ -1331,8 +1377,10 @@ final class MRPTests: XCTestCase {
     XCTAssertTrue(newTxOpp) // Entered VN state
     XCTAssertEqual(applicant.description, "VN")
 
-    // Transmission opportunity arrives
-    let (applicantAction, _) = applicant.action(for: .tx, flags: normalFlags)
+    // Transmission opportunity arrives (Registrar still MT, but VN -> AN is unconditional)
+    let (applicantAction, _) = applicant.action(
+      for: .tx, registrarState: registrar.state, flags: normalFlags
+    )
     XCTAssertEqual(applicantAction, .sN)
     XCTAssertEqual(applicant.description, "AN")
 
@@ -1341,8 +1389,10 @@ final class MRPTests: XCTestCase {
     XCTAssertEqual(registrarAction, .New)
     XCTAssertEqual(registrar.state, .IN)
 
-    // Another transmission opportunity
-    let (applicantAction2, _) = applicant.action(for: .tx, flags: normalFlags)
+    // Another transmission opportunity: AN -> QA now that the Registrar is IN (Table 10-3 fn 8)
+    let (applicantAction2, _) = applicant.action(
+      for: .tx, registrarState: registrar.state, flags: normalFlags
+    )
     XCTAssertEqual(applicantAction2, .sN)
     XCTAssertEqual(applicant.description, "QA")
 
@@ -2307,11 +2357,11 @@ final class MRPTests: XCTestCase {
     // Test that when registrar is registered (IN or LV state),
     // original behavior is preserved: VO/AO/QO -> LO on rLA!
     let applicant = Applicant()
-    let registeredFlags: StateMachineHandlerFlags = [.isRegistered]
+    let registeredState = Registrar.State.IN
 
     // Test VO state with rLA! when registered
     XCTAssertEqual(applicant.description, "VO")
-    let (action1, txOpp1) = applicant.action(for: .rLA, flags: registeredFlags)
+    let (action1, txOpp1) = applicant.action(for: .rLA, registrarState: registeredState, flags: [])
     XCTAssertNil(action1)
     XCTAssertTrue(txOpp1)
     XCTAssertEqual(
@@ -2322,11 +2372,11 @@ final class MRPTests: XCTestCase {
 
     // Reset and set up to AO state
     let applicant2 = Applicant()
-    _ = applicant2.action(for: .rJoinIn, flags: registeredFlags) // VO -> AO
+    _ = applicant2.action(for: .rJoinIn, registrarState: registeredState, flags: []) // VO -> AO
     XCTAssertEqual(applicant2.description, "AO")
 
     // Test AO state with rLA! when registered
-    let (action2, txOpp2) = applicant2.action(for: .rLA, flags: registeredFlags)
+    let (action2, txOpp2) = applicant2.action(for: .rLA, registrarState: registeredState, flags: [])
     XCTAssertNil(action2)
     XCTAssertTrue(txOpp2)
     XCTAssertEqual(
@@ -2337,12 +2387,12 @@ final class MRPTests: XCTestCase {
 
     // Reset and set up to QO state
     let applicant3 = Applicant()
-    _ = applicant3.action(for: .rJoinIn, flags: registeredFlags) // VO -> AO
-    _ = applicant3.action(for: .rJoinIn, flags: registeredFlags) // AO -> QO
+    _ = applicant3.action(for: .rJoinIn, registrarState: registeredState, flags: []) // VO -> AO
+    _ = applicant3.action(for: .rJoinIn, registrarState: registeredState, flags: []) // AO -> QO
     XCTAssertEqual(applicant3.description, "QO")
 
     // Test QO state with rLA! when registered
-    let (action3, txOpp3) = applicant3.action(for: .rLA, flags: registeredFlags)
+    let (action3, txOpp3) = applicant3.action(for: .rLA, registrarState: registeredState, flags: [])
     XCTAssertNil(action3)
     XCTAssertTrue(txOpp3)
     XCTAssertEqual(
@@ -2386,12 +2436,12 @@ final class MRPTests: XCTestCase {
   func testApplicantLOTransitionWhenRegistered_txLA() {
     // Test that when registrar is registered, VO/AO/QO -> LO on txLA!
     let unregisteredFlags: StateMachineHandlerFlags = []
-    let registeredFlags: StateMachineHandlerFlags = [.isRegistered]
+    let registeredState = Registrar.State.IN
 
     // Test VO state with txLA! when registered
     let applicant1 = Applicant()
     XCTAssertEqual(applicant1.description, "VO")
-    let (action1, _) = applicant1.action(for: .txLA, flags: registeredFlags)
+    let (action1, _) = applicant1.action(for: .txLA, registrarState: registeredState, flags: [])
     XCTAssertEqual(action1, .s_)
     XCTAssertEqual(
       applicant1.description,
@@ -2404,7 +2454,7 @@ final class MRPTests: XCTestCase {
     _ = applicant2.action(for: .rJoinIn, flags: unregisteredFlags) // VO -> AO
     XCTAssertEqual(applicant2.description, "AO")
 
-    let (action2, _) = applicant2.action(for: .txLA, flags: registeredFlags)
+    let (action2, _) = applicant2.action(for: .txLA, registrarState: registeredState, flags: [])
     XCTAssertEqual(action2, .s_)
     XCTAssertEqual(
       applicant2.description,
@@ -2418,7 +2468,7 @@ final class MRPTests: XCTestCase {
     _ = applicant3.action(for: .rJoinIn, flags: unregisteredFlags) // AO -> QO
     XCTAssertEqual(applicant3.description, "QO")
 
-    let (action3, _) = applicant3.action(for: .txLA, flags: registeredFlags)
+    let (action3, _) = applicant3.action(for: .txLA, registrarState: registeredState, flags: [])
     XCTAssertEqual(action3, .s_)
     XCTAssertEqual(
       applicant3.description,
@@ -2465,12 +2515,12 @@ final class MRPTests: XCTestCase {
   func testApplicantLOTransitionWhenRegistered_txLAF() {
     // Test that when registrar is registered, VO/AO/QO -> LO on txLAF!
     let unregisteredFlags: StateMachineHandlerFlags = []
-    let registeredFlags: StateMachineHandlerFlags = [.isRegistered]
+    let registeredState = Registrar.State.IN
 
     // Test VO state with txLAF! when registered
     let applicant1 = Applicant()
     XCTAssertEqual(applicant1.description, "VO")
-    let (action1, txOpp1) = applicant1.action(for: .txLAF, flags: registeredFlags)
+    let (action1, txOpp1) = applicant1.action(for: .txLAF, registrarState: registeredState, flags: [])
     XCTAssertNil(action1)
     XCTAssertTrue(txOpp1)
     XCTAssertEqual(
@@ -2484,7 +2534,7 @@ final class MRPTests: XCTestCase {
     _ = applicant2.action(for: .rJoinIn, flags: unregisteredFlags) // VO -> AO
     XCTAssertEqual(applicant2.description, "AO")
 
-    let (action2, txOpp2) = applicant2.action(for: .txLAF, flags: registeredFlags)
+    let (action2, txOpp2) = applicant2.action(for: .txLAF, registrarState: registeredState, flags: [])
     XCTAssertNil(action2)
     XCTAssertTrue(txOpp2)
     XCTAssertEqual(
@@ -2499,7 +2549,7 @@ final class MRPTests: XCTestCase {
     _ = applicant3.action(for: .rJoinIn, flags: unregisteredFlags) // AO -> QO
     XCTAssertEqual(applicant3.description, "QO")
 
-    let (action3, txOpp3) = applicant3.action(for: .txLAF, flags: registeredFlags)
+    let (action3, txOpp3) = applicant3.action(for: .txLAF, registrarState: registeredState, flags: [])
     XCTAssertNil(action3)
     XCTAssertTrue(txOpp3)
     XCTAssertEqual(
@@ -2513,14 +2563,15 @@ final class MRPTests: XCTestCase {
     // Test that LA state always transitions to LO on txLAF! regardless of registrar state
     // (LA is not in the spec's list of states to suppress)
     let unregisteredFlags: StateMachineHandlerFlags = []
-    let registeredFlags: StateMachineHandlerFlags = [.isRegistered]
+    let registeredState = Registrar.State.IN
 
     // Test LA with txLAF! when unregistered
     let applicant1 = Applicant()
     _ = applicant1.action(for: .New, flags: unregisteredFlags) // VO -> VN
     _ = applicant1.action(for: .tx, flags: unregisteredFlags) // VN -> AN
-    _ = applicant1.action(for: .tx, flags: unregisteredFlags) // AN -> QA
-    _ = applicant1.action(for: .Lv, flags: unregisteredFlags) // QA -> LA
+    // AN -> AA (not QA): the Registrar is MT here, Table 10-3 fn 8
+    _ = applicant1.action(for: .tx, flags: unregisteredFlags) // AN -> AA
+    _ = applicant1.action(for: .Lv, flags: unregisteredFlags) // AA -> LA
     XCTAssertEqual(applicant1.description, "LA")
 
     let (action1, txOpp1) = applicant1.action(for: .txLAF, flags: unregisteredFlags)
@@ -2534,13 +2585,13 @@ final class MRPTests: XCTestCase {
 
     // Test LA with txLAF! when registered
     let applicant2 = Applicant()
-    _ = applicant2.action(for: .New, flags: registeredFlags) // VO -> VN
-    _ = applicant2.action(for: .tx, flags: registeredFlags) // VN -> AN
-    _ = applicant2.action(for: .tx, flags: registeredFlags) // AN -> QA
-    _ = applicant2.action(for: .Lv, flags: registeredFlags) // QA -> LA
+    _ = applicant2.action(for: .New, registrarState: registeredState, flags: []) // VO -> VN
+    _ = applicant2.action(for: .tx, registrarState: registeredState, flags: []) // VN -> AN
+    _ = applicant2.action(for: .tx, registrarState: registeredState, flags: []) // AN -> QA
+    _ = applicant2.action(for: .Lv, registrarState: registeredState, flags: []) // QA -> LA
     XCTAssertEqual(applicant2.description, "LA")
 
-    let (action2, txOpp2) = applicant2.action(for: .txLAF, flags: registeredFlags)
+    let (action2, txOpp2) = applicant2.action(for: .txLAF, registrarState: registeredState, flags: [])
     XCTAssertNil(action2)
     XCTAssertTrue(txOpp2)
     XCTAssertEqual(
@@ -2553,14 +2604,15 @@ final class MRPTests: XCTestCase {
   func testApplicantLA_txLA_TransitionDependsOnRegistrarState() {
     // Test that LA state on txLA! transitions based on registrar state
     let unregisteredFlags: StateMachineHandlerFlags = []
-    let registeredFlags: StateMachineHandlerFlags = [.isRegistered]
+    let registeredState = Registrar.State.IN
 
     // Test LA with txLA! when unregistered - should stay in LA
     let applicant1 = Applicant()
     _ = applicant1.action(for: .New, flags: unregisteredFlags) // VO -> VN
     _ = applicant1.action(for: .tx, flags: unregisteredFlags) // VN -> AN
-    _ = applicant1.action(for: .tx, flags: unregisteredFlags) // AN -> QA
-    _ = applicant1.action(for: .Lv, flags: unregisteredFlags) // QA -> LA
+    // AN -> AA (not QA): the Registrar is MT here, Table 10-3 fn 8
+    _ = applicant1.action(for: .tx, flags: unregisteredFlags) // AN -> AA
+    _ = applicant1.action(for: .Lv, flags: unregisteredFlags) // AA -> LA
     XCTAssertEqual(applicant1.description, "LA")
 
     let (action1, _) = applicant1.action(for: .txLA, flags: unregisteredFlags)
@@ -2569,13 +2621,13 @@ final class MRPTests: XCTestCase {
 
     // Test LA with txLA! when registered - should transition to LO
     let applicant2 = Applicant()
-    _ = applicant2.action(for: .New, flags: registeredFlags) // VO -> VN
-    _ = applicant2.action(for: .tx, flags: registeredFlags) // VN -> AN
-    _ = applicant2.action(for: .tx, flags: registeredFlags) // AN -> QA
-    _ = applicant2.action(for: .Lv, flags: registeredFlags) // QA -> LA
+    _ = applicant2.action(for: .New, registrarState: registeredState, flags: []) // VO -> VN
+    _ = applicant2.action(for: .tx, registrarState: registeredState, flags: []) // VN -> AN
+    _ = applicant2.action(for: .tx, registrarState: registeredState, flags: []) // AN -> QA
+    _ = applicant2.action(for: .Lv, registrarState: registeredState, flags: []) // QA -> LA
     XCTAssertEqual(applicant2.description, "LA")
 
-    let (action2, _) = applicant2.action(for: .txLA, flags: registeredFlags)
+    let (action2, _) = applicant2.action(for: .txLA, registrarState: registeredState, flags: [])
     XCTAssertEqual(action2, .s_)
     XCTAssertEqual(
       applicant2.description,

@@ -99,8 +99,12 @@ final class Applicant: Sendable, CustomStringConvertible {
   // initializing _state to .VO is equivalent to handling the .Begin event
   private let _state = Mutex(State.VO)
 
-  func action(for event: ProtocolEvent, flags: StateMachineHandlerFlags) -> (Action?, Bool) {
-    _state.withLock { $0.action(for: event, flags: flags) }
+  func action(
+    for event: ProtocolEvent,
+    registrarState: Registrar.State? = nil,
+    flags: StateMachineHandlerFlags
+  ) -> (Action?, Bool) {
+    _state.withLock { $0.action(for: event, registrarState: registrarState, flags: flags) }
   }
 
   var state: State {
@@ -115,10 +119,14 @@ final class Applicant: Sendable, CustomStringConvertible {
 private extension Applicant.State {
   mutating func action(
     for event: ProtocolEvent,
+    registrarState: Registrar.State?,
     flags: StateMachineHandlerFlags
   ) -> (Applicant.Action?, Bool) {
     var action: Applicant.Action?
     let oldState = self
+    // a missing Registrar (Applicant-only) counts as MT; Table 10-3 fn 8 needs IN vs LV,
+    // the other sites only care about registered-ness
+    let registrarState = registrarState ?? .MT
 
     switch event {
     case .Begin:
@@ -217,7 +225,7 @@ private extension Applicant.State {
       case .AO:
         fallthrough
       case .QO:
-        if event == .rLA, !flags.contains(.isRegistered) {
+        if event == .rLA, !registrarState.isRegistered {
           // Avnu ProAV Bridge specification 8.3: ignore state transition on
           // rLA! event if registrar state is MT and applicant state VO, AO, QO
         } else if flags.contains(.applicantOnlyParticipant) {
@@ -247,7 +255,7 @@ private extension Applicant.State {
       switch self {
       case .VO:
         action = .s_
-        if event == .txLA, flags.contains(.isRegistered) { self = .LO }
+        if event == .txLA, registrarState.isRegistered { self = .LO }
       case .VP:
         action = event == .txLA ? .s : .sJ
         self = .AA
@@ -256,7 +264,10 @@ private extension Applicant.State {
         self = .AN
       case .AN:
         action = .sN
-        self = .QA
+        // Table 10-3 fn 8: on tx! go to QA if the Registrar is IN, AA otherwise (guards
+        // against a Leave lost between Applicants, since New carries no registrar state).
+        // txLA! goes to QA unconditionally (no footnote on that cell).
+        self = (event == .txLA || registrarState == .IN) ? .QA : .AA
       case .AA:
         action = .sJ
         self = .QA
@@ -265,7 +276,7 @@ private extension Applicant.State {
       case .LA:
         if event == .txLA {
           action = .s_
-          if flags.contains(.isRegistered) { self = .LO }
+          if registrarState.isRegistered { self = .LO }
         } else {
           action = .sL
           self = .VO
@@ -274,7 +285,7 @@ private extension Applicant.State {
         fallthrough
       case .QO:
         action = .s_
-        if event == .txLA, flags.contains(.isRegistered) { self = .LO }
+        if event == .txLA, registrarState.isRegistered { self = .LO }
       case .AP:
         action = .sJ
         self = .QA
@@ -312,7 +323,7 @@ private extension Applicant.State {
       case .AO:
         fallthrough
       case .QO:
-        if flags.contains(.isRegistered) { self = .LO }
+        if registrarState.isRegistered { self = .LO }
       case .AP:
         fallthrough
       case .QP:

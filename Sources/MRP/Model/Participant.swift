@@ -1137,10 +1137,10 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
   ) throws {
     participant._logger.trace("\(context.participant): handling applicant \(context)")
 
-    let isRegistered = registrar?.state.isRegistered ?? false
     let (applicantAction, txOpportunity) = applicant.action(
       for: context.event,
-      flags: context.smFlags.union(isRegistered ? .isRegistered : [])
+      registrarState: registrar?.state,
+      flags: context.smFlags
     )
 
     if let applicantAction {

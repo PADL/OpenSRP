@@ -120,7 +120,6 @@ struct StateMachineHandlerFlags: OptionSet, CustomStringConvertible {
     if contains(.registrationFixedNewPropagated) { flags.append("registrationFixedNewPropagated") }
     if contains(.registrationForbidden) { flags.append("registrationForbidden") }
     if contains(.applicantOnlyParticipant) { flags.append("applicantOnlyParticipant") }
-    if contains(.isRegistered) { flags.append("isRegistered") }
     if contains(.isReplacingSubtype) { flags.append("isReplacingSubtype") }
 
     return "[" + flags.joined(separator: ", ") + "]"
@@ -131,8 +130,7 @@ struct StateMachineHandlerFlags: OptionSet, CustomStringConvertible {
   static let registrationFixedNewPropagated = StateMachineHandlerFlags(rawValue: 1 << 2)
   static let registrationForbidden = StateMachineHandlerFlags(rawValue: 1 << 3)
   static let applicantOnlyParticipant = StateMachineHandlerFlags(rawValue: 1 << 4)
-  static let isRegistered = StateMachineHandlerFlags(rawValue: 1 << 5)
-  static let isReplacingSubtype = StateMachineHandlerFlags(rawValue: 1 << 6)
+  static let isReplacingSubtype = StateMachineHandlerFlags(rawValue: 1 << 5)
 }
 
 public struct EventCounters<A: Application>: Sendable {
