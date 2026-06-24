@@ -3553,6 +3553,33 @@ extension MRPTests {
     _ = controller
   }
 
+  // an Asking Failed listener is the *absence* of a reservation (Table 35-13/35-14), so it must
+  // touch no hardware at all on the egress — not even a redundant idleslope-0 CBS write. (Before
+  // the fix, programming .listenerAskingFailed always called adjustCreditBasedShaper.)
+  func testRecomputeAskingFailedListenerTouchesNoShaper() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0044)
+    // a talker too large to bridge forces the egress listener to Asking Failed
+    let bigTalker = MSRPTalkerAdvertiseValue(
+      streamID: streamID,
+      dataFrameParameters: MSRPDataFrameParameters(
+        destinationAddress: [0x91, 0xE0, 0xF0, 0x00, 0x00, 0x05], vlanIdentifier: 2
+      ),
+      tSpec: MSRPTSpec(maxFrameSize: 1000, maxIntervalFrames: 1000),
+      priorityAndRank: MSRPPriorityAndRank(dataFramePriority: .CA, rank: false),
+      accumulatedLatency: 1000
+    )
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise, value: bigTalker, event: .JoinIn)
+    try await _drive(msrp, port: 1, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready)
+    let failed = await _waitFor { await _isDeclared(msrp, .talkerFailed, streamID, port: 1) }
+    XCTAssertTrue(failed, "the unbridgeable talker is declared Failed on the egress")
+    try? await Task.sleep(nanoseconds: 200_000_000)
+    let touchedShaper = await recorder.cbs.contains { $0.port == 1 }
+    XCTAssertFalse(touchedShaper, "an Asking Failed listener must not touch the CBS shaper at all")
+    _ = controller
+  }
+
   // Table 35-12 (35.2.4.4.1): the listener propagated toward the talker keys on the Talker
   // *registered* on the source port, NOT on a local per-egress admission result. When the
   // bound talker is registered as Advertise but a local egress fails bandwidth admission, the

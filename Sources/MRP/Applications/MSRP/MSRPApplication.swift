@@ -1444,12 +1444,14 @@ extension MSRPApplication {
       // point-to-point source link don't reserve a path back out it either; otherwise a
       // listener registered on the (shared) source port still reserves locally
       if participant.port == boundTalker.0.port {
-        if !participant.port.isPointToPoint,
+        // a listener on a shared (non-p2p) source link reserves locally; only Ready/Ready
+        // Failed create a reservation (Table 35-13/35-14), and a failed talker reserves nothing
+        if !participant.port.isPointToPoint, failed == nil,
            let listener = _findListenerRegistration(for: streamID, participant: participant),
-           let ownDeclaration = MSRPDeclarationType(attributeSubtype: listener.1)
+           let ownDeclaration = MSRPDeclarationType(attributeSubtype: listener.1),
+           ownDeclaration == .listenerReady || ownDeclaration == .listenerReadyFailed
         {
-          plan.listenerPorts
-            .append((participant, failed != nil ? .listenerAskingFailed : ownDeclaration))
+          plan.listenerPorts.append((participant, ownDeclaration))
         }
         return
       }
@@ -1469,8 +1471,14 @@ extension MSRPApplication {
       if let listener = _findListenerRegistration(for: streamID, participant: participant),
          let ownDeclaration = MSRPDeclarationType(attributeSubtype: listener.1)
       {
-        plan.listenerPorts
-          .append((participant, egressFailure != nil ? .listenerAskingFailed : ownDeclaration))
+        // only Ready/Ready Failed create a reservation (Table 35-13/35-14); an Asking Failed
+        // listener (whether declared, or forced by a local admission failure) reserves nothing,
+        // and any prior reservation on the port is torn down by the withdraw sweep in
+        // _applyStreamPlan — so it does not enter listenerPorts and touches no hardware
+        let declarationType = egressFailure != nil ? .listenerAskingFailed : ownDeclaration
+        if declarationType == .listenerReady || declarationType == .listenerReadyFailed {
+          plan.listenerPorts.append((participant, declarationType))
+        }
 
         // merge registered listeners toward the talker. The merge uses the listener as
         // registered: per Table 35-12 (35.2.4.4.1) the propagation keys on the Talker
