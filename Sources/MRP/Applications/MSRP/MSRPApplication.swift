@@ -980,11 +980,20 @@ extension MSRPApplication {
         )
       }
 
-      // TODO: should we check explicitly for false
+      // a priority that maps to no SR class is a distinct failure (35.2.2.8.7 code 13)
+      // from an SR-class-capable port that is a domain boundary (code 8)
       guard let srClassID = portState
-        .reverseMapSrClassPriority(priority: talker.priorityAndRank.dataFramePriority),
-        portState.srpDomainBoundaryPort[srClassID] != true
+        .reverseMapSrClassPriority(priority: talker.priorityAndRank.dataFramePriority)
       else {
+        _logger.error(
+          "MSRP: priority \(talker.priorityAndRank) is not an SR class priority on port \(port)"
+        )
+        throw MSRPFailure(
+          systemID: port.systemID, failureCode: .requestedPriorityIsNotAnSRClassPriority
+        )
+      }
+
+      guard portState.srpDomainBoundaryPort[srClassID] != true else {
         _logger
           .error("MSRP: port \(port) is a SRP domain boundary port for \(talker.priorityAndRank)")
         throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
