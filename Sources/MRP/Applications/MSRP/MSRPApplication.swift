@@ -616,19 +616,13 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
   public func deregisterStream(
     streamID: MSRPStreamID
   ) throws {
-    guard let talkerRegistration = _findTalkerRegistration(for: streamID) else {
-      throw MRPError.participantNotFound
+    // DEREGISTER_STREAM.request (35.2.3.1.3): leave the locally declared Talker attribute
+    apply(for: MAPBaseSpanningTreeContext) { participant in
+      _leaveDeclaredAttributes(
+        participant, streamID: streamID,
+        types: [.talkerAdvertise, .talkerFailed], eventSource: .application
+      )
     }
-    let declarationType: MSRPDeclarationType = if talkerRegistration.1 is MSRPTalkerAdvertiseValue {
-      .talkerAdvertise
-    } else {
-      .talkerFailed
-    }
-    try leave(
-      attributeType: declarationType.attributeType.rawValue,
-      attributeValue: MSRPListenerValue(streamID: streamID),
-      for: MAPBaseSpanningTreeContext
-    )
   }
 
   // On receipt of a REGISTER_ATTACH.request the MSRP Participant shall issue a
@@ -662,19 +656,11 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     streamID: MSRPStreamID,
     on port: P? = nil
   ) throws {
-    try apply { participant in
+    // DEREGISTER_ATTACH.request (35.2.3.1.7): leave the locally declared Listener attribute
+    apply { participant in
       if let port, port != participant.port { return }
-
-      guard let listenerRegistration = _findListenerRegistration(
-        for: streamID,
-        participant: participant
-      ) else { return }
-
-      try leave(
-        attributeType: MSRPAttributeType.listener.rawValue,
-        attributeSubtype: listenerRegistration.1.rawValue,
-        attributeValue: listenerRegistration.0,
-        for: MAPBaseSpanningTreeContext
+      _leaveDeclaredAttributes(
+        participant, streamID: streamID, types: [.listener], eventSource: .application
       )
     }
   }
@@ -823,7 +809,8 @@ extension MSRPApplication {
       bandwidthLimit = 100
     }
 
-    return Double(aggregateBandwidth) < Double(port.linkSpeed) * Double(bandwidthLimit) /
+    // exactly filling the configured limit is admissible (35.2.4.2/35.2.4.3): used <= limit
+    return Double(aggregateBandwidth) <= Double(port.linkSpeed) * Double(bandwidthLimit) /
       Double(100)
   }
 
@@ -969,9 +956,9 @@ extension MSRPApplication {
         throw MSRPFailure(systemID: port.systemID, failureCode: .insufficientBridgeResources)
       }
 
-      // maxFrameSize does not include preamble, IEEE 802.3 header,
-      // Priority/VID tag, CRC, interframe gap
-      guard calcFrameSize(talker.tSpec) <= port.mtu else {
+      // MaxFrameSize (35.2.2.8.4) and port.mtu both exclude media framing overhead, so compare
+      // directly; calcFrameSize()'s overhead is only for bandwidth, not this media-fit test
+      guard UInt(talker.tSpec.maxFrameSize) <= port.mtu else {
         _logger.error("MSRP: MaxFrameSize \(talker.tSpec.maxFrameSize) is too large for media")
         throw MSRPFailure(systemID: port.systemID, failureCode: .maxFrameSizeTooLargeForMedia)
       }
@@ -1582,14 +1569,15 @@ extension MSRPApplication {
   // which is what stops us declaring toward a port that now registers the stream itself.
   private func _leaveDeclaredAttributes(
     _ participant: Participant<MSRPApplication>, streamID: MSRPStreamID,
-    types: [MSRPAttributeType]
+    types: [MSRPAttributeType], eventSource: EventSource = .map
   ) {
     for type in types {
       for attr in participant.findAllAttributesUnchecked(
         attributeType: type.rawValue, matching: .matchAnyIndex(streamID.id), isolation: self
       ) where attr.isDeclared {
         try? participant.leave(
-          attributeType: type.rawValue, attributeValue: attr.attributeValue, eventSource: .map
+          attributeType: type.rawValue, attributeSubtype: attr.attributeSubtype,
+          attributeValue: attr.attributeValue, eventSource: eventSource
         )
       }
     }

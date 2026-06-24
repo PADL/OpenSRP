@@ -3378,3 +3378,87 @@ extension MRPTests {
     _ = controller
   }
 }
+
+// MARK: - MSRP admission control & local (de)registration spec fixes
+
+extension MRPTests {
+  private func _talker(
+    _ streamID: MSRPStreamID, maxFrameSize: UInt16, maxIntervalFrames: UInt16 = 1
+  ) -> MSRPTalkerAdvertiseValue {
+    MSRPTalkerAdvertiseValue(
+      streamID: streamID,
+      dataFrameParameters: MSRPDataFrameParameters(
+        destinationAddress: [0x91, 0xE0, 0xF0, 0x00, 0x00, 0x05], vlanIdentifier: 2
+      ),
+      tSpec: MSRPTSpec(maxFrameSize: maxFrameSize, maxIntervalFrames: maxIntervalFrames),
+      priorityAndRank: MSRPPriorityAndRank(dataFramePriority: .CA, rank: false),
+      accumulatedLatency: 1000
+    )
+  }
+
+  // 35.2.2.8.4: MaxFrameSize excludes media framing overhead, so a stream whose MaxFrameSize
+  // exactly equals the port MTU (MockPort.mtu == 1500) is admissible and must be advertised,
+  // not declared TalkerFailed (regression: the check used to add ~42 bytes of L1/L2 overhead).
+  func testCanBridgeTalkerMaxFrameSizeAtPortMtu() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0050)
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise,
+                     value: _talker(streamID, maxFrameSize: 1500), event: .JoinIn)
+    let advertised = await _waitFor { await _isDeclared(msrp, .talkerAdvertise, streamID, port: 1) }
+    XCTAssertTrue(advertised, "MaxFrameSize == port MTU must be admitted and advertised")
+    let failed = await _isDeclared(msrp, .talkerFailed, streamID, port: 1)
+    XCTAssertFalse(failed, "MaxFrameSize == port MTU must not be declared TalkerFailed")
+    _ = controller
+  }
+
+  // a MaxFrameSize larger than the port MTU still fails the media-fit check (TalkerFailed)
+  func testCanBridgeTalkerMaxFrameSizeAbovePortMtu() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0051)
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise,
+                     value: _talker(streamID, maxFrameSize: 1501), event: .JoinIn)
+    let failed = await _waitFor { await _isDeclared(msrp, .talkerFailed, streamID, port: 1) }
+    XCTAssertTrue(failed, "MaxFrameSize > port MTU must be declared TalkerFailed")
+    _ = controller
+  }
+
+  // 35.2.3.1.3: DEREGISTER_STREAM.request must withdraw the locally declared Talker attribute
+  func testDeregisterStreamWithdrawsLocalTalkerDeclaration() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0052)
+    let talker = _talker(streamID, maxFrameSize: 100)
+    try await msrp.registerStream(
+      streamID: streamID,
+      declarationType: .talkerAdvertise,
+      dataFrameParameters: talker.dataFrameParameters,
+      tSpec: talker.tSpec,
+      priorityAndRank: talker.priorityAndRank,
+      accumulatedLatency: talker.accumulatedLatency
+    )
+    let declared = await _waitFor { await _isDeclared(msrp, .talkerAdvertise, streamID, port: 1) }
+    XCTAssertTrue(declared, "registerStream must declare the Talker attribute")
+    try await msrp.deregisterStream(streamID: streamID)
+    let withdrawn = await _waitFor {
+      await !(_isDeclared(msrp, .talkerAdvertise, streamID, port: 1))
+    }
+    XCTAssertTrue(withdrawn, "deregisterStream must withdraw the declared Talker attribute")
+    _ = controller
+  }
+
+  // 35.2.3.1.7: DEREGISTER_ATTACH.request must withdraw the locally declared Listener attribute
+  func testDeregisterAttachWithdrawsLocalListenerDeclaration() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0053)
+    try await msrp.registerAttach(streamID: streamID, declarationType: .listenerReady)
+    let declared = await _waitFor {
+      await _declaredListenerSubtype(msrp, streamID, port: 1) == .ready
+    }
+    XCTAssertTrue(declared, "registerAttach must declare the Listener attribute")
+    try await msrp.deregisterAttach(streamID: streamID)
+    let withdrawn = await _waitFor {
+      await _declaredListenerSubtype(msrp, streamID, port: 1) == nil
+    }
+    XCTAssertTrue(withdrawn, "deregisterAttach must withdraw the declared Listener attribute")
+    _ = controller
+  }
+}
