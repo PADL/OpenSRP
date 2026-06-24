@@ -103,7 +103,7 @@ struct MSRPPortState<P: AVBPort>: Sendable {
   var msrpPortEnabledStatus: Bool
   var stpPortState: STPPortState // blocked (non-Forwarding) ports don't propagate (35.1.3.1)
   var isForwarding: Bool { stpPortState == .forwarding }
-  var streamEpochs = [MSRPStreamID: UInt32]()
+  var streamEpochs = [MSRPStreamID: ContinuousClock.Instant]()
   // last Domain value declared per SR class, so we only re-emit on an actual change (the Domain
   // attribute is declared New, which the Applicant does not suppress)
   var declaredDomains = [SRclassID: MSRPDomainValue]()
@@ -121,22 +121,19 @@ struct MSRPPortState<P: AVBPort>: Sendable {
   }
 
   mutating func register(streamID: MSRPStreamID) {
-    streamEpochs[streamID] = (try? P.timeSinceEpoch()) ?? 0
+    // record the first-reservation instant only; re-registration on later recomputes must not
+    // reset the stream's age, or preemption ordering (youngest-first) would be unstable
+    if streamEpochs[streamID] == nil { streamEpochs[streamID] = P.now }
   }
 
   mutating func deregister(streamID: MSRPStreamID) {
     streamEpochs[streamID] = nil
   }
 
+  // age in whole seconds since the stream was reserved (diagnostic); 0 if not reserved
   func getStreamAge(for streamID: MSRPStreamID) -> UInt32 {
-    guard let epoch = streamEpochs[streamID],
-          let time = try? P.timeSinceEpoch(),
-          time >= epoch
-    else {
-      return 0
-    }
-
-    return time - epoch
+    guard let epoch = streamEpochs[streamID] else { return 0 }
+    return UInt32(clamping: (P.now - epoch).components.seconds)
   }
 
   func getDomain(for srClassID: SRclassID, defaultSRPVid: VLAN) -> MSRPDomainValue? {
@@ -214,6 +211,9 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     var mergedListener: MSRPDeclarationType? // propagated towards talker
     var listenerPorts =
       [(participant: Participant<MSRPApplication>, declarationType: MSRPDeclarationType)]()
+    // lower-importance streams this one displaces by reserving (Avnu §9.1); re-evaluated by
+    // their own recompute, where they find themselves over-budget and declare Failed
+    var displacedStreams = Set<MSRPStreamID>()
   }
 
   private struct Reservation: Equatable {
@@ -785,14 +785,16 @@ extension MSRPApplication {
       return !lhs.priorityAndRank.rank
     }
 
-    // same rank: the older (greater stream age) stream is more important;
-    // finally lower StreamID
-    let lhsStreamAge = portState.getStreamAge(for: lhs.streamID)
-    let rhsStreamAge = portState.getStreamAge(for: rhs.streamID)
-    if lhsStreamAge == rhsStreamAge {
+    // same rank: the older stream (earlier reservation instant) is more important; an unregistered
+    // (provisional) stream is the youngest. Finally tie-break on lower StreamID.
+    let lhsEpoch = portState.streamEpochs[lhs.streamID]
+    let rhsEpoch = portState.streamEpochs[rhs.streamID]
+    if lhsEpoch == rhsEpoch {
       return lhs.streamID.id < rhs.streamID.id
     }
-    return lhsStreamAge > rhsStreamAge
+    guard let lhsEpoch else { return false } // lhs youngest → less important
+    guard let rhsEpoch else { return true } // rhs youngest → lhs more important
+    return lhsEpoch < rhsEpoch
   }
 
   private func _checkAsCapable(
@@ -856,83 +858,117 @@ extension MSRPApplication {
     return bandwidthUsed
   }
 
-  func _calculateBandwidthUsed(
-    participant: Participant<MSRPApplication>,
+  // bandwidth (kbps) per SR class consumed by a set of reserving talkers, or nil if a mapped SR
+  // class cannot be sized (e.g. has no measurement interval) — callers must then fail closed
+  private func _bandwidthUsed(
     portState: MSRPPortState<P>,
-    provisionalTalker: MSRPTalkerAdvertiseValue? = nil
-  ) throws -> [SRclassID: Int] {
-    var bandwidthUsed = [SRclassID: Int]()
-
-    // the talkers already reserving bandwidth on this port
-    var talkers = _findReservedTalkers(participant: participant)
-
-    // add the provisional talker (admission control), replacing any existing reservation for
-    // the same stream so a changed TSpec/priority is not double-counted
-    if let provisionalTalker {
-      talkers = talkers.filter { $0.streamID != provisionalTalker.streamID }
-      talkers.insert(provisionalTalker)
-    }
-
-    for talker in talkers {
+    talkers: Set<MSRPTalkerAdvertiseValue>
+  ) -> [SRclassID: Int]? {
+    try? talkers.reduce(into: [SRclassID: Int]()) { bandwidthUsed, talker in
+      // a talker whose priority maps to no SR class consumes no reservable bandwidth
       guard let srClassID = portState
         .reverseMapSrClassPriority(priority: talker.priorityAndRank.dataFramePriority)
-      else {
-        continue
-      }
-      let bw = try _calculateBandwidthUsed(
-        portState: portState,
-        talker: talker,
-        nominalBandwidth: false
-      )
-      if let index = bandwidthUsed.index(forKey: srClassID) {
-        bandwidthUsed.values[index] += bw
-      } else {
-        bandwidthUsed[srClassID] = bw
-      }
+      else { return }
+      bandwidthUsed[srClassID, default: 0] += try calculateBandwidthUsed(
+        srClassID: srClassID, tSpec: talker.tSpec, nominalBandwidth: false
+      ).1
     }
-
-    return bandwidthUsed
   }
 
-  private func _checkAvailableBandwidth(
+  // true if every SR class is within its (cumulative) bandwidth limit for this set of talkers;
+  // false (fail closed) if their bandwidth cannot be computed
+  private func _talkersFit(
+    port: P, portState: MSRPPortState<P>, talkers: Set<MSRPTalkerAdvertiseValue>
+  ) -> Bool {
+    guard let bandwidthUsed = _bandwidthUsed(portState: portState, talkers: talkers) else {
+      return false
+    }
+    return SRclassID.allCases.allSatisfy { srClassID in
+      _checkAvailableBandwidth(
+        port: port, portState: portState, srClassID: srClassID, bandwidthUsed: bandwidthUsed
+      )
+    }
+  }
+
+  // Avnu ProAV Bridge §9.1 preemption. Given the candidate talkers for a port's bandwidth, return
+  // the subset that remains admitted. Admission is greedy in most-important-first order: each
+  // stream is admitted only if it still fits alongside the more-important streams already admitted.
+  // This is equivalent to cancelling the youngest (least important) streams until the rest fit and
+  // then re-admitting any that need not have been cancelled ("if a stream that would have been
+  // cancelled need not be, then it should not be"), but expressed as a single pass. Because more
+  // important streams are always considered first, the result is order-independent and a preempted
+  // stream can never preempt its preemptor back.
+  private func _admittedStreamIDs(
+    port: P, portState: MSRPPortState<P>, candidates: Set<MSRPTalkerAdvertiseValue>
+  ) -> Set<MSRPStreamID> {
+    guard !_talkersFit(port: port, portState: portState, talkers: candidates) else {
+      return Set(candidates.map(\.streamID))
+    }
+    let mostImportantFirst = candidates.sorted {
+      _compareStreamImportance(port: port, portState: portState, $0, $1)
+    }
+    let admitted = mostImportantFirst
+      .reduce(into: Set<MSRPTalkerAdvertiseValue>()) { kept, candidate in
+        if _talkersFit(port: port, portState: portState, talkers: kept.union([candidate])) {
+          kept.insert(candidate)
+        }
+      }
+    return Set(admitted.map(\.streamID))
+  }
+
+  // the candidate talkers for a port's bandwidth: those currently reserving, with `provisional`
+  // substituted in for its own stream (admission control for a not-yet-reserved or changed talker)
+  private func _candidateTalkers(
+    participant: Participant<MSRPApplication>,
+    provisional: MSRPTalkerAdvertiseValue
+  ) -> Set<MSRPTalkerAdvertiseValue> {
+    _findReservedTalkers(participant: participant)
+      .filter { $0.streamID != provisional.streamID }
+      .union([provisional])
+  }
+
+  // Admission control with preemption (Avnu §9.1): nil if the talker is admitted on the port,
+  // otherwise the failure to declare — streamPreemptedByHigherRank when a more important stream
+  // displaced it, insufficientBandwidth when it simply does not fit.
+  private func _admissionFailure(
     participant: Participant<MSRPApplication>,
     portState: MSRPPortState<P>,
-    streamID: MSRPStreamID,
-    dataFrameParameters: MSRPDataFrameParameters,
-    tSpec: MSRPTSpec,
-    priorityAndRank: MSRPPriorityAndRank
-  ) throws -> Bool {
+    talker: any MSRPTalkerValue
+  ) -> MSRPFailure? {
     let port = participant.port
-    let provisionalTalker = MSRPTalkerAdvertiseValue(
-      streamID: streamID,
-      dataFrameParameters: dataFrameParameters,
-      tSpec: tSpec,
-      priorityAndRank: priorityAndRank,
-      accumulatedLatency: 0 // or this
-    )
-
-    let bandwidthUsed = try _calculateBandwidthUsed(
-      participant: participant,
-      portState: portState,
-      provisionalTalker: provisionalTalker
-    )
-
-    for srClassID in SRclassID.allCases {
-      guard _checkAvailableBandwidth(
-        port: port,
-        portState: portState,
-        srClassID: srClassID,
-        bandwidthUsed: bandwidthUsed
-      ) else {
-        _logger
-          .debug(
-            "MSRP: bandwidth limit reached for class \(srClassID), port \(port), link speed \(port.linkSpeed), deltas \(_deltaBandwidths), used \(bandwidthUsed)"
-          )
-        return false
-      }
+    let provisional = talker.makeAdvertise(accumulatedLatency: 0)
+    let candidates = _candidateTalkers(participant: participant, provisional: provisional)
+    let admitted = _admittedStreamIDs(port: port, portState: portState, candidates: candidates)
+    if admitted.contains(talker.streamID) { return nil }
+    // it was only preempted if it could have fit on its own; a stream that exceeds the budget even
+    // alone simply does not fit, and no amount of preemption would admit it
+    let fitsAlone = _talkersFit(port: port, portState: portState, talkers: [provisional])
+    let lostToHigher = fitsAlone && candidates.contains { other in
+      other.streamID != talker.streamID && admitted.contains(other.streamID) &&
+        _compareStreamImportance(port: port, portState: portState, other, provisional)
     }
+    return MSRPFailure(
+      systemID: port.systemID,
+      failureCode: lostToHigher ? .streamPreemptedByHigherRank : .insufficientBandwidth
+    )
+  }
 
-    return true
+  // the lower-importance streams currently reserving on a port that `talker` (about to reserve)
+  // displaces under Avnu §9.1 — they must re-evaluate and declare Failed on their own recompute
+  private func _displacedStreamIDs(
+    participant: Participant<MSRPApplication>,
+    portState: MSRPPortState<P>,
+    talker: any MSRPTalkerValue
+  ) -> Set<MSRPStreamID> {
+    let provisional = talker.makeAdvertise(accumulatedLatency: 0)
+    let candidates = _candidateTalkers(participant: participant, provisional: provisional)
+    let admitted = _admittedStreamIDs(
+      port: participant.port, portState: portState, candidates: candidates
+    )
+    // reserved streams that are no longer admitted (excluding this talker itself)
+    return Set(_findReservedTalkers(participant: participant).map(\.streamID))
+      .subtracting(admitted)
+      .subtracting([talker.streamID])
   }
 
   private func _canBridgeTalker(
@@ -1021,18 +1057,13 @@ extension MSRPApplication {
         throw MSRPFailure(systemID: port.systemID, failureCode: .maxFrameSizeTooLargeForMedia)
       }
 
-      guard try _checkAvailableBandwidth(
-        participant: participant,
-        portState: portState,
-        streamID: talker.streamID,
-        dataFrameParameters: talker.dataFrameParameters,
-        tSpec: talker.tSpec,
-        priorityAndRank: talker.priorityAndRank
-      )
-      else {
-        _logger
-          .error("MSRP: bandwidth limit exceeded for stream \(talker.streamID) on port \(port)")
-        throw MSRPFailure(systemID: port.systemID, failureCode: .insufficientBandwidth)
+      if let failure = _admissionFailure(
+        participant: participant, portState: portState, talker: talker
+      ) {
+        _logger.error(
+          "MSRP: stream \(talker.streamID) not admitted on port \(port): \(failure.failureCode)"
+        )
+        throw failure
       }
     } catch let error as MSRPFailure {
       throw error
@@ -1429,8 +1460,14 @@ extension MSRPApplication {
 
   private func _applyPendingStreamUpdates() async {
     while let streamID = _pendingStreams.popFirst() {
-      do { try await _applyStreamPlan(_makeStreamPlan(streamID)) }
+      let plan = _makeStreamPlan(streamID)
+      do { try await _applyStreamPlan(plan) }
       catch { _logger.error("MSRP: recompute failed for stream \(streamID): \(error)") }
+      // a stream that just reserved may have displaced lower-importance streams (Avnu §9.1);
+      // queue them so they re-evaluate admission and declare Failed (drained in this loop)
+      for displaced in plan.displacedStreams where displaced != streamID {
+        _streamDidUpdate(displaced)
+      }
     }
     _streamUpdateTask = nil
   }
@@ -1492,6 +1529,13 @@ extension MSRPApplication {
         let declarationType = egressFailure != nil ? .listenerAskingFailed : ownDeclaration
         if declarationType == .listenerReady || declarationType == .listenerReadyFailed {
           plan.listenerPorts.append((participant, declarationType))
+          // Avnu §9.1: this stream now reserves on the port, so collect the lower-importance
+          // streams it displaces; their own recompute then declares them Failed
+          if let portState = _portStates[participant.port.id] {
+            plan.displacedStreams.formUnion(_displacedStreamIDs(
+              participant: participant, portState: portState, talker: boundTalker.1
+            ))
+          }
         }
 
         // merge registered listeners toward the talker. The merge uses the listener as
