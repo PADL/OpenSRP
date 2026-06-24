@@ -98,6 +98,9 @@ struct MSRPPortState<P: AVBPort>: Sendable {
   var mediaType: MSRPPortMediaType { .accessControlPort }
   var msrpPortEnabledStatus: Bool
   var streamEpochs = [MSRPStreamID: UInt32]()
+  // last Domain value declared per SR class, so we only re-emit on an actual change (the Domain
+  // attribute is declared New, which the Applicant does not suppress)
+  var declaredDomains = [SRclassID: MSRPDomainValue]()
   var srpDomainBoundaryPort: [SRclassID: Bool]
   var srpClassVID: [SRclassID: VLAN]
   // Table 6-5—Default SRP domain boundary port priority regeneration override values
@@ -1588,26 +1591,30 @@ extension MSRPApplication {
     srClassID: SRclassID,
     on participant: Participant<MSRPApplication>
   ) throws {
-    var domain: MSRPDomainValue?
-
-    domain = try withPortState(port: participant.port) { portState in
-      portState.getDomain(for: srClassID, defaultSRPVid: _srPVid)
+    // Domain is not propagated by MSRP MAP (35.2.4) and is never "blocked" (35.1.3.1) — it is a
+    // local per-port announcement. Re-declare only when the value actually changed, since a port
+    // event can fire many context updates and the Domain is declared New (not Applicant-suppressed).
+    let toDeclare: MSRPDomainValue? = try withPortState(port: participant.port) { portState in
+      guard let domain = portState.getDomain(for: srClassID, defaultSRPVid: _srPVid) else {
+        _logger
+          .warning(
+            "MSRP: not declaring domain for SR class \(srClassID) as no priority mapping found"
+          )
+        return nil
+      }
+      guard portState.declaredDomains[srClassID] != domain else { return nil }
+      portState.declaredDomains[srClassID] = domain
+      return domain
     }
 
-    if let domain {
-      _logger.info("MSRP: declaring domain \(domain)")
-      try participant.join(
-        attributeType: MSRPAttributeType.domain.rawValue,
-        attributeValue: domain,
-        isNew: true,
-        eventSource: .application
-      )
-    } else {
-      _logger
-        .warning(
-          "MSRP: not declaring domain for SR class \(srClassID) as no priority mapping found"
-        )
-    }
+    guard let domain = toDeclare else { return }
+    _logger.info("MSRP: declaring domain \(domain)")
+    try participant.join(
+      attributeType: MSRPAttributeType.domain.rawValue,
+      attributeValue: domain,
+      isNew: true,
+      eventSource: .application
+    )
   }
 
   fileprivate nonisolated var _allSRClassIDs: [SRclassID] {
