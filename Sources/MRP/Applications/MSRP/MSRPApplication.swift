@@ -1640,6 +1640,10 @@ extension MSRPApplication {
       _clearReservation(portID: portID, streamID: streamID)
     }
 
+    // Leaving the .listener declaration here is the Avnu ProAV Bridge §9.1 proxy: when the Talker
+    // departs while a Listener is still registered, the bridge generates the Listener Leave back
+    // toward the Talker on the Listener's behalf, rather than waiting for the downstream Listener
+    // to react to the Talker withdrawal.
     apply(for: MAPBaseSpanningTreeContext) { participant in
       _leaveDeclaredAttributes(
         participant, streamID: streamID, types: [.talkerAdvertise, .talkerFailed, .listener]

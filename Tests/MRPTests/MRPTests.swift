@@ -3716,6 +3716,31 @@ extension MRPTests {
     _ = controller
   }
 
+  func testRecomputeProxiesListenerLeaveOnTalkerLeave() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0F01)
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .JoinIn
+    )
+    try await _drive(
+      msrp, port: 1, attributeType: .listener,
+      value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready
+    )
+    let listenerDeclared = await _waitFor { await _isDeclared(msrp, .listener, streamID, port: 0) }
+    XCTAssertTrue(listenerDeclared, "the bridge declares a Listener toward the talker")
+
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .Lv
+    )
+    let listenerWithdrawn = await _waitFor { await !_isDeclared(msrp, .listener, streamID, port: 0) }
+    XCTAssertTrue(
+      listenerWithdrawn, "the bridge must withdraw the Listener toward the departed talker"
+    )
+    _ = controller
+  }
+
   // Table 35-12 (35.2.4.4.1): the listener propagated toward the talker keys on the Talker
   // *registered* on the source port, NOT on a local per-egress admission result. When the
   // bound talker is registered as Advertise but a local egress fails bandwidth admission, the
