@@ -47,6 +47,23 @@ constrained switch appliance (P1 highest). Each TODO below is tagged inline.
 * msrp-dcb-pcp-frame-priority (5a9bd39): SRP domain boundary-port priority
   regeneration override (802.1Q Cl.6.9.4, default values Table 6-5) — map ingress
   PCP to frame priority, not queue. See [[reference_dcb_pcp_fpri]]
+* TODO (P2): make ingress priority regeneration boundary-aware. The SRP clause
+  (§35.2.4.3) only defines the boundary as a Talker-Advertise→Talker-Failed (code
+  8) conversion; the actual priority *remapping* is defined elsewhere in 802.1Q
+  (Cl.6.9.4 priority regeneration, not in the SRP excerpt). On an SRP domain
+  **boundary** port, an ingress frame bearing a priority that coincides with an SR
+  class priority is not genuine stream traffic (the neighbour is outside the
+  domain), so its PCP must be regenerated — to 0, per recollection of Cl.6.9.4;
+  confirm against the full clause. This must update **dynamically**:
+  `SRPdomainBoundaryPort` is per-port-per-SR-class and flips as Domain attributes
+  register/withdraw (§35.2.1.4 item h), so the regeneration table has to be
+  reprogrammed when boundary status changes. Open question: whether any remapping
+  is needed on a **core** port (inside the SR domain) — likely none, since there
+  the SR class priority is honoured. (§35.2.4 also notes a port forwards MSRP
+  declarations only for SR classes it supports, to avoid needless remapping of
+  unsupported-class traffic.) NB: DCB only gives us PCP→**queue** mapping, not PCP
+  regeneration (rewriting the priority value); a different kernel API is needed to
+  actually remap the ingress PCP to 0.
 
 # 7 gPTP
 
