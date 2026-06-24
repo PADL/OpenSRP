@@ -578,12 +578,10 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
 
     guard !enqueuedMessages.isEmpty else { return nil }
 
-    let pdu = MRPDU(
+    return MRPDU(
       protocolVersion: application.protocolVersion,
       messages: enqueuedMessages
     )
-
-    return pdu
   }
 
   private func rx(message: Message, eventSource: EventSource, leaveAll: inout Bool) throws {
@@ -1082,7 +1080,8 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
          attributeSubtype: attributeSubtype,
          attributeValue: unwrappedValue,
          on: participant.port
-       ) {
+       )
+    {
       smFlags.insert(.registrationForbidden)
     }
     return EventContext(

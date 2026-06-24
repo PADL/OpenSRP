@@ -51,11 +51,11 @@ enum MSRPAttributeType: AttributeType, CaseIterable {
   var oppositeAttributeType: Self? {
     switch self {
     case .talkerAdvertise:
-      return .talkerFailed
+      .talkerFailed
     case .talkerFailed:
-      return .talkerAdvertise
+      .talkerAdvertise
     default:
-      return nil
+      nil
     }
   }
 }

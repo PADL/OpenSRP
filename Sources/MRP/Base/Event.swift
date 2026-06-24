@@ -112,10 +112,6 @@ struct StateMachineHandlerFlags: OptionSet, CustomStringConvertible {
 
   var rawValue: RawValue
 
-  init(rawValue: RawValue) {
-    self.rawValue = rawValue
-  }
-
   var description: String {
     var flags = [String]()
 

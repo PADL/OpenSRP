@@ -640,10 +640,9 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     // Track tagged VLANs only (port.vlans mirrors bridgeTaggedVLANs; the SR
     // class VLAN is tagged), keyed by port ifindex.
     let taggedVids = Set(vlandb.entries.filter { !$0.isUntagged }.map(\.vid))
-    let isNew: Bool
-    switch vlanMessage {
-    case .new: isNew = true
-    case .del: isNew = false
+    let isNew = switch vlanMessage {
+    case .new: true
+    case .del: false
     }
     _portTaggedVLANs.withLock { map in
       if isNew {
@@ -934,11 +933,12 @@ fileprivate final class FilterRegistration: Equatable, Hashable, Sendable, Custo
       index: port.id
     ))
 
-    return try await rxSocket.receiveMessages(count: Int(port._rtnl.mtu), capacity: 32).compactMap { message in
-      try? message.buffer.withParserSpan { input in
-        try IEEE802Packet(parsing: &input)
-      }
-    }.eraseToAnyAsyncSequence()
+    return try await rxSocket.receiveMessages(count: Int(port._rtnl.mtu), capacity: 32)
+      .compactMap { message in
+        try? message.buffer.withParserSpan { input in
+          try IEEE802Packet(parsing: &input)
+        }
+      }.eraseToAnyAsyncSequence()
   }
 }
 

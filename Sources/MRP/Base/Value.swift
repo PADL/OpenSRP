@@ -34,7 +34,7 @@ struct AnyValue: Value, Equatable, CustomStringConvertible {
 
   private let _value: any Value
 
-  init<V: Value>(_ value: V) {
+  init(_ value: some Value) {
     _value = value
   }
 
@@ -51,7 +51,7 @@ struct AnyValue: Value, Equatable, CustomStringConvertible {
   }
 
   func makeValue(relativeTo index: UInt64) throws -> Self {
-    Self(try _value.makeValue(relativeTo: index))
+    try Self(_value.makeValue(relativeTo: index))
   }
 
   init(parsing _: inout ParserSpan) throws {
