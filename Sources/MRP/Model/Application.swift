@@ -66,6 +66,10 @@ public protocol Application<P>: Actor, Equatable, Hashable, Sendable {
   nonisolated func administrativeControl(for: AttributeType) throws -> AdministrativeControl
   nonisolated var nonBaseContextsSupported: Bool { get }
 
+  // When true, the Registrar leaves immediately on a received Leave (IN / rLv! -> (Lv) -> MT),
+  // skipping the leavetimer. Avnu ProAV Bridge §9.2 mandates this for MSRP only; default false.
+  nonisolated var registrarLeaveImmediate: Bool { get }
+
   // Return false to hold the Registrar in MT (no New/Join indication).
   // Re-evaluated on every event, so registration proceeds on a later
   // declaration once it returns true (no replay needed). See 35.1.3.1.

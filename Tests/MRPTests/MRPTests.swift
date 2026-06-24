@@ -1186,22 +1186,14 @@ final class MRPTests: XCTestCase {
     XCTAssertNil(registrar.action(for: .rJoinIn, flags: normalFlags))
     XCTAssertEqual(registrar.state, .IN)
 
+    // Test rLv event from IN -> LV (starts leave timer) without the leaveImmediate flag
     let action2 = registrar.action(for: .rLv, flags: normalFlags)
-    #if AVNU
-    // Test rLv event from IN -> MT with Lv action (per Avnu ProAV Bridge Specification)
-    XCTAssertEqual(action2, .Lv)
-    XCTAssertEqual(registrar.state, .MT)
-    #else
     XCTAssertEqual(action2, nil)
     XCTAssertEqual(registrar.state, .LV)
-    #endif
-    // Test rJoinIn from MT -> IN with Join action
+
+    // Test rJoinIn from LV -> IN (stops leave timer), no action
     let action3 = registrar.action(for: .rJoinIn, flags: normalFlags)
-    #if AVNU
-    XCTAssertEqual(action3, .Join)
-    #else
     XCTAssertEqual(action3, nil)
-    #endif
     XCTAssertEqual(registrar.state, .IN)
 
     // Test rLA event from IN -> LV (starts leave timer)
@@ -1212,6 +1204,32 @@ final class MRPTests: XCTestCase {
     let action4 = registrar.action(for: .leavetimer, flags: normalFlags)
     XCTAssertEqual(action4, .Lv)
     XCTAssertEqual(registrar.state, .MT)
+  }
+
+  // Avnu ProAV Bridge §9.2 (MSRP, gated by .leaveImmediate): a received Leave takes the Registrar
+  // straight from IN to MT with a Lv action, skipping the leavetimer. rLA!/txLA!/ReDeclare! still
+  // use the leavetimer — the immediate transition is specific to rLv!.
+  func testRegistrarLeaveImmediate() {
+    let immediate: StateMachineHandlerFlags = [.leaveImmediate]
+
+    // rLv! from IN -> MT with Lv, no leavetimer
+    let r1 = Registrar(onLeaveTimerExpired: {})
+    XCTAssertEqual(r1.action(for: .rNew, flags: immediate), .New)
+    XCTAssertEqual(r1.state, .IN)
+    XCTAssertEqual(r1.action(for: .rLv, flags: immediate), .Lv)
+    XCTAssertEqual(r1.state, .MT)
+
+    // rLA! still goes IN -> LV (leavetimer), even with the flag set
+    let r2 = Registrar(onLeaveTimerExpired: {})
+    _ = r2.action(for: .rNew, flags: immediate)
+    XCTAssertNil(r2.action(for: .rLA, flags: immediate))
+    XCTAssertEqual(r2.state, .LV)
+
+    // txLA! still goes IN -> LV (leavetimer), even with the flag set
+    let r3 = Registrar(onLeaveTimerExpired: {})
+    _ = r3.action(for: .rNew, flags: immediate)
+    XCTAssertNil(r3.action(for: .txLA, flags: immediate))
+    XCTAssertEqual(r3.state, .LV)
   }
 
   func testRegistrarFlagsHandling() {
@@ -3669,6 +3687,32 @@ extension MRPTests {
       code, .requestedPriorityIsNotAnSRClassPriority,
       "expected failure code 13, got \(String(describing: code))"
     )
+    _ = controller
+  }
+
+  // Avnu ProAV Bridge §9.2: the .leaveImmediate flag is on by default for MSRP, and a received
+  // Leave (rLv!) drops the Talker registration to MT at once — the propagated declaration is
+  // withdrawn promptly rather than lingering for the (5s) LeaveTime as in the base 802.1Q path.
+  func testMSRPLeaveImmediateWithdrawsTalkerOnReceivedLeave() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    XCTAssertTrue(msrp.registrarLeaveImmediate, "leaveImmediate must be on by default (Avnu §9.2)")
+    let streamID = MSRPStreamID(0x0001_0000_0000_00E1)
+
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .JoinIn
+    )
+    let propagated = await _waitFor { await _isDeclared(msrp, .talkerAdvertise, streamID, port: 1) }
+    XCTAssertTrue(propagated, "the talker should propagate to the egress")
+
+    // a received Leave on the talker's ingress port; with immediate leave the registration drops
+    // straight to MT (not LV), so the recompute withdraws the egress declaration without a timer
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .Lv
+    )
+    let withdrawn = await _waitFor { await !_isDeclared(msrp, .talkerAdvertise, streamID, port: 1) }
+    XCTAssertTrue(withdrawn, "a received Leave must withdraw the propagated talker promptly")
     _ = controller
   }
 

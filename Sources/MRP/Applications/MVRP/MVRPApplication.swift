@@ -38,6 +38,9 @@ public actor MVRPApplication<P: Port>: BaseApplication, BaseApplicationEventObse
   // for now, we only operate in the Base Spanning Tree Context
   public nonisolated var nonBaseContextsSupported: Bool { false }
 
+  // MVRP uses the base 802.1Q leavetimer (Avnu §9.2 immediate leave is MSRP-only)
+  public nonisolated var registrarLeaveImmediate: Bool { false }
+
   public nonisolated var validAttributeTypes: ClosedRange<AttributeType> {
     MVRPAttributeType.validAttributeTypes
   }

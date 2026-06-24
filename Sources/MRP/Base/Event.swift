@@ -121,6 +121,7 @@ struct StateMachineHandlerFlags: OptionSet, CustomStringConvertible {
     if contains(.registrationForbidden) { flags.append("registrationForbidden") }
     if contains(.applicantOnlyParticipant) { flags.append("applicantOnlyParticipant") }
     if contains(.isReplacingSubtype) { flags.append("isReplacingSubtype") }
+    if contains(.leaveImmediate) { flags.append("leaveImmediate") }
 
     return "[" + flags.joined(separator: ", ") + "]"
   }
@@ -131,6 +132,9 @@ struct StateMachineHandlerFlags: OptionSet, CustomStringConvertible {
   static let registrationForbidden = StateMachineHandlerFlags(rawValue: 1 << 3)
   static let applicantOnlyParticipant = StateMachineHandlerFlags(rawValue: 1 << 4)
   static let isReplacingSubtype = StateMachineHandlerFlags(rawValue: 1 << 5)
+  // Registrar leaves immediately on a received Leave: IN / rLv! -> (Lv) -> MT, skipping the
+  // leavetimer (Avnu ProAV Bridge §9.2, scoped to MSRP)
+  static let leaveImmediate = StateMachineHandlerFlags(rawValue: 1 << 6)
 }
 
 public struct EventCounters<A: Application>: Sendable {

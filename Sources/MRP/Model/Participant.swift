@@ -670,6 +670,7 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
     case .nonParticipant:
       flags.insert(.registrationFixedNewIgnored)
     }
+    if application.registrarLeaveImmediate { flags.insert(.leaveImmediate) }
     // TODO: add flags for when attribute is empty, so Applicant State Machine can
     // ignore transition to LO from VO/AO/QO when receiving rLA!, txLA!, or txLAF!
     return flags

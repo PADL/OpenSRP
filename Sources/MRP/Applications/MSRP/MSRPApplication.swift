@@ -37,8 +37,12 @@ public struct MSRPApplicationFlags: OptionSet, Sendable {
   public static let ignoreAsCapable = Self(rawValue: 1 << 2)
   public static let talkerPruning = Self(rawValue: 1 << 3)
   public static let configureIngressQueues = Self(rawValue: 1 << 4)
+  // Registrar leaves immediately on a received Leave (Avnu ProAV Bridge §9.2); on by default,
+  // clear it to fall back to the base 802.1Q leavetimer when interoperating with peers that
+  // do not use the Avnu LeaveTime
+  public static let leaveImmediate = Self(rawValue: 1 << 5)
 
-  public static let defaultFlags = Self([.ignoreAsCapable])
+  public static let defaultFlags = Self([.ignoreAsCapable, .leaveImmediate])
 }
 
 protocol MSRPAwareBridge<P>: Bridge where P: AVBPort {
@@ -239,6 +243,7 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
   }
 
   nonisolated var _ignoreAsCapable: Bool { _flags.contains(.ignoreAsCapable) }
+  public nonisolated var registrarLeaveImmediate: Bool { _flags.contains(.leaveImmediate) }
   fileprivate nonisolated var _talkerPruning: Bool { _flags.contains(.talkerPruning) }
 
   public init(

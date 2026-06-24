@@ -57,8 +57,10 @@ final class Registrar: Sendable, CustomStringConvertible {
       } else if state != .MT, event == .rLvNow {
         leaveTimerAction = .stop
       } else if state == .IN,
-                event == .rLv || event == .rLA || event == .txLA || event == .ReDeclare
+                event == .rLA || event == .txLA || event == .ReDeclare ||
+                (event == .rLv && !flags.contains(.leaveImmediate))
       {
+        // leaveImmediate skips the leavetimer: rLv goes straight to MT (see state.action)
         leaveTimerAction = .start
       }
 
@@ -133,7 +135,16 @@ private extension Registrar.State {
       }
       self = .IN
     case .rLv:
-      fallthrough
+      if self == .IN {
+        if flags.contains(.leaveImmediate) {
+          // Avnu ProAV Bridge §9.2 (MSRP): IN / rLv! -> (Lv) -> MT, skipping the leavetimer so an
+          // explicit Leave is detected without waiting the (5s) LeaveTime
+          action = .Lv
+          self = .MT
+        } else {
+          self = .LV
+        }
+      }
     case .rLA:
       fallthrough
     case .txLA:
