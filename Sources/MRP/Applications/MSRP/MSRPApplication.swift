@@ -210,6 +210,9 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     var mergedListener: MSRPDeclarationType? // propagated towards talker
     var listenerPorts =
       [(participant: Participant<MSRPApplication>, declarationType: MSRPDeclarationType)]()
+    // ports whose registered listener contributed to mergedListener (its ingress ports), used
+    // to decide whether the merged declaration toward the talker is marked New (10.3 a)
+    var listenerSourcePorts = Set<P.ID>()
   }
 
   private struct Reservation: Equatable {
@@ -227,6 +230,9 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
   private var _pendingStreams = Set<MSRPStreamID>()
   private var _streamUpdateTask: Task<(), Never>?
   private var _reservations: [P.ID: [MSRPStreamID: Reservation]] = [:]
+  // ports whose spanning-tree state just changed: a declaration propagated *from* such a port is
+  // marked New (10.3 a). Approximates tcDetected (13.25); cleared after the recompute drains.
+  private var _tcDetected = Set<P.ID>()
 
   // Convenience accessors for flags
   fileprivate nonisolated var _forceAvbCapable: Bool { _flags.contains(.forceAvbCapable) }
@@ -408,6 +414,9 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
       if _portStates.values[index].stpPortState != port.stpPortState {
         _logger.info("MSRP: port \(port) spanning-tree state now \(port.stpPortState)")
         _portStates.values[index].stpPortState = port.stpPortState
+        // a spanning-tree transition on this port is a topology change: declarations propagated
+        // from it on the recompute below are marked New (10.3 a), consumed when the drain clears
+        _tcDetected.insert(port.id)
         stpChanged = true
       }
     }
@@ -1427,6 +1436,8 @@ extension MSRPApplication {
       do { try await _applyStreamPlan(_makeStreamPlan(streamID)) }
       catch { _logger.error("MSRP: recompute failed for stream \(streamID): \(error)") }
     }
+    // the topology-change New marking has now been applied to every re-derived stream
+    _tcDetected.removeAll()
     _streamUpdateTask = nil
   }
 
@@ -1497,6 +1508,7 @@ extension MSRPApplication {
           declarationType: ownDeclaration,
           with: plan.mergedListener
         )
+        plan.listenerSourcePorts.insert(participant.port.id)
       }
 
       // never declare the talker onto a port that already registered it
@@ -1522,6 +1534,9 @@ extension MSRPApplication {
     }
 
     var declaredTalkerPorts = Set<P.ID>()
+
+    // a topology change on the talker's ingress port marks the propagated Talker New (10.3 a)
+    let talkerIsNew = _tcDetected.contains(boundTalker.0.port.id)
 
     for (participant, failure) in plan.talkerDeclarations {
       // a newer event re-marked this stream while we awaited: abandon the now-stale plan
@@ -1549,13 +1564,13 @@ extension MSRPApplication {
         try participant.join(
           attributeType: MSRPAttributeType.talkerFailed.rawValue,
           attributeValue: boundTalker.1.makeFailed(accumulatedLatency: latency, failure: failure),
-          isNew: false, eventSource: .map
+          isNew: talkerIsNew, eventSource: .map
         )
       } else {
         try participant.join(
           attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
           attributeValue: boundTalker.1.makeAdvertise(accumulatedLatency: latency),
-          isNew: false, eventSource: .map
+          isNew: talkerIsNew, eventSource: .map
         )
       }
 
@@ -1576,10 +1591,12 @@ extension MSRPApplication {
     let desiredListenerPort: P.ID? = plan.mergedListener != nil ? boundTalker.0.port.id : nil
 
     if let merged = plan.mergedListener {
+      // New if a topology change occurred on any listener's ingress port (10.3 a)
+      let listenerIsNew = !plan.listenerSourcePorts.isDisjoint(with: _tcDetected)
       try boundTalker.0.join(
         attributeType: MSRPAttributeType.listener.rawValue,
         attributeSubtype: merged.attributeSubtype!.rawValue,
-        attributeValue: listenerValue, isNew: false, eventSource: .map
+        attributeValue: listenerValue, isNew: listenerIsNew, eventSource: .map
       )
     }
 

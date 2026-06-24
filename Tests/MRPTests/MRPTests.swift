@@ -112,6 +112,19 @@ private func _isDeclared(
   ).contains(where: \.isDeclared)
 }
 
+// the Applicant state of the propagated Talker Advertise on a port (New declarations leave it
+// in .VN/.AN). Free function so it can be used inside _waitFor's @Sendable closure.
+private func _talkerApplicantState(
+  _ msrp: MSRPApplication<MockPort>, _ streamID: MSRPStreamID, port: Int
+) async -> Applicant.State? {
+  guard let participant = try? await msrp.findParticipant(port: MockPort(id: port))
+  else { return nil }
+  return await participant.findAllAttributes(
+    attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
+    matching: .matchAnyIndex(streamID.id)
+  ).first?.applicantState
+}
+
 // the subtype of the declared listener attribute for a stream on a port (nil if none declared)
 private func _declaredListenerSubtype(
   _ msrp: MSRPApplication<MockPort>, _ streamID: MSRPStreamID, port: Int
@@ -3183,6 +3196,33 @@ extension MRPTests {
 
   // a port moving to a blocked (non-Forwarding) spanning-tree state stops propagating and
   // withdraws its reservation; restoring Forwarding reprograms it (35.1.3.1)
+  // 10.3 a): a declaration propagated from a port that just underwent a spanning-tree transition
+  // is marked New. Observed via the propagated Talker's Applicant state (New leaves it .VN/.AN).
+  func testRecomputeTopologyChangeMarksPropagatedTalkerNew() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0045)
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise,
+                     value: _talkerAdvertise(streamID), event: .JoinIn)
+    try await _drive(msrp, port: 1, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready)
+    _ = await _waitFor { await _isDeclared(msrp, .talkerAdvertise, streamID, port: 1) }
+    let before = await _talkerApplicantState(msrp, streamID, port: 1)
+    XCTAssertNotNil(before)
+    XCTAssertFalse(before == .VN || before == .AN,
+                   "no New on the propagated talker before any topology change")
+
+    // a spanning-tree transition on the talker's ingress port (0): block, then restore Forwarding
+    try await _setStpStates(msrp, portIDs: [0, 1], [0: .blocking])
+    try await _setStpStates(msrp, portIDs: [0, 1], [:])
+    let markedNew = await _waitFor {
+      let s = await _talkerApplicantState(msrp, streamID, port: 1)
+      return s == .VN || s == .AN
+    }
+    XCTAssertTrue(markedNew,
+                  "a Talker re-propagated after a topology change on its source must be New (10.3 a)")
+    _ = controller
+  }
+
   func testRecomputeBlockedPortWithdrawsAndRestores() async throws {
     let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0, 1])
     let streamID = MSRPStreamID(0x0001_0000_0000_0033)
