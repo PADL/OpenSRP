@@ -111,6 +111,19 @@ private func _isDeclared(
   ).contains(where: \.isDeclared)
 }
 
+// the subtype of the declared listener attribute for a stream on a port (nil if none declared)
+private func _declaredListenerSubtype(
+  _ msrp: MSRPApplication<MockPort>, _ streamID: MSRPStreamID, port: Int
+) async -> MSRPAttributeSubtype? {
+  guard let participant = try? await msrp.findParticipant(port: MockPort(id: port))
+  else { return nil }
+  let declared = await participant.findAllAttributes(
+    attributeType: MSRPAttributeType.listener.rawValue, matching: .matchAnyIndex(streamID.id)
+  ).first { $0.isDeclared }
+  guard let subtype = declared?.attributeSubtype else { return nil }
+  return MSRPAttributeSubtype(rawValue: subtype)
+}
+
 struct MockBridge: MRP.Bridge, CustomStringConvertible {
   var notifications = AsyncEmptySequence<MRP.PortNotification<MockPort>>().eraseToAnyAsyncSequence()
   var rxPackets = AsyncEmptySequence<(Int, IEEE802Packet)>().eraseToAnyAsyncSequence()
@@ -3152,6 +3165,109 @@ extension MRPTests {
     XCTAssertTrue(failed, "an unbridgeable talker must be declared talkerFailed on the egress")
     let advertised = await _isDeclared(msrp, .talkerAdvertise, streamID, port: 1)
     XCTAssertFalse(advertised, "should not also be advertised")
+    _ = controller
+  }
+
+  // a listener on an egress whose talker fails admission control must NOT get a bandwidth
+  // reservation: the bridge declares TalkerFailed out that port, so the stream cannot flow and
+  // no CBS/FDB reservation may be programmed for it (the listener is AskingFailed)
+  func testRecomputeAdmissionFailedEgressListenerGetsNoReservation() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_003A)
+    let bigTalker = MSRPTalkerAdvertiseValue(
+      streamID: streamID,
+      dataFrameParameters: MSRPDataFrameParameters(
+        destinationAddress: [0x91, 0xE0, 0xF0, 0x00, 0x00, 0x02], vlanIdentifier: 2
+      ),
+      tSpec: MSRPTSpec(maxFrameSize: 1000, maxIntervalFrames: 1000),
+      priorityAndRank: MSRPPriorityAndRank(dataFramePriority: .CA, rank: false),
+      accumulatedLatency: 1000
+    )
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise, value: bigTalker, event: .JoinIn)
+    try await _drive(msrp, port: 1, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready)
+    let failed = await _waitFor { await _isDeclared(msrp, .talkerFailed, streamID, port: 1) }
+    XCTAssertTrue(failed, "the unbridgeable talker must be declared talkerFailed on the egress")
+    // give the recompute time to (not) program a reservation
+    try? await Task.sleep(nanoseconds: 200_000_000)
+    let cbs = await recorder.cbs
+    XCTAssertFalse(cbs.contains { $0.port == 1 && $0.idleSlope > 0 },
+                   "no bandwidth may be reserved on an admission-failed egress")
+    let fdb = await recorder.fdbRegister
+    XCTAssertFalse(fdb.contains { $0.ports.contains(1) },
+                   "no FDB reservation may be programmed on an admission-failed egress")
+    _ = controller
+  }
+
+  // Table 35-12 (35.2.4.4.1): the listener propagated toward the talker keys on the Talker
+  // *registered* on the source port, NOT on a local per-egress admission result. When the
+  // bound talker is registered as Advertise but a local egress fails bandwidth admission, the
+  // listener is forwarded toward the talker as-is (Ready) — the AskingFailed comes back from
+  // the downstream listener reacting to the TalkerFailed we declare out the failed egress.
+  func testRecomputeAdmissionFailedEgressForwardsListenerAsIsTowardTalker() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_003B)
+    let bigTalker = MSRPTalkerAdvertiseValue(
+      streamID: streamID,
+      dataFrameParameters: MSRPDataFrameParameters(
+        destinationAddress: [0x91, 0xE0, 0xF0, 0x00, 0x00, 0x02], vlanIdentifier: 2
+      ),
+      tSpec: MSRPTSpec(maxFrameSize: 1000, maxIntervalFrames: 1000),
+      priorityAndRank: MSRPPriorityAndRank(dataFramePriority: .CA, rank: false),
+      accumulatedLatency: 1000
+    )
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise, value: bigTalker, event: .JoinIn)
+    try await _drive(msrp, port: 1, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready)
+    // the listener declaration merged toward the talker (port 0) must be forwarded as-is (Ready)
+    let merged = await _waitFor {
+      await _declaredListenerSubtype(msrp, streamID, port: 0) == .ready
+    }
+    XCTAssertTrue(merged,
+                  "a listener whose local egress failed admission is still forwarded Ready toward the talker")
+    _ = controller
+  }
+
+  // Table 35-12 (35.2.4.4.1): when the bound talker is *registered* as Failed, an associated
+  // Listener Ready must be propagated toward the talker as Asking Failed.
+  func testRecomputeRegisteredTalkerFailedMergesAskingFailedTowardTalker() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_003D)
+    try await _drive(msrp, port: 0, attributeType: .talkerFailed,
+                     value: _talkerFailed(streamID), event: .JoinIn)
+    try await _drive(msrp, port: 1, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready)
+    let merged = await _waitFor {
+      await _declaredListenerSubtype(msrp, streamID, port: 0) == .askingFailed
+    }
+    XCTAssertTrue(merged,
+                  "a registered Talker Failed forces the merged listener toward the talker to Asking Failed")
+    _ = controller
+  }
+
+  // on a point-to-point link, a port that registers both the talker and a listener for the
+  // same stream (the bound talker's own port) must not get a reservation back toward the
+  // source; a separate Forwarding listener still reserves normally
+  func testRecomputeNoReservationBackTowardPointToPointTalker() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_003C)
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise,
+                     value: _talkerAdvertise(streamID), event: .JoinIn)
+    // a listener on the talker's own (point-to-point) port: MockPort.isPointToPoint == true
+    try await _drive(msrp, port: 0, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready)
+    try await _drive(msrp, port: 1, attributeType: .listener,
+                     value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready)
+    let reserved = await _waitFor { await recorder.fdbRegister.contains { $0.ports.contains(1) } }
+    XCTAssertTrue(reserved, "the genuine downstream listener (port 1) must reserve")
+    // the talker's own port must never get a reservation back toward the source
+    try? await Task.sleep(nanoseconds: 200_000_000)
+    let cbs = await recorder.cbs
+    XCTAssertFalse(cbs.contains { $0.port == 0 && $0.idleSlope > 0 },
+                   "no reservation may be programmed back out the point-to-point talker port")
+    let fdb = await recorder.fdbRegister
+    XCTAssertFalse(fdb.contains { $0.ports.contains(0) },
+                   "no FDB reservation may be programmed on the point-to-point talker port")
     _ = controller
   }
 

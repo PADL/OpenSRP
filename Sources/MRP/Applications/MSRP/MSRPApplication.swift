@@ -1390,45 +1390,57 @@ extension MSRPApplication {
       // it and no reservation is programmed on it (35.1.3.1, 10.3)
       guard _portStates[participant.port.id]?.isForwarding ?? false else { return }
 
-      // a listener reserves on its own port using its own declaration (a failed talker
-      // forces askingFailed); .ignore subtypes don't reserve
+      // the bound talker's own port faces the talker, not a listener: never propagate the
+      // talker, merge a listener, or program admission back out the source port. On a
+      // point-to-point source link don't reserve a path back out it either; otherwise a
+      // listener registered on the (shared) source port still reserves locally
+      if participant.port == boundTalker.0.port {
+        if !participant.port.isPointToPoint,
+           let listener = _findListenerRegistration(for: streamID, participant: participant),
+           let ownDeclaration = MSRPDeclarationType(attributeSubtype: listener.1)
+        {
+          plan.listenerPorts
+            .append((participant, failed != nil ? .listenerAskingFailed : ownDeclaration))
+        }
+        return
+      }
+
+      // global talker failed fails everywhere, otherwise apply bandwidth
+      // check on this listener port in case we should declare failed locally
+      var egressFailure: MSRPFailure? = failed
+        .map { MSRPFailure(systemID: $0.systemID, failureCode: $0.failureCode) }
+      if egressFailure == nil {
+        do {
+          try _canBridgeTalker(participant: participant, talker: boundTalker.1)
+        } catch let error as MSRPFailure {
+          egressFailure = error
+        } catch {}
+      }
+
       if let listener = _findListenerRegistration(for: streamID, participant: participant),
          let ownDeclaration = MSRPDeclarationType(attributeSubtype: listener.1)
       {
         plan.listenerPorts
-          .append((participant, failed != nil ? .listenerAskingFailed : ownDeclaration))
+          .append((participant, egressFailure != nil ? .listenerAskingFailed : ownDeclaration))
 
-        // merge registered listeners toward the talker, excluding its own port
-        if participant.port != boundTalker.0.port {
-          plan.mergedListener = _mergeListener(
-            declarationType: ownDeclaration,
-            with: plan.mergedListener
-          )
-        }
+        // merge registered listeners toward the talker. The merge uses the listener as
+        // registered: per Table 35-12 (35.2.4.4.1) the propagation keys on the Talker
+        // *registered* on the source port (the bound talker), not on a local per-egress
+        // admission result — that case is handled by the post-loop override below.
+        plan.mergedListener = _mergeListener(
+          declarationType: ownDeclaration,
+          with: plan.mergedListener
+        )
       }
 
-      // never declare the talker back towards the source
-      guard participant.port != boundTalker.0.port,
-            _findTalkerRegistration(for: streamID, participant: participant) == nil else { return }
+      // never declare the talker onto a port that already registered it
+      guard _findTalkerRegistration(for: streamID, participant: participant) == nil else { return }
 
-      if let failed {
-        plan.talkerDeclarations
-          .append((
-            participant,
-            MSRPFailure(systemID: failed.systemID, failureCode: failed.failureCode)
-          ))
-      } else {
-        do {
-          try _canBridgeTalker(participant: participant, talker: boundTalker.1)
-          plan.talkerDeclarations.append((participant, nil))
-        } catch let error as MSRPFailure {
-          plan.talkerDeclarations.append((participant, error))
-        } catch {}
-      }
+      plan.talkerDeclarations.append((participant, egressFailure))
     }
 
-    // a failed talker forces the aggregate listener declaration toward it to askingFailed
-    // (mergedListener is non-nil iff a listener merged toward the talker — excludes its own port)
+    // Table 35-12 (35.2.4.4.1): if the bound Talker is *registered* as Failed, any associated
+    // Listener Ready/ReadyFailed must be propagated toward the talker as Asking Failed.
     if failed != nil, plan.mergedListener != nil {
       plan.mergedListener = .listenerAskingFailed
     }
@@ -1446,6 +1458,9 @@ extension MSRPApplication {
     var declaredTalkerPorts = Set<P.ID>()
 
     for (participant, failure) in plan.talkerDeclarations {
+      // a newer event re-marked this stream while we awaited: abandon the now-stale plan
+      // rather than emitting declarations from it; the pending recompute will reapply (10.3)
+      if _pendingStreams.contains(streamID) { return }
       if await _shouldPruneTalkerDeclaration(port: participant.port, talker: boundTalker.1) {
         continue // pruned: the sweep below withdraws any existing declaration
       }
@@ -1514,6 +1529,9 @@ extension MSRPApplication {
     let keep = Set(plan.listenerPorts.map(\.participant.port.id))
 
     for (participant, declarationType) in plan.listenerPorts {
+      // a newer event re-marked this stream: abandon the stale plan; it will be recomputed
+      if _pendingStreams.contains(streamID) { return }
+
       let desired = Reservation(declarationType: declarationType, talker: boundTalker.1)
 
       // idempotency: only touch the kernel when the reservation actually changed
@@ -1527,6 +1545,8 @@ extension MSRPApplication {
     }
 
     for (portID, talker) in _reservationsToWithdraw(streamID, keeping: keep) {
+      if _pendingStreams.contains(streamID) { return }
+
       if let participant = _participant(for: portID) {
         try? await _updatePortParameters(
           port: participant.port, streamID: streamID,
