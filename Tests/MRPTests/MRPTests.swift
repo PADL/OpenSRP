@@ -125,6 +125,18 @@ private func _declaredListenerSubtype(
   return MSRPAttributeSubtype(rawValue: subtype)
 }
 
+// the failure code of the declared Talker Failed attribute for a stream on a port (nil if none)
+private func _declaredTalkerFailureCode(
+  _ msrp: MSRPApplication<MockPort>, _ streamID: MSRPStreamID, port: Int
+) async -> TSNFailureCode? {
+  guard let participant = try? await msrp.findParticipant(port: MockPort(id: port))
+  else { return nil }
+  let declared = await participant.findAllAttributes(
+    attributeType: MSRPAttributeType.talkerFailed.rawValue, matching: .matchAnyIndex(streamID.id)
+  ).first { $0.isDeclared }
+  return (declared?.attributeValue as? MSRPTalkerFailedValue)?.failureCode
+}
+
 struct MockBridge: MRP.Bridge, CustomStringConvertible {
   var notifications = AsyncEmptySequence<MRP.PortNotification<MockPort>>().eraseToAnyAsyncSequence()
   var rxPackets = AsyncEmptySequence<(Int, IEEE802Packet)>().eraseToAnyAsyncSequence()
@@ -3629,6 +3641,34 @@ extension MRPTests {
     try? await Task.sleep(nanoseconds: 200_000_000)
     let touchedShaper = await recorder.cbs.contains { $0.port == 1 }
     XCTAssertFalse(touchedShaper, "an Asking Failed listener must not touch the CBS shaper at all")
+    _ = controller
+  }
+
+  // a Talker whose DataFramePriority maps to no configured SR class must be declared Talker
+  // Failed on the egress with requestedPriorityIsNotAnSRClassPriority (35.2.2.8.7 code 13),
+  // distinct from the egressPortIsNotAvbCapable (code 8) used for an SRP domain boundary port.
+  func testRecomputeNonSrClassPriorityDeclaresRequestedPriorityFailure() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_00D1)
+    // .BE is not in the bridge's SR class priority map ([.A: .CA, .B: .EE])
+    let talker = MSRPTalkerAdvertiseValue(
+      streamID: streamID,
+      dataFrameParameters: MSRPDataFrameParameters(
+        destinationAddress: [0x91, 0xE0, 0xF0, 0x00, 0x00, 0x0D], vlanIdentifier: 2
+      ),
+      tSpec: MSRPTSpec(maxFrameSize: 64, maxIntervalFrames: 1),
+      priorityAndRank: MSRPPriorityAndRank(dataFramePriority: .BE, rank: false),
+      accumulatedLatency: 1000
+    )
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise, value: talker, event: .JoinIn)
+
+    let failed = await _waitFor { await _isDeclared(msrp, .talkerFailed, streamID, port: 1) }
+    XCTAssertTrue(failed, "a non-SR-class priority must be declared Talker Failed on the egress")
+    let code = await _declaredTalkerFailureCode(msrp, streamID, port: 1)
+    XCTAssertEqual(
+      code, .requestedPriorityIsNotAnSRClassPriority,
+      "expected failure code 13, got \(String(describing: code))"
+    )
     _ = controller
   }
 
