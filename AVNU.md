@@ -10,16 +10,25 @@ in progress on that branch and not yet merged to main.
 Priority is judged by Avnu-certification readiness and on-wire robustness for the
 constrained switch appliance (P1 highest). Each TODO below is tagged inline.
 
-Resolved on branch `avnu-todo-p1-p3`: §8.1 malformed-PDU parsing (P1, fixed); §5
+Resolved (merged to main): §8.1 malformed-PDU parsing (P1, fixed); §5
 gPTP-independence and §9.1 ≤1.5s propagation (P2, verified already-compliant);
-§8.1 leave-on-blocked-port (P2, already compliant — see §8.1 below). Remaining:
+§8.1 leave-on-blocked-port (P2, already compliant — see §8.1 below); plus the
+operator-facing `mrpd --no-leave-immediate` flag for §9.2. That covered every open
+item Avnu actually *requires* that was outstanding. The three items left are all
+**P3** and deliberately deferred for this constrained switch appliance:
 
-* **P3** — §8.1 New=TRUE on tcDetected and the §10 "only Dynamic Filtering Entries
-  removed on New" that depends on it: low value here — the kernel flushes the FDB
-  on a topology change anyway and mstpd does not notify. See
+* **P3** — §8.1 New=TRUE on tcDetected, and the dependent §10 "only Dynamic
+  Filtering Entries removed on New". These *are* Avnu "shall" statements, but of low
+  practical value here: the kernel bridge already flushes the FDB on a topology
+  change and mstpd pushes no tcDetected notification (we would have to derive it
+  from IFLA_BRPORT_STATE), and the receiving MSRP ignores a received New. Implement
+  only if stale registrations are seen lingering after STP reconvergence. See
   [[reference_mrp_tcdetected_new_marking]].
-* **P3** — §10 Registration Fixed/Forbidden: a static-configuration feature this
-  appliance does not use; defer unless a deployment needs it.
+* **P3** — §10 Registration Fixed/Forbidden: **not** an Avnu mandate (Avnu only
+  clarifies the MAD_Join/Leave.indication behaviour if the 802.1Q control is
+  exercised — see §10). Management completeness, not a stream/interop requirement;
+  this appliance does not expose the control, so nothing to comply with. Defer
+  unless static per-port/VID registration pinning is needed.
 
 # 5 General requirements
 
