@@ -67,6 +67,13 @@ private final class MRPDaemon: AsyncParsableCommand {
   @Flag(name: .long, help: "Enable MSRP talker pruning")
   var enableTalkerPruning: Bool = false
 
+  @Flag(
+    name: .long,
+    inversion: .prefixedNo,
+    help: "MSRP immediate Registrar leave on received Leave (Avnu §9.2)"
+  )
+  var leaveImmediate: Bool = true
+
   @Option(name: .long, help: "Maximum number of MSRP fan-in ports")
   var maxFanInPorts: Int = 0
 
@@ -147,6 +154,7 @@ private final class MRPDaemon: AsyncParsableCommand {
     case qDiscHandle
     case forceAvbCapable
     case enableTalkerPruning
+    case leaveImmediate
     case maxFanInPorts
     case srPVid
     case classADeltaBandwidth
@@ -244,6 +252,7 @@ private final class MRPDaemon: AsyncParsableCommand {
       let queues: [SRclassID: UInt] = [.A: classAQdiscHandle, .B: classBQdiscHandle]
       var flags: MSRPApplicationFlags = .defaultFlags
       if enableTalkerPruning { flags.insert(.talkerPruning) }
+      if !leaveImmediate { flags.remove(.leaveImmediate) }
       if forceAvbCapable { flags.insert(.forceAvbCapable) }
       if configureEgressQueues || configureQueues { flags.insert(.configureEgressQueues) }
       if configureIngressQueues || configureQueues { flags.insert(.configureIngressQueues) }

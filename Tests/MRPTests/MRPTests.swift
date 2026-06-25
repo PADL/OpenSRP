@@ -2764,7 +2764,10 @@ private typealias MSRPEnqueuedEvent = EnqueuedEvent<MSRPApplication<MockPort>>
 // MARK: - MSRP per-stream recompute tests
 
 extension MRPTests {
-  private func _makeRecomputeMSRP(portIDs: [Int]) async throws
+  private func _makeRecomputeMSRP(
+    portIDs: [Int],
+    flags: MSRPApplicationFlags = .defaultFlags
+  ) async throws
     -> (MRPController<MockPort>, MSRPApplication<MockPort>, MSRPTestRecorder)
   {
     let recorder = MSRPTestRecorder()
@@ -2774,7 +2777,7 @@ extension MRPTests {
       bridge: bridge,
       logger: Logger(label: "com.padl.MRPTests.recompute")
     )
-    let msrp = try await MSRPApplication(controller: controller)
+    let msrp = try await MSRPApplication(controller: controller, flags: flags)
     try await msrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
     return (controller, msrp, recorder)
   }
@@ -3713,6 +3716,41 @@ extension MRPTests {
     )
     let withdrawn = await _waitFor { await !_isDeclared(msrp, .talkerAdvertise, streamID, port: 1) }
     XCTAssertTrue(withdrawn, "a received Leave must withdraw the propagated talker promptly")
+    _ = controller
+  }
+
+  // The counterpart to the §9.2 behaviour: with .leaveImmediate cleared (mrpd --no-leave-immediate),
+  // a received Leave (rLv!) falls back to the base 802.1Q path — the Registrar goes IN -> LV and
+  // holds the propagated declaration for the LeaveTime instead of withdrawing it at once.
+  func testMSRPLeaveImmediateDisabledRetainsTalkerOnReceivedLeave() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(
+      portIDs: [0, 1],
+      flags: MSRPApplicationFlags.defaultFlags.subtracting(.leaveImmediate)
+    )
+    XCTAssertFalse(
+      msrp.registrarLeaveImmediate, "--no-leave-immediate must clear the leaveImmediate flag"
+    )
+    let streamID = MSRPStreamID(0x0001_0000_0000_00E2)
+
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .JoinIn
+    )
+    let propagated = await _waitFor { await _isDeclared(msrp, .talkerAdvertise, streamID, port: 1) }
+    XCTAssertTrue(propagated, "the talker should propagate to the egress")
+
+    // a received Leave; without immediate leave the Registrar goes IN -> LV (leavetimer), so the
+    // egress declaration must persist well within the (5s) LeaveTime rather than dropping at once
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .Lv
+    )
+    try await Task.sleep(nanoseconds: 300_000_000)
+    let stillDeclared = await _isDeclared(msrp, .talkerAdvertise, streamID, port: 1)
+    XCTAssertTrue(
+      stillDeclared,
+      "without leaveImmediate a received Leave must not withdraw the talker before the LeaveTime"
+    )
     _ = controller
   }
 
