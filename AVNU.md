@@ -10,15 +10,10 @@ in progress on that branch and not yet merged to main.
 Priority is judged by Avnu-certification readiness and on-wire robustness for the
 constrained switch appliance (P1 highest). Each TODO below is tagged inline.
 
-* **P1** — §8.1 parse badly formed PDUs up to the bad octet, then discard the
-  remainder. The one genuine behavioural gap: we currently rethrow on a malformed
-  lower-version PDU instead of acting on the good prefix.
-* **P2** — §8.1 leave propagation on non-Forwarding ports: resolve whether our
-  deliberate 35.1.3.1 gating is acceptable or must yield to the Avnu "may still
-  propagate" allowance (design decision, not obviously a bug).
-* **P2** — §5 Domain-declaration independence from gPTP, and §9.1 ≤1.5s
-  propagation: both are most likely already satisfied; cheap to verify/measure and
-  close out.
+Resolved on branch `avnu-todo-p1-p3`: §8.1 malformed-PDU parsing (P1, fixed); §5
+gPTP-independence and §9.1 ≤1.5s propagation (P2, verified already-compliant);
+§8.1 leave-on-blocked-port (P2, already compliant — see §8.1 below). Remaining:
+
 * **P3** — §8.1 New=TRUE on tcDetected and the §10 "only Dynamic Filtering Entries
   removed on New" that depends on it: low value here — the kernel flushes the FDB
   on a topology change anyway and mstpd does not notify. See
@@ -80,7 +75,7 @@ constrained switch appliance (P1 highest). Each TODO below is tagged inline.
 
 * ca011b8: EndMark/End of PDU is serialized as 0x0000 (PDU.swift `EndMark`), so no PAD ever follows a literal "End of PDU"
 * TODO (P3): set New to TRUE on MAD\_Join.{indications,requests} after topology change (tcDetected). See [[reference_mrp_tcdetected_new_marking]]
-* TODO (P2): propogate leave events when port not in forwarding state — we currently *suppress* declarations on non-Forwarding ports (35.1.3.1 gating, MSRPApplication `isForwarding` guard); Avnu permits leaves to still propagate, so revisit (design decision)
+* DONE: leave events are transmitted from a port while it is not in the Forwarding state. The 35.1.3.1 gating only suppresses *new* declarations (joins) on a blocked port; withdrawals are not gated. When a port goes non-Forwarding the recompute's withdraw sweep (`_applyStreamPlan`, via `apply(for:)` over *all* participants regardless of STP state) leaves any actively-declared attribute, and the applicant `Lv` path (QA/AA → LA → `sL`) transmits the Leave on the next tx opportunity — and neither the sweep nor the tx path (`Participant._tx`) checks Forwarding state, so the Leave goes out the blocked port. A *passively* declared attribute (applicant VP, never announced) correctly emits no Leave (`Lv`: VP → VO) — you do not Leave what you never Joined on the wire. So §8.1 is satisfied by existing behaviour; no separate "propagate on blocked port" path is needed.
 * DONE: for each registered Talker attribute, a corresponding Listener attribute can be registered on all ports — satisfied by the per-stream propagation model (Talker propagates to other ports, Listener declarations merge toward the talker), not auto-generated
 * DONE: badly formed PDUs are parsed up to the bad octet — the MRPDU message loop keeps the messages parsed before a corrupted/truncated field and discards the remainder (a structural MRPError or the BinaryParsing buffer overrun both break-and-keep, rather than discarding the whole PDU). Forward-compat unknown-attribute skipping on a higher protocol version is preserved. Locked in by testMalformedPduKeepsValidPrefix
 
