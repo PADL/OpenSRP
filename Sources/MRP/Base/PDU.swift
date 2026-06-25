@@ -418,27 +418,26 @@ struct MRPDU {
   ) throws {
     protocolVersion = try UInt8(parsing: &input)
     var messages = [Message]()
-    repeat {
-      // Peek at next 2 bytes to check for EndMark
+    while input.count > 0 {
+      // Peek at the next 2 octets for the EndMark. Fewer than 2 octets remaining means a
+      // truncated/badly-formed tail: stop and keep the messages parsed so far. Avnu ProAV Bridge
+      // §8.1 — upon receipt of a badly formed MRPDU a Bridge may act on the contents preceding the
+      // corrupted field and shall discard everything that follows it.
       var peekSpan = ParserSpan(input.bytes)
-      let mark: UInt16 = try UInt16(parsing: &peekSpan, storedAsBigEndian: UInt16.self)
-      if mark == EndMark {
+      guard let mark = try? UInt16(parsing: &peekSpan, storedAsBigEndian: UInt16.self),
+            mark != EndMark else { break }
+      do {
+        try messages.append(Message(parsing: &input, application: application))
+      } catch let error as MRPError where protocolVersion > application.protocolVersion &&
+        (error == .unknownAttributeType || error == .unknownAttributeEvent) {
+        // clause 10.8.3.5: skip unknown attributes if the PDU has a higher protocol version
+        continue
+      } catch {
+        // a corrupted or truncated field (a structural MRPError, or the parser running off the
+        // end of the buffer): discard from here on, keeping the valid prefix (Avnu §8.1).
         break
       }
-      do {
-        try messages.append(Message(
-          parsing: &input,
-          application: application
-        ))
-      } catch let error as MRPError {
-        // clause 10.8.3.5: skip unknown attributes if PDU has a higher protocol version
-        guard protocolVersion > application.protocolVersion,
-              error == .unknownAttributeType || error == .unknownAttributeEvent
-        else {
-          throw error
-        }
-      }
-    } while input.count > 0
+    }
     self.messages = messages
   }
 

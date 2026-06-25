@@ -82,7 +82,7 @@ constrained switch appliance (P1 highest). Each TODO below is tagged inline.
 * TODO (P3): set New to TRUE on MAD\_Join.{indications,requests} after topology change (tcDetected). See [[reference_mrp_tcdetected_new_marking]]
 * TODO (P2): propogate leave events when port not in forwarding state — we currently *suppress* declarations on non-Forwarding ports (35.1.3.1 gating, MSRPApplication `isForwarding` guard); Avnu permits leaves to still propagate, so revisit (design decision)
 * DONE: for each registered Talker attribute, a corresponding Listener attribute can be registered on all ports — satisfied by the per-stream propagation model (Talker propagates to other ports, Listener declarations merge toward the talker), not auto-generated
-* TODO (P1): validate badly formed PDUs are parsed until bad octet — only forward-compat skipping of unknown attribute type/event on a higher protocol version exists today (PDU.swift); a malformed lower-version PDU still rethrows
+* DONE: badly formed PDUs are parsed up to the bad octet — the MRPDU message loop keeps the messages parsed before a corrupted/truncated field and discards the remainder (a structural MRPError or the BinaryParsing buffer overrun both break-and-keep, rather than discarding the whole PDU). Forward-compat unknown-attribute skipping on a higher protocol version is preserved. Locked in by testMalformedPduKeepsValidPrefix
 
 ## 8.2 MRP timer values
 

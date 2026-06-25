@@ -454,6 +454,51 @@ final class MRPTests: XCTestCase {
     )
   }
 
+  // Avnu ProAV Bridge §8.1: upon receipt of a badly formed MRPDU, a Bridge may act on the
+  // contents preceding the corrupted field and shall discard everything that follows. A valid
+  // message followed by a corrupt/truncated tail must therefore parse to the good prefix rather
+  // than throwing the whole PDU away.
+  func testMalformedPduKeepsValidPrefix() async throws {
+    let logger = Logger(label: "com.padl.MRPTests")
+    let bridge = MockBridge()
+    let controller = try await MRPController(bridge: bridge, logger: logger)
+    let mvrp = try await MVRPApplication(controller: controller)
+
+    // a valid single-message MVRP MRPDU: VLAN 1, JoinIn
+    let vectorAttribute = VectorAttribute<AnyValue>(
+      leaveAllEvent: .NullLeaveAllEvent,
+      firstValue: AnyValue(VLAN(vid: 1)),
+      attributeEvents: [.JoinIn],
+      applicationEvents: nil
+    )
+    let message = Message(
+      attributeType: MVRPAttributeType.vid.rawValue, attributeList: [vectorAttribute]
+    )
+    var sc = SerializationContext()
+    try MRPDU(protocolVersion: 0, messages: [message]).serialize(into: &sc, application: mvrp)
+    let validBytes = sc.bytes
+
+    // sanity: the well-formed PDU parses to exactly one message
+    let valid = try validBytes.withParserSpan { try MRPDU(parsing: &$0, application: mvrp) }
+    XCTAssertEqual(valid.messages.count, 1)
+
+    // drop the trailing MRPDU EndMark (last 2 octets) so the malformations land *before* the end,
+    // where the parser would otherwise stop cleanly
+    let prefix = Array(validBytes.dropLast(2))
+
+    // malformation #1: a single stray octet — too few bytes to peek the next EndMark (truncated
+    // tail). Before the fix this threw out of the parser (BinaryParsing overrun, not an MRPError).
+    let strayOctet = try (prefix + [0x01])
+      .withParserSpan { try MRPDU(parsing: &$0, application: mvrp) }
+    XCTAssertEqual(strayOctet.messages.count, 1, "valid message kept, stray octet discarded")
+
+    // malformation #2: a second message that begins plausibly (attributeType, attributeLength)
+    // but is truncated mid-attribute — the Message parser runs off the end.
+    let truncatedMessage = try (prefix + [0x01, 0x02, 0xFF])
+      .withParserSpan { try MRPDU(parsing: &$0, application: mvrp) }
+    XCTAssertEqual(truncatedMessage.messages.count, 1, "valid message kept, truncated msg discarded")
+  }
+
   func testLeaveAllOnlyVectorAttribute() {
     let vectorAttribute = VectorAttribute<AnyValue>(
       leaveAllEvent: .LeaveAll,
