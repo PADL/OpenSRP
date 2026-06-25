@@ -14,8 +14,9 @@ in progress on that branch and not yet merged to main.
 
 * TODO: SRP domain boundary-port priority regeneration: when a port is a
   boundary port, SR classes (typically PCP 2 and 3) should be mapped to
-  PCP 0. Hard to do with offload as the DCB API maps PCP values to queues.
-  More investigation required.
+  PCP 0. Can be done with TC flower, but would require extending the TCAM
+  support for the Marvell switches. May not be worth it given the switch
+  will reprioritize non-AVB packets already (determined by FDB).
 * NA: implement the Credit Based Shaper, this is done by the kernel and/or
   switch chip
 * c0b74d4: support SR Class A and SR Class B
