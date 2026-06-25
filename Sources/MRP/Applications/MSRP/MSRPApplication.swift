@@ -778,21 +778,21 @@ extension MSRPApplication {
     _ lhs: MSRPTalkerAdvertiseValue,
     _ rhs: MSRPTalkerAdvertiseValue
   ) -> Bool {
-    let lhsRank = lhs.priorityAndRank.rank ? 1 : 0
-    let rhsRank = rhs.priorityAndRank.rank ? 1 : 0
-
-    if lhsRank == rhsRank {
-      let lhsStreamAge = portState.getStreamAge(for: lhs.streamID)
-      let rhsStreamAge = portState.getStreamAge(for: rhs.streamID)
-
-      if lhsStreamAge == rhsStreamAge {
-        return lhs.streamID.id < rhs.streamID.id
-      } else {
-        return lhsStreamAge > rhsStreamAge
-      }
-    } else {
-      return lhsRank > rhsRank
+    // 802.1Q 35.2.2.8.5: the Rank bit reset (rank == false) is Emergency and
+    // outranks the bit set (Non-emergency); Avnu §9.1 preempts in favour of
+    // the Rank-reset stream
+    if lhs.priorityAndRank.rank != rhs.priorityAndRank.rank {
+      return !lhs.priorityAndRank.rank
     }
+
+    // same rank: the older (greater stream age) stream is more important;
+    // finally lower StreamID
+    let lhsStreamAge = portState.getStreamAge(for: lhs.streamID)
+    let rhsStreamAge = portState.getStreamAge(for: rhs.streamID)
+    if lhsStreamAge == rhsStreamAge {
+      return lhs.streamID.id < rhs.streamID.id
+    }
+    return lhsStreamAge > rhsStreamAge
   }
 
   private func _checkAsCapable(
