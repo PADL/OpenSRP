@@ -19,10 +19,10 @@ in progress on that branch and not yet merged to main.
   will reprioritize non-AVB packets already (determined by FDB).
 * NA: implement the Credit Based Shaper, this is done by the kernel and/or
   switch chip
-* c0b74d4: support SR Class A and SR Class B
 * NA: filter SR class priorities when destination MACs are not used by reserved
   stream: handled by TC flower `dynamic_reservation_hit` or Marvell switches in
   enhanced mode (both handled by our kernel patches)
+* c0b74d4: support SR Class A and SR Class B
 
 # 7 gPTP
 
@@ -34,8 +34,8 @@ in progress on that branch and not yet merged to main.
 
 ## 8.1 General
 
-* ca011b8: EndMark/End of PDU is serialized as 0x0000
 * TODO (P3): set New to TRUE on MAD\_Join.{indications,requests} `tcDetected`.
+* ca011b8: EndMark/End of PDU is serialized as 0x0000
 * DONE: leave events are transmitted from a port while it is not in the
   Forwarding state.
 * DONE: for each registered Talker attribute, a corresponding Listener attribute
@@ -58,14 +58,14 @@ in progress on that branch and not yet merged to main.
 
 ## 9.1 General
 
+* TODO: preempt Emergency streams (Rank reset) (msrp-preemption-proxy-leave branch)
 * f412134b: validate MaxIntervalFrames != 0
-* DONE: disable Talker pruning
-* DONE: MSRP attributes propagate within 1.5s.
 * 5e7aca0: always declare SR Class A and B Domain on each port
-* DONE: include VLAN tag in bandwidth calculation
 * 80272d31: check periodic state machine disabled per 5.4.4 in 802.1Q
 * 1e39019: proxy MSRP Talker leave requests from listener to talker
-* TODO: preempt Emergency streams (Rank reset) (msrp-preemption-proxy-leave branch)
+* DONE: include VLAN tag in bandwidth calculation
+* DONE: disable Talker pruning
+* DONE: MSRP attributes propagate within 1.5s.
 
 ## 9.2 Instantaneous transition from IN to MT
 
@@ -77,8 +77,8 @@ in progress on that branch and not yet merged to main.
 
 # 10 MVRP
 
+* TODO: only Dynamic Filtering Entries shall be removed when new is received
+* TODO: Registration Fixed/Forbidden (optional)
 * NA: minimum 16 VLANs
 * NA: enable ingress filtering by default
 * NA: C-VLAN bridge by default
-* TODO: only Dynamic Filtering Entries shall be removed when new is received
-* TODO: Registration Fixed/Forbidden (optional)
