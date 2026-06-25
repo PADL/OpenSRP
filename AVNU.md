@@ -45,23 +45,22 @@ gPTP-independence and §9.1 ≤1.5s propagation (P2, verified already-compliant)
 * msrp-dcb-pcp-frame-priority (5a9bd39): SRP domain boundary-port priority
   regeneration override (802.1Q Cl.6.9.4, default values Table 6-5) — map ingress
   PCP to frame priority, not queue. See [[reference_dcb_pcp_fpri]]
-* TODO (P2): make ingress priority regeneration boundary-aware. The SRP clause
-  (§35.2.4.3) only defines the boundary as a Talker-Advertise→Talker-Failed (code
-  8) conversion; the actual priority *remapping* is defined elsewhere in 802.1Q
-  (Cl.6.9.4 priority regeneration, not in the SRP excerpt). On an SRP domain
-  **boundary** port, an ingress frame bearing a priority that coincides with an SR
-  class priority is not genuine stream traffic (the neighbour is outside the
-  domain), so its PCP must be regenerated — to 0, per recollection of Cl.6.9.4;
-  confirm against the full clause. This must update **dynamically**:
-  `SRPdomainBoundaryPort` is per-port-per-SR-class and flips as Domain attributes
-  register/withdraw (§35.2.1.4 item h), so the regeneration table has to be
-  reprogrammed when boundary status changes. Open question: whether any remapping
-  is needed on a **core** port (inside the SR domain) — likely none, since there
-  the SR class priority is honoured. (§35.2.4 also notes a port forwards MSRP
-  declarations only for SR classes it supports, to avoid needless remapping of
-  unsupported-class traffic.) NB: DCB only gives us PCP→**queue** mapping, not PCP
-  regeneration (rewriting the priority value); a different kernel API is needed to
-  actually remap the ingress PCP to 0.
+* NA (datapath): boundary-port priority regeneration (802.1Q Cl.6.9.4). At an SRP
+  domain **boundary** port, a received frame bearing an SR class priority (by
+  default PCP 3 = Class A, 2 = Class B) is not genuine stream traffic, so Cl.6.9.4
+  regenerates its PCP to **0** (this should be configurable). DCB cannot do this —
+  it maps PCP→**queue**, not the PCP value — so it is a datapath concern outside
+  OpenSRP. It is effectively subsumed by the same capability as the SR-priority
+  filter above: on the Marvell switch in enhanced AVB mode, and in the software
+  bridge via `dynamic_reservation_hit`, we already remap AVB-priority frames that
+  have no FDB (reserved-stream) entry, from any port. That keys on reservation
+  presence (per-stream) rather than `SRPdomainBoundaryPort` (per-port), which is
+  finer-grained and achieves the same goal — non-reserved AVB-priority traffic is
+  demoted regardless of boundary status, so no per-boundary regeneration table
+  reprogramming is needed. See [[reference_mv88e6xxx_bad_avb_no_reservation]],
+  [[reference_dcb_pcp_fpri]]. (Aside: the SRP clause §35.2.4.3 only defines the
+  boundary as a Talker-Advertise→Talker-Failed code-8 conversion; the priority
+  *remapping* lives in Cl.6.9.4, not the SRP excerpt.)
 
 # 7 gPTP
 
@@ -125,4 +124,13 @@ gPTP-independence and §9.1 ≤1.5s propagation (P2, verified already-compliant)
 * NA: enable ingress filtering by default
 * NA: C-VLAN bridge by default
 * TODO (P3): only Dynamic Filtering Entries shall be removed when new is received — not wired; `isNew` is logged but unused in MVRPApplication ("TODO: flush FDB entries following a topology change, if isNew is true"). Depends on the §8.1 tcDetected New-marking
-* TODO (P3): Registration Fixed/Forbidden support — not implemented; MVRP `isRegistrationAllowed` always returns true. Static-config feature unused by this appliance
+* TODO (P3, not an Avnu mandate): Registration Fixed/Forbidden. Avnu §10 does not
+  require *supporting* it — it only clarifies the indication behaviour **if** the
+  802.1Q control is exercised: setting an attribute to Registration Fixed issues a
+  MAD_Join.indication, Registration Forbidden a MAD_Leave.indication, and returning
+  to NormalRegistration acts as `rLv!` (10.7.5.17). So this is 802.1Q management
+  completeness, not a stream/interop requirement; it only bites if the Registrar
+  Administrative Control is actually used, which this appliance does not. The
+  Registrar SM machinery partly exists (`.registrationForbidden`,
+  `.registrationFixedNew{Ignored,Propagated}`), but there is no per-port/VID
+  management surface and MVRP `isRegistrationAllowed` always returns true.
