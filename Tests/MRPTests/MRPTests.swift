@@ -496,7 +496,11 @@ final class MRPTests: XCTestCase {
     // but is truncated mid-attribute — the Message parser runs off the end.
     let truncatedMessage = try (prefix + [0x01, 0x02, 0xFF])
       .withParserSpan { try MRPDU(parsing: &$0, application: mvrp) }
-    XCTAssertEqual(truncatedMessage.messages.count, 1, "valid message kept, truncated msg discarded")
+    XCTAssertEqual(
+      truncatedMessage.messages.count,
+      1,
+      "valid message kept, truncated msg discarded"
+    )
   }
 
   func testLeaveAllOnlyVectorAttribute() {
@@ -2595,7 +2599,11 @@ final class MRPTests: XCTestCase {
     // Test VO state with txLAF! when registered
     let applicant1 = Applicant()
     XCTAssertEqual(applicant1.description, "VO")
-    let (action1, txOpp1) = applicant1.action(for: .txLAF, registrarState: registeredState, flags: [])
+    let (action1, txOpp1) = applicant1.action(
+      for: .txLAF,
+      registrarState: registeredState,
+      flags: []
+    )
     XCTAssertNil(action1)
     XCTAssertTrue(txOpp1)
     XCTAssertEqual(
@@ -2609,7 +2617,11 @@ final class MRPTests: XCTestCase {
     _ = applicant2.action(for: .rJoinIn, flags: unregisteredFlags) // VO -> AO
     XCTAssertEqual(applicant2.description, "AO")
 
-    let (action2, txOpp2) = applicant2.action(for: .txLAF, registrarState: registeredState, flags: [])
+    let (action2, txOpp2) = applicant2.action(
+      for: .txLAF,
+      registrarState: registeredState,
+      flags: []
+    )
     XCTAssertNil(action2)
     XCTAssertTrue(txOpp2)
     XCTAssertEqual(
@@ -2624,7 +2636,11 @@ final class MRPTests: XCTestCase {
     _ = applicant3.action(for: .rJoinIn, flags: unregisteredFlags) // AO -> QO
     XCTAssertEqual(applicant3.description, "QO")
 
-    let (action3, txOpp3) = applicant3.action(for: .txLAF, registrarState: registeredState, flags: [])
+    let (action3, txOpp3) = applicant3.action(
+      for: .txLAF,
+      registrarState: registeredState,
+      flags: []
+    )
     XCTAssertNil(action3)
     XCTAssertTrue(txOpp3)
     XCTAssertEqual(
@@ -2666,7 +2682,11 @@ final class MRPTests: XCTestCase {
     _ = applicant2.action(for: .Lv, registrarState: registeredState, flags: []) // QA -> LA
     XCTAssertEqual(applicant2.description, "LA")
 
-    let (action2, txOpp2) = applicant2.action(for: .txLAF, registrarState: registeredState, flags: [])
+    let (action2, txOpp2) = applicant2.action(
+      for: .txLAF,
+      registrarState: registeredState,
+      flags: []
+    )
     XCTAssertNil(action2)
     XCTAssertTrue(txOpp2)
     XCTAssertEqual(
@@ -3569,30 +3589,56 @@ extension MRPTests {
     let streamB = MSRPStreamID(0x0001_0000_0000_0041)
 
     // A reserves on the shared egress (port 2)
-    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise,
-                     value: _halfLimitClassATalker(streamA, dest: [0x91, 0xE0, 0xF0, 0, 0, 1]),
-                     event: .JoinIn)
-    try await _drive(msrp, port: 2, attributeType: .listener,
-                     value: MSRPListenerValue(streamID: streamA), event: .JoinIn, subtype: .ready)
+    try await _drive(
+      msrp,
+      port: 0,
+      attributeType: .talkerAdvertise,
+      value: _halfLimitClassATalker(streamA, dest: [0x91, 0xE0, 0xF0, 0, 0, 1]),
+      event: .JoinIn
+    )
+    try await _drive(
+      msrp,
+      port: 2,
+      attributeType: .listener,
+      value: MSRPListenerValue(streamID: streamA),
+      event: .JoinIn,
+      subtype: .ready
+    )
     let aReserved = await _waitFor {
       await recorder.cbs.contains { $0.port == 2 && $0.idleSlope > 0 }
     }
     XCTAssertTrue(aReserved, "stream A reserves on the shared egress")
 
     // B cannot also be admitted on port 2 while A holds its reservation
-    try await _drive(msrp, port: 1, attributeType: .talkerAdvertise,
-                     value: _halfLimitClassATalker(streamB, dest: [0x91, 0xE0, 0xF0, 0, 0, 2]),
-                     event: .JoinIn)
-    try await _drive(msrp, port: 2, attributeType: .listener,
-                     value: MSRPListenerValue(streamID: streamB), event: .JoinIn, subtype: .ready)
+    try await _drive(
+      msrp,
+      port: 1,
+      attributeType: .talkerAdvertise,
+      value: _halfLimitClassATalker(streamB, dest: [0x91, 0xE0, 0xF0, 0, 0, 2]),
+      event: .JoinIn
+    )
+    try await _drive(
+      msrp,
+      port: 2,
+      attributeType: .listener,
+      value: MSRPListenerValue(streamID: streamB),
+      event: .JoinIn,
+      subtype: .ready
+    )
     let bFailed = await _waitFor { await _isDeclared(msrp, .talkerFailed, streamB, port: 2) }
     XCTAssertTrue(bFailed, "B fails admission against A's reservation on the shared egress")
 
     // release A's reservation (its listener leaves); re-evaluate B only once A is withdrawn
     // (the drain order over the pending set is not guaranteed)
     let deregBefore = await recorder.fdbDeregister.count
-    try await _drive(msrp, port: 2, attributeType: .listener,
-                     value: MSRPListenerValue(streamID: streamA), event: .JoinIn, subtype: .ignore)
+    try await _drive(
+      msrp,
+      port: 2,
+      attributeType: .listener,
+      value: MSRPListenerValue(streamID: streamA),
+      event: .JoinIn,
+      subtype: .ignore
+    )
     _ = await _waitFor { await recorder.fdbDeregister.count > deregBefore }
     await msrp._streamDidUpdate(streamB)
     let bAdmitted = await _waitFor { await _isDeclared(msrp, .talkerAdvertise, streamB, port: 2) }
@@ -3608,18 +3654,38 @@ extension MRPTests {
     let streamA = MSRPStreamID(0x0001_0000_0000_0042)
     let streamB = MSRPStreamID(0x0001_0000_0000_0043)
 
-    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise,
-                     value: _halfLimitClassATalker(streamA, dest: [0x91, 0xE0, 0xF0, 0, 0, 3]),
-                     event: .JoinIn)
-    try await _drive(msrp, port: 2, attributeType: .listener,
-                     value: MSRPListenerValue(streamID: streamA), event: .JoinIn, subtype: .ready)
+    try await _drive(
+      msrp,
+      port: 0,
+      attributeType: .talkerAdvertise,
+      value: _halfLimitClassATalker(streamA, dest: [0x91, 0xE0, 0xF0, 0, 0, 3]),
+      event: .JoinIn
+    )
+    try await _drive(
+      msrp,
+      port: 2,
+      attributeType: .listener,
+      value: MSRPListenerValue(streamID: streamA),
+      event: .JoinIn,
+      subtype: .ready
+    )
     _ = await _waitFor { await recorder.cbs.contains { $0.port == 2 && $0.idleSlope > 0 } }
 
-    try await _drive(msrp, port: 1, attributeType: .talkerAdvertise,
-                     value: _halfLimitClassATalker(streamB, dest: [0x91, 0xE0, 0xF0, 0, 0, 4]),
-                     event: .JoinIn)
-    try await _drive(msrp, port: 2, attributeType: .listener,
-                     value: MSRPListenerValue(streamID: streamB), event: .JoinIn, subtype: .ready)
+    try await _drive(
+      msrp,
+      port: 1,
+      attributeType: .talkerAdvertise,
+      value: _halfLimitClassATalker(streamB, dest: [0x91, 0xE0, 0xF0, 0, 0, 4]),
+      event: .JoinIn
+    )
+    try await _drive(
+      msrp,
+      port: 2,
+      attributeType: .listener,
+      value: MSRPListenerValue(streamID: streamB),
+      event: .JoinIn,
+      subtype: .ready
+    )
     let bFailedFirst = await _waitFor { await _isDeclared(msrp, .talkerFailed, streamB, port: 2) }
     XCTAssertTrue(bFailedFirst, "B fails admission against A's reservation")
 
@@ -3631,8 +3697,10 @@ extension MRPTests {
     _ = await _waitFor { await recorder.fdbDeregister.count > deregBefore }
     await msrp._streamDidUpdate(streamB)
     let bAdmitted = await _waitFor { await _isDeclared(msrp, .talkerAdvertise, streamB, port: 2) }
-    XCTAssertTrue(bAdmitted,
-                  "B is admitted once A (still registered) no longer holds a reservation")
+    XCTAssertTrue(
+      bAdmitted,
+      "B is admitted once A (still registered) no longer holds a reservation"
+    )
     _ = controller
   }
 
@@ -3699,9 +3767,21 @@ extension MRPTests {
       priorityAndRank: MSRPPriorityAndRank(dataFramePriority: .CA, rank: false),
       accumulatedLatency: 1000
     )
-    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise, value: bigTalker, event: .JoinIn)
-    try await _drive(msrp, port: 1, attributeType: .listener,
-                     value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready)
+    try await _drive(
+      msrp,
+      port: 0,
+      attributeType: .talkerAdvertise,
+      value: bigTalker,
+      event: .JoinIn
+    )
+    try await _drive(
+      msrp,
+      port: 1,
+      attributeType: .listener,
+      value: MSRPListenerValue(streamID: streamID),
+      event: .JoinIn,
+      subtype: .ready
+    )
     let failed = await _waitFor { await _isDeclared(msrp, .talkerFailed, streamID, port: 1) }
     XCTAssertTrue(failed, "the unbridgeable talker is declared Failed on the egress")
     try? await Task.sleep(nanoseconds: 200_000_000)
@@ -3764,7 +3844,8 @@ extension MRPTests {
     _ = controller
   }
 
-  // The counterpart to the §9.2 behaviour: with .leaveImmediate cleared (mrpd --no-leave-immediate),
+  // The counterpart to the §9.2 behaviour: with .leaveImmediate cleared (mrpd
+  // --no-leave-immediate),
   // a received Leave (rLv!) falls back to the base 802.1Q path — the Registrar goes IN -> LV and
   // holds the propagated declaration for the LeaveTime instead of withdrawing it at once.
   func testMSRPLeaveImmediateDisabledRetainsTalkerOnReceivedLeave() async throws {
@@ -3841,7 +3922,8 @@ extension MRPTests {
       msrp, port: 0, attributeType: .talkerAdvertise,
       value: _talkerAdvertise(streamID), event: .Lv
     )
-    let listenerWithdrawn = await _waitFor { await !_isDeclared(msrp, .listener, streamID, port: 0) }
+    let listenerWithdrawn = await _waitFor { await !_isDeclared(msrp, .listener, streamID, port: 0)
+    }
     XCTAssertTrue(
       listenerWithdrawn, "the bridge must withdraw the Listener toward the departed talker"
     )

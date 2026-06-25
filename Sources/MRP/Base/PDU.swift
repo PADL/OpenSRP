@@ -429,7 +429,8 @@ struct MRPDU {
       do {
         try messages.append(Message(parsing: &input, application: application))
       } catch let error as MRPError where protocolVersion > application.protocolVersion &&
-        (error == .unknownAttributeType || error == .unknownAttributeEvent) {
+        (error == .unknownAttributeType || error == .unknownAttributeEvent)
+      {
         // clause 10.8.3.5: skip unknown attributes if the PDU has a higher protocol version
         continue
       } catch {
