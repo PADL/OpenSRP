@@ -3754,6 +3754,30 @@ extension MRPTests {
     _ = controller
   }
 
+  // Avnu ProAV Bridge §9.1: an Avnu Bridge shall complete any propagation of MSRP attributes
+  // within 1.5s. A fresh declaration requests a TX opportunity immediately (interval .zero on a
+  // point-to-point port, else random 0..<joinTime ≤ 240ms); nothing waits on the periodic (1s,
+  // disabled) or leaveall (10s) timer. Assert the propagated talker appears well within 1.5s.
+  func testMSRPPropagationCompletesWithin1500ms() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_00E3)
+
+    let start = ContinuousClock.now
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .JoinIn
+    )
+    let propagated = await _waitFor(timeoutMs: 1500) {
+      await _isDeclared(msrp, .talkerAdvertise, streamID, port: 1)
+    }
+    let elapsed = ContinuousClock.now - start
+    XCTAssertTrue(propagated, "the talker must propagate to the egress")
+    XCTAssertLessThan(
+      elapsed, .milliseconds(1500), "MSRP attribute propagation must complete within 1.5s (§9.1)"
+    )
+    _ = controller
+  }
+
   func testRecomputeProxiesListenerLeaveOnTalkerLeave() async throws {
     let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
     let streamID = MSRPStreamID(0x0001_0000_0000_0F01)

@@ -29,10 +29,13 @@ constrained switch appliance (P1 highest). Each TODO below is tagged inline.
 # 5 General requirements
 
 * NA: physical transport — copper BASE-T or fiber BASE-FX/SX/BX/LX, min 100Mbps full-duplex (link/hardware)
-* TODO (P2): MSRP Domain declaration on a port shall not depend on that port's gPTP
-  state (the spec notes gPTP runs its own spanning tree). We gate declarations on
-  the bridge spanning-tree Forwarding state (35.1.3.1, e0b30c5), not on gPTP, so
-  this should already hold — confirm nothing couples Domain declaration to gPTP.
+* DONE: MSRP Domain declaration on a port does not depend on that port's gPTP
+  state. Verified: `_declareDomain`/`_declareDomains` run on context add/update for
+  every port and consult only the port's SR-class priority mapping and the prior
+  declared value — no asCapable/gPTP check (the code comment notes Domain is a
+  local per-port announcement, never blocked per 35.1.3.1). The only gPTP coupling,
+  `_checkAsCapable`, gates Talker/Listener join/leave indications, not Domain, and
+  is off by default (`.ignoreAsCapable` is in `defaultFlags`).
 
 # 6 CBS
 
@@ -99,7 +102,7 @@ constrained switch appliance (P1 highest). Each TODO below is tagged inline.
 
 * f412134b: validate MaxIntervalFrames != 0
 * DONE: disable Talker pruning
-* TODO (P2): check MSRP attributes propagated within 1.5s — timers are configured to support it (periodictimer 900-1500ms, joinTime 180-240ms per MRPTimerConfiguration); no explicit end-to-end 1.5s deadline is modelled
+* DONE: MSRP attributes propagate within 1.5s. A fresh declaration requests a TX opportunity immediately — interval `.zero` on a point-to-point port (rate-limited to 3 per joinTime×1.5), else random `0..<joinTime` (≤240ms Avnu max); nothing waits on the periodic (1s, disabled per 80272d31) or leaveall (10s) timer. Locked in by testMSRPPropagationCompletesWithin1500ms (propagates in ~13ms)
 * 5e7aca0: always declare SR Class A and B Domain on each port regardless of the peer (`_declareDomains` on context add/update)
 * DONE: include VLAN tag in bandwidth calculation
 * 80272d31: check periodic state machine disabled per 5.4.4 in 802.1Q
