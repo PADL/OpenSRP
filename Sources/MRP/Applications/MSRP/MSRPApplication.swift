@@ -1412,8 +1412,8 @@ extension MSRPApplication {
       }
       // mutual exclusion: clear the opposite talker registration on the source port
       if eventSource == .peer {
-        _deregisterOppositeTalkerRegistration(
-          participant: try findParticipant(for: contextIdentifier, port: port),
+        try _deregisterOppositeTalkerRegistration(
+          participant: findParticipant(for: contextIdentifier, port: port),
           declarationType: talkerValue.declarationType!,
           streamID: talkerValue.streamID
         )
