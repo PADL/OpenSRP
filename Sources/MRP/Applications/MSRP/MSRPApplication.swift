@@ -18,6 +18,7 @@ import AsyncExtensions
 import BinaryParsing
 import IEEE802
 import Logging
+import OrderedCollections
 import Synchronization
 #if RestAPI
 import FlyingFox
@@ -228,7 +229,7 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     }
   }
 
-  private var _pendingStreams = Set<MSRPStreamID>()
+  private var _pendingStreams = OrderedSet<MSRPStreamID>()
   private var _streamUpdateTask: Task<(), Never>?
   private var _reservations: [P.ID: [MSRPStreamID: Reservation]] = [:]
 
@@ -1441,13 +1442,14 @@ extension MSRPApplication {
   }
 
   func _streamDidUpdate(_ streamID: MSRPStreamID) {
-    _pendingStreams.insert(streamID)
+    _pendingStreams.append(streamID)
     guard _streamUpdateTask == nil else { return }
     _streamUpdateTask = Task { [weak self] in await self?._applyPendingStreamUpdates() }
   }
 
   private func _applyPendingStreamUpdates() async {
-    while let streamID = _pendingStreams.popFirst() {
+    while !_pendingStreams.isEmpty {
+      let streamID = _pendingStreams.removeFirst()
       let plan = _makeStreamPlan(streamID)
       do { try await _applyStreamPlan(plan) }
       catch { _logger.error("MSRP: recompute failed for stream \(streamID): \(error)") }
