@@ -694,35 +694,24 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
 }
 
 extension MSRPApplication {
-  // Enforce mutual exclusion between talkerAdvertise and talkerFailed on a participant
-  private func _enforceTalkerMutualExclusion(
+  // 35.2.6: at most one Talker declaration type per StreamID per port. A peer indication for
+  // one type supersedes the opposite, so deregister the opposite *registered* (Registrar) Talker
+  // attribute on the source port. (The local-declaration counterpart is _leaveDeclaredAttributes.)
+  private func _deregisterOppositeTalkerRegistration(
     participant: Participant<MSRPApplication>,
     declarationType: MSRPDeclarationType,
-    streamID: MSRPStreamID,
-    eventSource: EventSource
-  ) throws {
-    let oppositeType: MSRPAttributeType = declarationType == .talkerAdvertise ? .talkerFailed :
-      .talkerAdvertise
-
-    let oppositeAttributes = participant.findAttributes(
+    streamID: MSRPStreamID
+  ) {
+    guard let oppositeType = declarationType.attributeType.oppositeAttributeType else { return }
+    for (_, attributeValue) in participant.findAttributes(
       attributeType: oppositeType.rawValue,
       matching: .matchAnyIndex(streamID.index)
-    )
-
-    for (_, attributeValue) in oppositeAttributes {
-      if eventSource == .map {
-        try? participant.leave(
-          attributeType: oppositeType.rawValue,
-          attributeValue: attributeValue,
-          eventSource: eventSource
-        )
-      } else {
-        try? participant.deregister(
-          attributeType: oppositeType.rawValue,
-          attributeValue: attributeValue,
-          eventSource: eventSource
-        )
-      }
+    ) {
+      try? participant.deregister(
+        attributeType: oppositeType.rawValue,
+        attributeValue: attributeValue,
+        eventSource: .peer
+      )
     }
   }
 
@@ -1423,11 +1412,10 @@ extension MSRPApplication {
       }
       // mutual exclusion: clear the opposite talker registration on the source port
       if eventSource == .peer {
-        try _enforceTalkerMutualExclusion(
-          participant: findParticipant(for: contextIdentifier, port: port),
+        _deregisterOppositeTalkerRegistration(
+          participant: try findParticipant(for: contextIdentifier, port: port),
           declarationType: talkerValue.declarationType!,
-          streamID: talkerValue.streamID,
-          eventSource: .peer
+          streamID: talkerValue.streamID
         )
       }
       _streamDidUpdate(talkerValue.streamID)
@@ -1588,11 +1576,12 @@ extension MSRPApplication {
         latency += UInt32(l)
       } catch { latency += 500 }
 
+      // 35.2.6: a type change (e.g. Advertise->Failed) behaves as if the old declaration was
+      // withdrawn before the new one, so leave the opposite declared Talker type first.
       let declarationType: MSRPDeclarationType = failure == nil ? .talkerAdvertise : .talkerFailed
-      try? _enforceTalkerMutualExclusion(
-        participant: participant, declarationType: declarationType, streamID: streamID,
-        eventSource: .map
-      )
+      if let oppositeType = declarationType.attributeType.oppositeAttributeType {
+        _leaveDeclaredAttributes(participant, streamID: streamID, types: [oppositeType])
+      }
 
       if let failure {
         try participant.join(

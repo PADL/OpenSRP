@@ -4384,6 +4384,11 @@ extension MRPTests {
     XCTAssertTrue(torn, "advertise -> failed must withdraw the listener reservation")
     let failedDeclared = await _isDeclared(msrp, .talkerFailed, streamID, port: 1)
     XCTAssertTrue(failedDeclared, "failed talker should be propagated")
+    // mutual exclusion: the prior talkerAdvertise declaration must be withdrawn
+    let advCleared = await _waitFor {
+      await !_isDeclared(msrp, .talkerAdvertise, streamID, port: 1)
+    }
+    XCTAssertTrue(advCleared, "talkerAdvertise must clear after advertise -> failed")
 
     // Failed -> Advertise
     let regBefore = await recorder.fdbRegister.filter { $0.ports.contains(1) }.count
@@ -4398,6 +4403,14 @@ extension MRPTests {
       await recorder.fdbRegister.filter { $0.ports.contains(1) }.count > regBefore
     }
     XCTAssertTrue(reestablished, "failed -> advertise must re-establish the reservation")
+
+    // mutual exclusion: the prior talkerFailed declaration must be withdrawn
+    let failedCleared = await _waitFor {
+      await !_isDeclared(msrp, .talkerFailed, streamID, port: 1)
+    }
+    XCTAssertTrue(failedCleared, "talkerFailed must clear after failed -> advertise")
+    let advNowDeclared = await _isDeclared(msrp, .talkerAdvertise, streamID, port: 1)
+    XCTAssertTrue(advNowDeclared, "talkerAdvertise must be declared after re-advertise")
     _ = controller
   }
 }
