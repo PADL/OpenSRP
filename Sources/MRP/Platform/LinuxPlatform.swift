@@ -529,8 +529,11 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   private let _rxPacketsChannel = AsyncThrowingChannel<(P.ID, IEEE802Packet), Error>()
   private var _linkLocalRegistrations = Set<FilterRegistration>()
   private var _linkLocalRxTasks = [LinkLocalRXTaskKey: Task<(), Error>]()
-  private let _srClassPriorityMapNotificationChannel =
-    AsyncChannel<SRClassPriorityMapNotification<P>>()
+  // A buffered stream (not a rendezvous channel): yields never block the link
+  // monitor, so a missing consumer (MSRP disabled, the default) cannot wedge it.
+  private let _srClassPriorityMapStream: AsyncStream<SRClassPriorityMapNotification<P>>
+  private let _srClassPriorityMapContinuation:
+    AsyncStream<SRClassPriorityMapNotification<P>>.Continuation
   fileprivate let _pmc: PTPManagementClient
   private var _portPropertiesCache = [P.ID: PortPropertiesNP]()
   private let _portExclusions: Set<String>
@@ -561,6 +564,10 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     _pmc = try await PTPManagementClient(path: ptpManagementClientSocketPath)
     _portExclusions = portExclusions
     _logger = logger
+    (_srClassPriorityMapStream, _srClassPriorityMapContinuation) = AsyncStream.makeStream(
+      of: SRClassPriorityMapNotification<P>.self,
+      bufferingPolicy: .bufferingNewest(64)
+    )
   }
 
   public nonisolated var description: String {
@@ -626,7 +633,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     } else {
       .removed(srClassPriorityMap)
     }
-    await _srClassPriorityMapNotificationChannel.send(tcNotification)
+    _srClassPriorityMapContinuation.yield(tcNotification)
   }
 
   private func _handleVLANNotification(_ vlanMessage: RTNLVLANDBMessage) {
@@ -1266,7 +1273,7 @@ extension LinuxBridge: MSRPAwareBridge {
   nonisolated var srClassPriorityMapNotifications: AnyAsyncSequence<
     SRClassPriorityMapNotification<P>
   > {
-    _srClassPriorityMapNotificationChannel.eraseToAnyAsyncSequence()
+    _srClassPriorityMapStream.eraseToAnyAsyncSequence()
   }
 
   fileprivate func _getPtpPortProperties(for port: P) async throws -> PortPropertiesNP {
