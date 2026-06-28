@@ -196,7 +196,10 @@ let CommonTargets: [Target] = [
   ),
   .testTarget(
     name: "MRPTests",
-    dependencies: ["MRP"],
+    dependencies: [
+      "MRP",
+      .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
+    ],
     cSettings: PlatformCSettings,
     swiftSettings: PlatformSwiftSettings,
     linkerSettings: PlatformLinkerSettings

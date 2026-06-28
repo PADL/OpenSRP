@@ -18,6 +18,7 @@
 @testable import MRP
 @testable import PMC
 import XCTest
+import AsyncAlgorithms
 @preconcurrency
 import AsyncExtensions
 import BinaryParsing
@@ -75,7 +76,7 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
 
 // Records the kernel-facing effects (CBS idleslope + FDB reservation entries) so
 // recompute tests can assert on convergence and idempotency.
-actor MSRPTestRecorder {
+actor MRPTestRecorder {
   private(set) var cbs = [(port: Int, queue: UInt, idleSlope: Int)]()
   private(set) var fdbRegister = [(mac: EUI48, vlan: VLAN?, ports: Set<Int>)]()
   private(set) var fdbDeregister = [(mac: EUI48, vlan: VLAN?, ports: Set<Int>)]()
@@ -90,6 +91,17 @@ actor MSRPTestRecorder {
 
   func recordFDBDeregister(mac: EUI48, vlan: VLAN?, ports: Set<Int>) {
     fdbDeregister.append((mac, vlan, ports))
+  }
+
+  private(set) var vlanRegister = [(vlan: VLAN, port: Int)]()
+  private(set) var vlanDeregister = [(vlan: VLAN, port: Int)]()
+
+  func recordVLANRegister(vlan: VLAN, port: Int) {
+    vlanRegister.append((vlan, port))
+  }
+
+  func recordVLANDeregister(vlan: VLAN, port: Int) {
+    vlanDeregister.append((vlan, port))
   }
 }
 
@@ -135,11 +147,13 @@ struct MockBridge: MRP.Bridge, CustomStringConvertible {
   var notifications = AsyncEmptySequence<MRP.PortNotification<MockPort>>().eraseToAnyAsyncSequence()
   var rxPackets = AsyncEmptySequence<(Int, IEEE802Packet)>().eraseToAnyAsyncSequence()
   var ports: Set<MockPort> = [MockPort(id: 0)]
-  var recorder = MSRPTestRecorder()
+  var recorder = MRPTestRecorder()
+  // Test-driven stream of local VLAN-applicant changes (see MVRPAwareBridge below).
+  let vlanApplicantChannel = AsyncChannel<VLANApplicantNotification>()
 
   init() {}
 
-  init(ports: Set<MockPort>, recorder: MSRPTestRecorder) {
+  init(ports: Set<MockPort>, recorder: MRPTestRecorder) {
     self.ports = ports
     self.recorder = recorder
   }
@@ -217,6 +231,20 @@ extension MockBridge: MSRPAwareBridge {
 
   var srClassPriorityMapNotifications: AnyAsyncSequence<SRClassPriorityMapNotification<P>> {
     AsyncEmptySequence<SRClassPriorityMapNotification<P>>().eraseToAnyAsyncSequence()
+  }
+}
+
+extension MockBridge: MVRPAwareBridge {
+  var vlanApplicantNotifications: AnyAsyncSequence<VLANApplicantNotification> {
+    vlanApplicantChannel.eraseToAnyAsyncSequence()
+  }
+
+  func register(vlan: VLAN, on port: P) async throws {
+    await recorder.recordVLANRegister(vlan: vlan, port: port.id)
+  }
+
+  func deregister(vlan: VLAN, from port: P) async throws {
+    await recorder.recordVLANDeregister(vlan: vlan, port: port.id)
   }
 }
 
@@ -446,6 +474,91 @@ final class MRPTests: XCTestCase {
       Array(packet.payload.prefix(serializationContext2.bytes.count)),
       serializationContext2.bytes
     )
+  }
+
+  // MARK: - MVRP coexistence with the in-kernel (local) MVRP applicant
+
+  func testVLANApplicantTypesAndNotificationAccessors() {
+    var applicant: VLANApplicant = [.mvrp]
+    XCTAssertTrue(applicant.contains(.mvrp))
+    XCTAssertFalse(applicant.contains(.gvrp))
+    applicant.insert(.gvrp)
+    XCTAssertEqual(applicant, [.mvrp, .gvrp])
+
+    let added = VLANApplicantNotification.added(VLAN(vid: 10), [.mvrp])
+    XCTAssertEqual(added.vlan, VLAN(vid: 10))
+    XCTAssertEqual(added.applicant, [.mvrp])
+
+    let removed = VLANApplicantNotification.removed(VLAN(vid: 10))
+    XCTAssertEqual(removed.vlan, VLAN(vid: 10))
+    XCTAssertEqual(removed.applicant, [])
+  }
+
+  func testMVRPTracksLocalApplicantFromNotifications() async throws {
+    let logger = Logger(label: "com.padl.MRPTests")
+    let bridge = MockBridge()
+    let controller = try await MRPController(bridge: bridge, logger: logger)
+    let mvrp = try await MVRPApplication(controller: controller)
+    let vlan = VLAN(vid: 10)
+
+    let absent = await mvrp.hasLocalMVRPApplicant(for: vlan)
+    XCTAssertFalse(absent)
+
+    // A VLAN netdev gaining the MVRP flag marks the VID as locally advertised.
+    await bridge.vlanApplicantChannel.send(.added(vlan, [.mvrp]))
+    let present = await _waitFor { await mvrp.hasLocalMVRPApplicant(for: vlan) }
+    XCTAssertTrue(present)
+
+    // Clearing the flag (mvrp off) hands advertisement back to mrpd.
+    await bridge.vlanApplicantChannel.send(.changed(vlan, []))
+    let cleared = await _waitFor { await mvrp.hasLocalMVRPApplicant(for: vlan) == false }
+    XCTAssertTrue(cleared)
+
+    _ = controller
+  }
+
+  func testMVRPLocalDeclarationSuppressedRegardlessOfApplicantState() async throws {
+    let logger = Logger(label: "com.padl.MRPTests")
+    let bridge = MockBridge()
+    let controller = try await MRPController(bridge: bridge, logger: logger)
+    let mvrp = try await MVRPApplication(controller: controller)
+    let port = MockPort(id: 0)
+    let vlan = VLAN(vid: 10)
+
+    // A `.local` declaration is the host's own applicant; it must be suppressed
+    // even though no applicant notification for this VID has been processed.
+    var threw = false
+    do {
+      try await mvrp.onJoinIndication(
+        contextIdentifier: MAPBaseSpanningTreeContext,
+        port: port,
+        attributeType: MVRPAttributeType.vid.rawValue,
+        attributeSubtype: nil,
+        attributeValue: vlan,
+        isNew: true,
+        eventSource: .local
+      )
+    } catch {
+      threw = true
+    }
+    XCTAssertTrue(threw)
+    let afterLocal = await bridge.recorder.vlanRegister
+    XCTAssertTrue(afterLocal.isEmpty)
+
+    // A `.peer` declaration is registered on the bridge.
+    try await mvrp.onJoinIndication(
+      contextIdentifier: MAPBaseSpanningTreeContext,
+      port: port,
+      attributeType: MVRPAttributeType.vid.rawValue,
+      attributeSubtype: nil,
+      attributeValue: vlan,
+      isNew: true,
+      eventSource: .peer
+    )
+    let afterPeer = await bridge.recorder.vlanRegister
+    XCTAssertEqual(afterPeer.map(\.vlan), [vlan])
+
+    _ = controller
   }
 
   // Avnu ProAV Bridge §8.1: upon receipt of a badly formed MRPDU, a Bridge may act on the
@@ -2827,9 +2940,9 @@ extension MRPTests {
     portIDs: [Int],
     flags: MSRPApplicationFlags = .defaultFlags
   ) async throws
-    -> (MRPController<MockPort>, MSRPApplication<MockPort>, MSRPTestRecorder)
+    -> (MRPController<MockPort>, MSRPApplication<MockPort>, MRPTestRecorder)
   {
-    let recorder = MSRPTestRecorder()
+    let recorder = MRPTestRecorder()
     let ports = Set(portIDs.map { MockPort(id: $0) })
     let bridge = MockBridge(ports: ports, recorder: recorder)
     let controller = try await MRPController(

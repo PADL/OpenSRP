@@ -16,7 +16,7 @@ MMRP, MVRP, and MSRP are "applications" of the generalized MRP protocol and stat
 
 Note that whilst OpenSRP does have a platform abstraction layer, the initial platform is Linux, and we would prefer to push switch-specific functionality into the kernel rather than separate platform backends.
 
-Note: as Linux has an in-kernel MVRP applicant, `mrpd` does not automatically advertise statically configured VLANs. If you wish to do so, you should create a VLAN interface and set the `mvrp` flag to `on` using `ip link set dev` . (If you wish to send AVTP packets you should also read [this](https://tsn.readthedocs.io/vlan.html) document on configuring `egress-qos-map`. But bear in mind that OpenSRP end-station support is incomplete at the time of writing.)
+Note: Linux has an in-kernel MVRP applicant. To avoid two applicants declaring the same VLAN, `mrpd` does not advertise a VLAN that already has an in-kernel applicant; it advertises the remaining (statically configured) VLANs itself. To delegate a VLAN to the kernel applicant, create a VLAN interface and set the `mvrp` flag to `on` using `ip link set dev`; toggling the flag is tracked at runtime, so `mrpd` takes over (or stands down) as applicants come and go. Use `--exclude-vlan` to keep `mrpd` from advertising a particular VLAN. (If you wish to send AVTP packets you should also read [this](https://tsn.readthedocs.io/vlan.html) document on configuring `egress-qos-map`. But bear in mind that OpenSRP end-station support is incomplete at the time of writing.)
 
 ## Configuring
 

@@ -14,6 +14,7 @@
 // limitations under the License.
 //
 
+import AsyncExtensions
 import BinaryParsing
 import IEEE802
 import Logging
@@ -25,8 +26,9 @@ import FlyingFox
 public let MVRPEtherType: UInt16 = 0x88F5
 
 protocol MVRPAwareBridge<P>: Bridge where P: Port {
-  // allow use of platform MVRP applicant (e.g. in-kernel Linux MVRP implementation)
-  var hasLocalMVRPApplicant: Bool { get }
+  // Changes to the platform's local VLAN registrars (e.g. the in-kernel MVRP
+  // applicant on a VLAN netdev). MVRP tracks these to avoid double-advertising.
+  var vlanApplicantNotifications: AnyAsyncSequence<VLANApplicantNotification> { get }
 
   func register(vlan: VLAN, on port: P) async throws
   func deregister(vlan: VLAN, from port: P) async throws
@@ -64,11 +66,61 @@ public actor MVRPApplication<P: Port>: BaseApplication, BaseApplicationEventObse
   let _logger: Logger
   let _vlanExclusions: Set<VLAN>
 
+  // VLANs whose in-kernel MVRP applicant advertises on our behalf, maintained
+  // from the bridge's notification stream (see _observeVLANApplicantNotifications).
+  var _localMVRPApplicantVLANs: Set<VLAN> = []
+  private var _vlanApplicantNotificationTask: Task<(), Error>?
+
   public init(controller: MRPController<P>, vlanExclusions: Set<VLAN> = []) async throws {
     _controller = Weak(controller)
     _logger = controller.logger
     _vlanExclusions = vlanExclusions
     try await controller.register(application: self)
+    // Re-acquire self weakly per notification so the long-lived observe loop does
+    // not retain the application; otherwise deinit (and its cancel) never runs.
+    _vlanApplicantNotificationTask = Task { [weak self] in
+      guard let bridge = self?.controller?.bridge as? any MVRPAwareBridge<P> else { return }
+      try await Self._observeVLANApplicantNotifications(bridge: bridge) { [weak self] notification in
+        await self?._onVLANApplicantNotification(notification)
+      }
+    }
+  }
+
+  deinit {
+    _vlanApplicantNotificationTask?.cancel()
+  }
+
+  func hasLocalMVRPApplicant(for vlan: VLAN) -> Bool {
+    _localMVRPApplicantVLANs.contains(vlan)
+  }
+
+  // Generic over the concrete bridge type as a Swift 6.3 SIL workaround (see
+  // MSRPApplication._observePriorityMapNotifications). Static, with a per-element
+  // callback, so the iteration itself holds no strong reference to the application.
+  private static func _observeVLANApplicantNotifications<B: MVRPAwareBridge>(
+    bridge: B,
+    _ body: @Sendable @escaping (VLANApplicantNotification) async -> Void
+  ) async throws where B.P == P {
+    for try await notification in bridge.vlanApplicantNotifications {
+      await body(notification)
+    }
+  }
+
+  private func _onVLANApplicantNotification(_ notification: VLANApplicantNotification) {
+    let vlan = notification.vlan
+    let present = notification.applicant.contains(.mvrp)
+    let wasPresent = _localMVRPApplicantVLANs.contains(vlan)
+    guard present != wasPresent else { return }
+    if present {
+      // Kernel applicant took over: withdraw our own declaration.
+      _localMVRPApplicantVLANs.insert(vlan)
+      try? deregister(vlanMember: vlan)
+    } else {
+      // Kernel applicant gone: advertise the VLAN ourselves, unless excluded.
+      _localMVRPApplicantVLANs.remove(vlan)
+      guard !_vlanExclusions.contains(vlan) else { return }
+      try? register(vlanMember: vlan)
+    }
   }
 
   public nonisolated var description: String {
@@ -194,8 +246,9 @@ extension MVRPApplication {
       guard !_isVlanExcluded(vlan, port: port) else {
         throw MRPError.doNotPropagateAttribute
       }
-      guard !bridge.hasLocalMVRPApplicant || eventSource != .local
-      else { throw MRPError.doNotPropagateAttribute }
+      // A `.local`-sourced declaration is the host's own (kernel) applicant
+      // looping back; never register it as a peer, regardless of VID detection.
+      guard eventSource != .local else { throw MRPError.doNotPropagateAttribute }
       _logger
         .debug(
           "MVRP: join indication from port \(port) VID \(vlan.vid) isNew \(isNew) source \(eventSource)"
@@ -229,8 +282,9 @@ extension MVRPApplication {
       guard !_isVlanExcluded(vlan, port: port) else {
         throw MRPError.doNotPropagateAttribute
       }
-      guard !bridge.hasLocalMVRPApplicant || eventSource != .local
-      else { throw MRPError.doNotPropagateAttribute }
+      // See onJoinIndication: a `.local`-sourced leave is the host's own
+      // applicant; never act on it as a peer deregistration.
+      guard eventSource != .local else { throw MRPError.doNotPropagateAttribute }
       _logger
         .debug("MVRP: leave indication from port \(port) VID \(vlan.vid) source \(eventSource)")
       try await bridge.deregister(vlan: vlan, from: port)
@@ -243,11 +297,12 @@ extension MVRPApplication {
     contextIdentifier: MAPContextIdentifier,
     with context: MAPContext<P>
   ) async throws {
-    guard let bridge = controller?.bridge as? any MVRPAwareBridge<P>,
-          !bridge.hasLocalMVRPApplicant else { return }
+    let vlan = VLAN(contextIdentifier: contextIdentifier)
+    guard controller?.bridge is any MVRPAwareBridge<P>,
+          !hasLocalMVRPApplicant(for: vlan) else { return }
     try join(
       attributeType: MVRPAttributeType.vid.rawValue,
-      attributeValue: VLAN(contextIdentifier: contextIdentifier),
+      attributeValue: vlan,
       isNew: true,
       for: MAPBaseSpanningTreeContext
     )
@@ -262,11 +317,12 @@ extension MVRPApplication {
     contextIdentifier: MAPContextIdentifier,
     with context: MAPContext<P>
   ) async throws {
-    guard let bridge = controller?.bridge as? any MVRPAwareBridge<P>,
-          !bridge.hasLocalMVRPApplicant else { return }
+    let vlan = VLAN(contextIdentifier: contextIdentifier)
+    guard controller?.bridge is any MVRPAwareBridge<P>,
+          !hasLocalMVRPApplicant(for: vlan) else { return }
     try leave(
       attributeType: MVRPAttributeType.vid.rawValue,
-      attributeValue: VLAN(contextIdentifier: contextIdentifier),
+      attributeValue: vlan,
       for: MAPBaseSpanningTreeContext
     )
   }

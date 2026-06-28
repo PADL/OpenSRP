@@ -529,11 +529,13 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   private let _rxPacketsChannel = AsyncThrowingChannel<(P.ID, IEEE802Packet), Error>()
   private var _linkLocalRegistrations = Set<FilterRegistration>()
   private var _linkLocalRxTasks = [LinkLocalRXTaskKey: Task<(), Error>]()
-  // A buffered stream (not a rendezvous channel): yields never block the link
-  // monitor, so a missing consumer (MSRP disabled, the default) cannot wedge it.
+  // Buffered streams (not rendezvous channels): yields never block the link
+  // monitor, so a missing consumer (MSRP/MVRP disabled, the default) cannot wedge it.
   private let _srClassPriorityMapStream: AsyncStream<SRClassPriorityMapNotification<P>>
   private let _srClassPriorityMapContinuation:
     AsyncStream<SRClassPriorityMapNotification<P>>.Continuation
+  private let _vlanApplicantStream: AsyncStream<VLANApplicantNotification>
+  private let _vlanApplicantContinuation: AsyncStream<VLANApplicantNotification>.Continuation
   fileprivate let _pmc: PTPManagementClient
   private var _portPropertiesCache = [P.ID: PortPropertiesNP]()
   private let _portExclusions: Set<String>
@@ -568,13 +570,50 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
       of: SRClassPriorityMapNotification<P>.self,
       bufferingPolicy: .bufferingNewest(64)
     )
+    (_vlanApplicantStream, _vlanApplicantContinuation) = AsyncStream.makeStream(
+      of: VLANApplicantNotification.self,
+      bufferingPolicy: .bufferingNewest(64)
+    )
   }
 
   public nonisolated var description: String {
     _bridgeName
   }
 
+  // Map a VLAN netdev's kernel flags to the platform-agnostic registrar set. The
+  // applicant runs on a VLAN device stacked on the bridge (slaveOf == bridge).
+  private func _vlanApplicant(of vlan: RTNLLinkVLAN) -> VLANApplicant {
+    var applicant: VLANApplicant = []
+    if vlan.vlanFlags.contains(.mvrp) { applicant.insert(.mvrp) }
+    if vlan.vlanFlags.contains(.gvrp) { applicant.insert(.gvrp) }
+    return applicant
+  }
+
+  // VLAN netdevs stacked on this bridge that currently have a registrar enabled;
+  // reported to consumers as the initial state before any live notifications.
+  private func _getLocalVLANApplicants() async throws -> [(VLAN, VLANApplicant)] {
+    let links = try await _nlLinkSocket.getLinks(family: sa_family_t(AF_UNSPEC)).collect()
+    return links.compactMap { $0 as? RTNLLinkVLAN }
+      .filter { $0.slaveOf == _bridgeIndex }
+      .compactMap { link in link.vlanID.map { (VLAN(id: $0), _vlanApplicant(of: link)) } }
+      .filter { !$0.1.isEmpty }
+  }
+
   private func _handleLinkNotification(_ linkMessage: RTNLLinkMessage) async throws {
+    // A VLAN netdev stacked on this bridge carries the in-kernel registrars; emit
+    // its applicant change rather than treating it as a member port. yield() is
+    // non-blocking, so this never stalls the monitor when MVRP is not consuming.
+    if let vlan = linkMessage.link as? RTNLLinkVLAN, vlan.slaveOf == _bridgeIndex {
+      guard let vid = vlan.vlanID else { return }
+      let notification: VLANApplicantNotification = if case .new = linkMessage {
+        .changed(VLAN(id: vid), _vlanApplicant(of: vlan))
+      } else {
+        .removed(VLAN(id: vid))
+      }
+      _vlanApplicantContinuation.yield(notification)
+      return
+    }
+
     var portNotification: PortNotification<P>?
     let port = try P(rtnl: linkMessage.link, bridge: self)
     if port._isBridgeSelf, port._rtnl.index == _bridgeIndex {
@@ -792,6 +831,13 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     try _nlLinkSocket.subscribeLinks()
     try _nlLinkSocket.subscribeTC()
     try _nlLinkSocket.subscribeBridgeVLANs()
+
+    // Report applicants present at startup as initial state, through the same
+    // continuation as live events (and before the monitor starts) so a consumer
+    // drains them strictly before any subsequent change for the same VID.
+    for (vlan, applicant) in try await _getLocalVLANApplicants() {
+      _vlanApplicantContinuation.yield(.added(vlan, applicant))
+    }
 
     _nlLinkMonitorTask = Task<(), Error> { [self] in
       for try await notification in _nlLinkSocket.notifications {
@@ -1012,7 +1058,11 @@ extension LinuxBridge: MMRPAwareBridge {
 }
 
 extension LinuxBridge: MVRPAwareBridge {
-  nonisolated var hasLocalMVRPApplicant: Bool { true }
+  // Changes to the in-kernel VLAN registrars on VLAN netdevs stacked on this
+  // bridge; initial state emitted in run(), kept live by _handleLinkNotification.
+  nonisolated var vlanApplicantNotifications: AnyAsyncSequence<VLANApplicantNotification> {
+    _vlanApplicantStream.eraseToAnyAsyncSequence()
+  }
 
   func register(vlan: VLAN, on port: P) async throws {
     try await port._add(vlan: vlan)
