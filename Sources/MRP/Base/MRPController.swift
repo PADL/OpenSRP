@@ -57,6 +57,11 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
 
   private var _applications = [UInt16: any Application<P>]()
   private var _ports = [P.ID: P]()
+  // Snapshot of each port's context identifiers taken when it was last added or
+  // updated. A platform port may read live VLAN state, so the stored port would
+  // already reflect a change and the delta would come up empty; diffing against
+  // this snapshot lets a runtime VLAN add be detected as added, not updated.
+  private var _portContextIdentifiers = [P.ID: Set<MAPContextIdentifier>]()
   // last seen spanning-tree status per port, for topology-change (Flush!) detection. This is
   // the role, polled from the STP source (mstpd); the per-port Forwarding *state* used to gate
   // declarations (35.1.3.1) is read synchronously from the netlink port snapshot in the
@@ -207,18 +212,15 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
     let removedContextIdentifiers: Set<MAPContextIdentifier>
     let updatedContextIdentifiers: Set<MAPContextIdentifier>
 
-    if let existingPort = ports.first(where: { $0.id == port.id }) {
-      addedContextIdentifiers = port.contextIdentifiers
-        .subtracting(existingPort.contextIdentifiers)
-      removedContextIdentifiers = existingPort.contextIdentifiers
-        .subtracting(port.contextIdentifiers)
-      updatedContextIdentifiers = existingPort.contextIdentifiers
-        .intersection(port.contextIdentifiers)
-    } else {
-      addedContextIdentifiers = port.contextIdentifiers
-      removedContextIdentifiers = []
-      updatedContextIdentifiers = []
-    }
+    // Diff against the snapshot from when the port was last seen, not against the
+    // stored port: a platform port may read live VLAN state, so the stored port
+    // already reflects the change (a runtime VLAN add would otherwise look
+    // "updated", not "added", and applications that only originate on add miss it).
+    let previousContextIdentifiers = _portContextIdentifiers[port.id] ?? []
+    let currentContextIdentifiers = port.contextIdentifiers
+    addedContextIdentifiers = currentContextIdentifiers.subtracting(previousContextIdentifiers)
+    removedContextIdentifiers = previousContextIdentifiers.subtracting(currentContextIdentifiers)
+    updatedContextIdentifiers = previousContextIdentifiers.intersection(currentContextIdentifiers)
 
     precondition(!addedContextIdentifiers.contains(MAPBaseSpanningTreeContext))
     precondition(!removedContextIdentifiers.contains(MAPBaseSpanningTreeContext))
@@ -246,10 +248,9 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
   }
 
   private func _applyContextIdentifierChanges(beforeRemoving port: P) async throws {
-    let removedContextIdentifiers: Set<MAPContextIdentifier>
-
-    guard let existingPort = ports.first(where: { $0.id == port.id }) else { return }
-    removedContextIdentifiers = existingPort.contextIdentifiers.subtracting(port.contextIdentifiers)
+    guard _ports[port.id] != nil else { return }
+    let previousContextIdentifiers = _portContextIdentifiers[port.id] ?? []
+    let removedContextIdentifiers = previousContextIdentifiers.subtracting(port.contextIdentifiers)
 
     logger
       .trace(
@@ -268,6 +269,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
 
     try await _applyContextIdentifierChanges(beforeAddingOrUpdating: port, isNewPort: true)
     _ports[port.id] = port
+    _portContextIdentifiers[port.id] = port.contextIdentifiers
     await _checkTopologyChange(port: port)
   }
 
@@ -276,6 +278,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
 
     try await _applyContextIdentifierChanges(beforeRemoving: port)
     _ports[port.id] = nil
+    _portContextIdentifiers[port.id] = nil
     _stpPortStatus[port.id] = nil
 
     if timerConfiguration.periodicTime != .zero { _stopPeriodicTimer() }
@@ -286,6 +289,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
 
     try await _applyContextIdentifierChanges(beforeAddingOrUpdating: port, isNewPort: false)
     _ports[port.id] = port
+    _portContextIdentifiers[port.id] = port.contextIdentifiers
     await _checkTopologyChange(port: port)
   }
 
