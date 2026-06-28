@@ -538,6 +538,9 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   private let _vlanApplicantContinuation: AsyncStream<VLANApplicantNotification>.Continuation
   fileprivate let _pmc: PTPManagementClient
   private var _portPropertiesCache = [P.ID: PortPropertiesNP]()
+  // Member ports by ifindex, so a VLAN-DB change (which carries only an ifindex)
+  // can emit a port-changed notification to re-evaluate that port's contexts.
+  private var _memberPorts = [Int: P]()
   private let _portExclusions: Set<String>
   // Member ports for which the ingress (DCBNL) PCP->queue map is currently configured, and
   // whether the switch uses a single global ingress priority map shared by all ports.
@@ -625,6 +628,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
       }
     } else if port._rtnl.master == _bridgeIndex {
       if case .new = linkMessage {
+        _memberPorts[port.id] = port
         portNotification = .added(port)
         if !_portExclusions.contains(port.name) {
           try _addLinkLocalRxTask(port: port)
@@ -632,6 +636,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
       } else {
         try _cancelLinkLocalRxTask(port: port)
         _portPropertiesCache[port.id] = nil
+        _memberPorts[port.id] = nil
         _portTaggedVLANs.withLock { $0[port.id] = nil }
         _portPVID.withLock { $0[port.id] = nil }
         portNotification = .removed(port)
@@ -675,7 +680,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     _srClassPriorityMapContinuation.yield(tcNotification)
   }
 
-  private func _handleVLANNotification(_ vlanMessage: RTNLVLANDBMessage) {
+  private func _handleVLANNotification(_ vlanMessage: RTNLVLANDBMessage) async {
     let vlandb = vlanMessage.vlandb
     // Track tagged VLANs only (port.vlans mirrors bridgeTaggedVLANs; the SR
     // class VLAN is tagged), keyed by port ifindex.
@@ -699,6 +704,11 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     _logger.debug(
       "LinuxBridge: VLAN \(isNew ? "new" : "del") on ifindex \(vlandb.ifIndex): \(vlandb.entries)"
     )
+    // A VLAN-DB change does not emit RTM_NEWLINK, so notify the controller to
+    // re-evaluate this port's contexts (e.g. so MVRP advertises a new VLAN).
+    if let port = _memberPorts[vlandb.ifIndex] {
+      await _portNotificationChannel.send(.changed(port))
+    }
   }
 
   public func getVlans(controller: isolated MRPController<P>) async -> Set<VLAN> {
@@ -848,7 +858,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
           case let tcNotification as RTNLTCMessage:
             try await _handleTCNotification(tcNotification)
           case let vlanNotification as RTNLVLANDBMessage:
-            _handleVLANNotification(vlanNotification)
+            await _handleVLANNotification(vlanNotification)
           default:
             break
           }
@@ -866,6 +876,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     let ports = try await _getMemberPorts()
     for port in ports {
       if let pvid = port._pvid { _portPVID.withLock { $0[port.id] = pvid } }
+      _memberPorts[port.id] = port
       await _portNotificationChannel.send(.added(port))
       if !_portExclusions.contains(port.name) {
         try _addLinkLocalRxTask(port: port)
