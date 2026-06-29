@@ -833,13 +833,24 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
 }
 
 fileprivate extension MSRPApplication {
+  // synchronous (no suspension point): enumerate the port's registered talkers via the
+  // isolated accessor and sum their bandwidth, matching the planner's reentrancy discipline
   func _getTransmitRate(for participant: Participant<MSRPApplication>) throws -> Int {
     let portState = try withPortState(port: participant.port) { $0 }
-    let bandwidthUsed = try _calculateBandwidthUsed(
-      participant: participant,
-      portState: portState
+    return try participant.findAllAttributesUnchecked(
+      attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
+      matching: .matchAny,
+      isolation: self
     )
-    return bandwidthUsed.values.reduce(0, +)
+    .filter(\.isRegistered)
+    .compactMap { $0.attributeValue as? MSRPTalkerAdvertiseValue }
+    .reduce(0) { total, talker in
+      try total + _calculateBandwidthUsed(
+        portState: portState,
+        talker: talker,
+        nominalBandwidth: false
+      )
+    }
   }
 
   func _getPorts() async -> [MSRPHandler<P>.Port] {
