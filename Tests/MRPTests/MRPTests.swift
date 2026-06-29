@@ -1943,6 +1943,7 @@ final class MRPTests: XCTestCase {
   }
 
   // MARK: - Malformed PDU decoder-safety regression tests
+
   // Ported from Jeff Koftinoff's statusbar/srp C++ suite: each asserts a crafted/corrupt
   // MRPDU is rejected without mis-parsing the rest of the list.
 
@@ -2125,6 +2126,7 @@ final class MRPTests: XCTestCase {
   }
 
   // MARK: - MMRP / MVRP indication-path integration tests
+
   // Drive a peer declaration through a participant's rx and assert the bridge is
   // programmed (previously MMRP/MVRP had only serialization coverage).
 
@@ -2260,7 +2262,10 @@ final class MRPTests: XCTestCase {
 
   // An excluded VID is not propagated to the FDB even when declared by a peer.
   func testMVRPExcludedVLANNotRegistered() async throws {
-    let (controller, mvrp, recorder) = try await _makeMVRP(portIDs: [0], exclusions: [VLAN(vid: 100)])
+    let (controller, mvrp, recorder) = try await _makeMVRP(
+      portIDs: [0],
+      exclusions: [VLAN(vid: 100)]
+    )
     try await _driveMVRP(mvrp, port: 0, vid: 100, event: .JoinIn)
     try await _driveMVRP(mvrp, port: 0, vid: 200, event: .JoinIn)
 
@@ -2290,6 +2295,7 @@ final class MRPTests: XCTestCase {
   }
 
   // MARK: - Multi-value vector coalescing correctness
+
   // Coalescing attributes that don't form an exact increment chain corrupts them on the
   // wire, since the receiver reconstructs value[i] as FirstValue.makeValue(relativeTo: i).
 
