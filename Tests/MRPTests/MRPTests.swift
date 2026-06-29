@@ -2348,6 +2348,45 @@ final class MRPTests: XCTestCase {
     _ = controller
   }
 
+  // 16 contiguous, identical-parameter talkers coalesce into a single vector that must
+  // round-trip every destination MAC (regression for "does not work with 16 streams").
+  func testCoalescing16ContiguousStreamsRoundTrip() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0])
+    var expected = Set<UInt64>()
+    for i in 0..<16 {
+      let streamID = MSRPStreamID(integerLiteral: 0x0001_0000_0000_0000 + UInt64(i))
+      let dest: EUI48 = try (UInt64(0x91E0_F000_0010) + UInt64(i)).asEUI48()
+      expected.insert(UInt64(eui48: dest))
+      try await _declareTalker(msrp, streamID: streamID, dest: dest)
+    }
+    let want = expected
+    let ok = await _waitFor {
+      await _transmittedTalkerDestinations(recorder, msrp).isSuperset(of: want)
+    }
+    XCTAssertTrue(ok, "all 16 contiguous talker destinations must round-trip")
+    _ = controller
+  }
+
+  // The same 16 streams with NON-contiguous destinations must not be mis-coalesced:
+  // every destination must still survive (the index-only coalescing bug corrupted these).
+  func testCoalescing16NonContiguousDestinationsRoundTrip() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0])
+    var expected = Set<UInt64>()
+    for i in 0..<16 {
+      let streamID = MSRPStreamID(integerLiteral: 0x0001_0000_0000_0000 + UInt64(i))
+      // stream IDs are contiguous, destinations are spaced by 0x10 so they do not chain
+      let dest: EUI48 = try (UInt64(0x91E0_F000_0000) + UInt64(i) * 0x10).asEUI48()
+      expected.insert(UInt64(eui48: dest))
+      try await _declareTalker(msrp, streamID: streamID, dest: dest)
+    }
+    let want = expected
+    let ok = await _waitFor {
+      await _transmittedTalkerDestinations(recorder, msrp).isSuperset(of: want)
+    }
+    XCTAssertTrue(ok, "all 16 non-contiguous talker destinations must round-trip")
+    _ = controller
+  }
+
   func testPTPManagementErrorStatusParsing() throws {
     // Test that management error status TLV consumes all bytes before throwing
     // This verifies the fix for the ParserSpan migration bug
