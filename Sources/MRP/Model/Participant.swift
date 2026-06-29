@@ -424,15 +424,22 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
       }
     }
 
+    // Coalesce only an exact increment chain: value[i] must equal value[i-1]+1, the
+    // sequence the receiver reconstructs from FirstValue. A consecutive index isn't enough.
+    func chains(after previous: _AttributeValue<A>, to candidate: _AttributeValue<A>) -> Bool {
+      guard let expected = try? previous.value.makeValue(relativeTo: 1) else { return false }
+      return expected == candidate.value
+    }
+
     var chunks: [[EnqueuedEvent<A>.AttributeEvent]] = []
     var currentChunk: [EnqueuedEvent<A>.AttributeEvent] = []
-    var expectedIndex = attributeEvents[0].attributeValue.index
 
     for attributeEvent in attributeEvents {
-      if attributeEvent.attributeValue.index == expectedIndex {
-        // Event is sequential with current chunk, include it for now
+      if let previous = currentChunk.last,
+         chains(after: previous.attributeValue, to: attributeEvent.attributeValue)
+      {
+        // Value continues the increment chain, include it for now
         currentChunk.append(attributeEvent)
-        expectedIndex += 1
       } else {
         // Event would start a new chunk - finish current chunk first
         finalizeChunk(&currentChunk)
@@ -441,7 +448,6 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
         // Optional events that would start a new chunk are skipped entirely
         if !attributeEvent.encodingOptional {
           currentChunk = [attributeEvent]
-          expectedIndex = attributeEvent.attributeValue.index + 1
         }
       }
     }

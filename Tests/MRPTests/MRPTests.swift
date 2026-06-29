@@ -75,10 +75,17 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
 
 // Records the kernel-facing effects (CBS idleslope + FDB reservation entries) so
 // recompute tests can assert on convergence and idempotency.
-actor MSRPTestRecorder {
+actor MRPTestRecorder {
   private(set) var cbs = [(port: Int, queue: UInt, idleSlope: Int)]()
   private(set) var fdbRegister = [(mac: EUI48, vlan: VLAN?, ports: Set<Int>)]()
   private(set) var fdbDeregister = [(mac: EUI48, vlan: VLAN?, ports: Set<Int>)]()
+  private(set) var vlanRegister = [(vlan: VLAN, port: Int)]()
+  private(set) var vlanDeregister = [(vlan: VLAN, port: Int)]()
+  private(set) var txPackets = [(port: Int, payload: [UInt8])]()
+
+  func recordTx(port: Int, payload: [UInt8]) {
+    txPackets.append((port, payload))
+  }
 
   func recordCBS(port: Int, queue: UInt, idleSlope: Int) {
     cbs.append((port, queue, idleSlope))
@@ -91,6 +98,40 @@ actor MSRPTestRecorder {
   func recordFDBDeregister(mac: EUI48, vlan: VLAN?, ports: Set<Int>) {
     fdbDeregister.append((mac, vlan, ports))
   }
+
+  func recordVLANRegister(vlan: VLAN, port: Int) {
+    vlanRegister.append((vlan, port))
+  }
+
+  func recordVLANDeregister(vlan: VLAN, port: Int) {
+    vlanDeregister.append((vlan, port))
+  }
+}
+
+// every destination MAC a receiver would reconstruct from the talkerAdvertise vectors
+// in the captured transmissions. Free function for use in _waitFor's @Sendable closure.
+private func _transmittedTalkerDestinations(
+  _ recorder: MRPTestRecorder,
+  _ msrp: MSRPApplication<MockPort>
+) async -> Set<UInt64> {
+  var dests = Set<UInt64>()
+  for packet in await recorder.txPackets {
+    guard let pdu = try? packet.payload.withParserSpan({ input in
+      try MRPDU(parsing: &input, application: msrp)
+    }) else { continue }
+    for message in pdu.messages
+      where message.attributeType == MSRPAttributeType.talkerAdvertise.rawValue
+    {
+      for vector in message.attributeList {
+        for i in 0..<Int(vector.numberOfValues) {
+          guard let value = try? vector.firstValue.value.makeValue(relativeTo: UInt64(i)),
+                let talker = value as? MSRPTalkerAdvertiseValue else { continue }
+          dests.insert(UInt64(eui48: talker.dataFrameParameters.destinationAddress))
+        }
+      }
+    }
+  }
+  return dests
 }
 
 // is an attribute of this type declared (Applicant) on a port for the stream?
@@ -135,11 +176,12 @@ struct MockBridge: MRP.Bridge, CustomStringConvertible {
   var notifications = AsyncEmptySequence<MRP.PortNotification<MockPort>>().eraseToAnyAsyncSequence()
   var rxPackets = AsyncEmptySequence<(Int, IEEE802Packet)>().eraseToAnyAsyncSequence()
   var ports: Set<MockPort> = [MockPort(id: 0)]
-  var recorder = MSRPTestRecorder()
+  var recorder = MRPTestRecorder()
+  var hasLocalMVRPApplicant = false
 
   init() {}
 
-  init(ports: Set<MockPort>, recorder: MSRPTestRecorder) {
+  init(ports: Set<MockPort>, recorder: MRPTestRecorder) {
     self.ports = ports
     self.recorder = recorder
   }
@@ -173,7 +215,9 @@ struct MockBridge: MRP.Bridge, CustomStringConvertible {
     _ packet: IEEE802Packet,
     on port: P,
     controller: isolated MRPController<P>
-  ) async throws {}
+  ) async throws {
+    await recorder.recordTx(port: port.id, payload: packet.payload)
+  }
 }
 
 extension MockBridge: MSRPAwareBridge {
@@ -243,6 +287,16 @@ extension MockBridge: MMRPAwareBridge {
     serviceRequirement: MMRPServiceRequirementValue,
     from ports: Set<P>
   ) async throws {}
+}
+
+extension MockBridge: MVRPAwareBridge {
+  func register(vlan: VLAN, on port: P) async throws {
+    await recorder.recordVLANRegister(vlan: vlan, port: port.id)
+  }
+
+  func deregister(vlan: VLAN, from port: P) async throws {
+    await recorder.recordVLANDeregister(vlan: vlan, port: port.id)
+  }
 }
 
 final class MRPTests: XCTestCase {
@@ -1888,6 +1942,406 @@ final class MRPTests: XCTestCase {
     }
   }
 
+  // MARK: - Malformed PDU decoder-safety regression tests
+  // Ported from Jeff Koftinoff's statusbar/srp C++ suite: each asserts a crafted/corrupt
+  // MRPDU is rejected without mis-parsing the rest of the list.
+
+  private func makeMSRP() async throws -> MSRPApplication<MockPort> {
+    let logger = Logger(label: "com.padl.MRPTests.MSRP.decoderSafety")
+    let controller = try await MRPController(bridge: MockBridge(), logger: logger)
+    return try await MSRPApplication(controller: controller)
+  }
+
+  private func makeMVRP() async throws -> MVRPApplication<MockPort> {
+    let logger = Logger(label: "com.padl.MRPTests.MVRP.decoderSafety")
+    let controller = try await MRPController(bridge: MockBridge(), logger: logger)
+    return try await MVRPApplication(controller: controller)
+  }
+
+  // attributeLength shorter than the fixed firstValue over-reads into the packed
+  // events; longer leaves stray octets. Both must be rejected (the new guard).
+  func testMSRPRejectsMismatchedAttributeLength() async throws {
+    let msrp = try await makeMSRP()
+    let talker = MSRPTalkerAdvertiseValue(
+      streamID: MSRPStreamID(0x0001_0000_0000_0001),
+      dataFrameParameters: MSRPDataFrameParameters(),
+      tSpec: MSRPTSpec(),
+      priorityAndRank: MSRPPriorityAndRank(),
+      accumulatedLatency: 1000
+    )
+    let message = Message(
+      attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
+      attributeList: [VectorAttribute(
+        leaveAllEvent: .NullLeaveAllEvent,
+        firstValue: AnyValue(talker),
+        attributeEvents: [.JoinMt],
+        applicationEvents: nil
+      )]
+    )
+    var sc = SerializationContext()
+    try MRPDU(protocolVersion: 0, messages: [message]).serialize(into: &sc, application: msrp)
+    let bytes = sc.bytes
+
+    // sanity: the well-formed PDU parses to exactly one talker
+    let valid = try bytes.withParserSpan { try MRPDU(parsing: &$0, application: msrp) }
+    XCTAssertEqual(valid.messages.count, 1)
+
+    // attributeLength is the 3rd octet (after protocolVersion and attributeType)
+    XCTAssertEqual(bytes[2], 25, "TalkerAdvertise firstValue is 25 octets")
+
+    var tooSmall = bytes; tooSmall[2] = 4
+    let parsedSmall = try tooSmall.withParserSpan { try MRPDU(parsing: &$0, application: msrp) }
+    XCTAssertEqual(parsedSmall.messages.count, 0, "undersized attributeLength rejected")
+
+    var tooLarge = bytes; tooLarge[2] = 30
+    let parsedLarge = try tooLarge.withParserSpan { try MRPDU(parsing: &$0, application: msrp) }
+    XCTAssertEqual(parsedLarge.messages.count, 0, "oversized attributeLength rejected")
+  }
+
+  // Domain vector claiming 50 values in a payload with room for one: the packed
+  // event array overruns the buffer and the PDU is dropped.
+  func testMSRPRejectsNumberOfValuesOverrun() async throws {
+    let msrp = try await makeMSRP()
+    let bytes: [UInt8] = [
+      0x00, // protocolVersion
+      0x04, // attributeType = domain
+      0x04, // attributeLength = 4
+      0x00, 0x09, // attributeListLength = 9
+      0x00, 0x32, // vectorHeader: numberOfValues = 50
+      0x06, 0x03, 0x00, 0x02, // DomainFirstValue (4 octets)
+      0x00, 0x00, 0x00, // far too few packed-event octets
+    ]
+    let pdu = try bytes.withParserSpan { try MRPDU(parsing: &$0, application: msrp) }
+    XCTAssertEqual(pdu.messages.count, 0, "numberOfValues overrun rejected")
+  }
+
+  // Higher protocol version whose attributeListLength runs past the buffer is
+  // dropped rather than over-read (clause 10.8.3.x / Avnu §8.1).
+  func testMSRPRejectsWrongProtocolVersionTruncated() async throws {
+    let msrp = try await makeMSRP()
+    let bytes: [UInt8] = [0x01, 0x04, 0x04, 0x00, 0x09]
+    let pdu = try bytes.withParserSpan { try MRPDU(parsing: &$0, application: msrp) }
+    XCTAssertEqual(pdu.messages.count, 0)
+  }
+
+  // A version-0 PDU naming an attribute type we don't know is discarded from the
+  // unknown message onward, keeping any valid prefix.
+  func testMSRPRejectsUnknownAttributeType() async throws {
+    let msrp = try await makeMSRP()
+    let bytes: [UInt8] = [
+      0x00, // protocolVersion
+      0x07, // attributeType = 7 (unknown)
+      0x04, // attributeLength
+      0x00, 0x04, // attributeListLength
+      0x00, 0x00, 0x00, 0x00, // body
+      0x00, 0x00, // endmark
+    ]
+    let pdu = try bytes.withParserSpan { try MRPDU(parsing: &$0, application: msrp) }
+    XCTAssertEqual(pdu.messages.count, 0)
+  }
+
+  // A 3-packed octet of 0xFA decodes its first event as 6, which has no
+  // AttributeEvent case: parsing succeeds but reading the events throws.
+  func testMSRPRejectsThreePackedEventOutOfRange() async throws {
+    let msrp = try await makeMSRP()
+    var bytes: [UInt8] = [
+      0x00, // protocolVersion
+      0x01, // attributeType = talkerAdvertise
+      0x19, // attributeLength = 25
+      0x00, 0x1E, // attributeListLength = 30
+      0x00, 0x01, // vectorHeader: numberOfValues = 1
+    ]
+    bytes += [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0xBE, 0xEF] // streamID
+    bytes += [0x91, 0xE0, 0xF0, 0x00, 0x12, 0x34] // dest MAC
+    bytes += [0x00, 0x02] // vlan
+    bytes += [0x00, 0x96] // maxFrameSize
+    bytes += [0x00, 0x01] // maxIntervalFrames
+    bytes += [0x60] // priorityAndRank
+    bytes += [0x00, 0x00, 0x00, 0x00] // accumulatedLatency
+    bytes += [0xFA] // 3-packed events: first event = 6 (invalid)
+    bytes += [0x00, 0x00] // endmark
+
+    let pdu = try bytes.withParserSpan { try MRPDU(parsing: &$0, application: msrp) }
+    XCTAssertEqual(pdu.messages.count, 1, "structurally valid, parses")
+    let vector = try XCTUnwrap(pdu.messages.first?.attributeList.first)
+    XCTAssertThrowsError(try vector.attributeEvents) { error in
+      XCTAssertEqual(error as? MRPError, .unknownAttributeEvent)
+    }
+  }
+
+  // MVRP: attributeLength (0) below the 2-octet VID firstValue must be rejected,
+  // not allowed to read past the packet (statusbar/srp regression).
+  func testMVRPRejectsUndersizedAttributeLength() async throws {
+    let mvrp = try await makeMVRP()
+    let bytes: [UInt8] = [0x00, 0x01, 0x00, 0x00, 0x01]
+    let pdu = try bytes.withParserSpan { try MRPDU(parsing: &$0, application: mvrp) }
+    XCTAssertEqual(pdu.messages.count, 0)
+  }
+
+  // MVRP: a vector claiming 100 VIDs with room for one is dropped.
+  func testMVRPRejectsNumberOfValuesOverrun() async throws {
+    let mvrp = try await makeMVRP()
+    let bytes: [UInt8] = [
+      0x00, // protocolVersion
+      0x01, // attributeType = vid
+      0x02, // attributeLength = 2
+      0x00, 0x64, // vectorHeader: numberOfValues = 100
+      0x00, 0x64, // VlanIdentifierFirstValue = 100
+      0x24, // one packed-event octet
+      0x00, 0x00, 0x00,
+    ]
+    let pdu = try bytes.withParserSpan { try MRPDU(parsing: &$0, application: mvrp) }
+    XCTAssertEqual(pdu.messages.count, 0)
+  }
+
+  // A PDU advertising a protocol version above ours but carrying attributes we do
+  // understand still parses (we don't reject purely on the version octet).
+  func testHigherProtocolVersionParsesKnownAttributes() async throws {
+    let msrp = try await makeMSRP()
+    let talker = MSRPTalkerAdvertiseValue(
+      streamID: MSRPStreamID(0x0001_0000_0000_0001),
+      dataFrameParameters: MSRPDataFrameParameters(),
+      tSpec: MSRPTSpec(),
+      priorityAndRank: MSRPPriorityAndRank(),
+      accumulatedLatency: 0
+    )
+    let message = Message(
+      attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
+      attributeList: [VectorAttribute(
+        leaveAllEvent: .NullLeaveAllEvent,
+        firstValue: AnyValue(talker),
+        attributeEvents: [.JoinMt],
+        applicationEvents: nil
+      )]
+    )
+    var sc = SerializationContext()
+    try MRPDU(protocolVersion: 0, messages: [message]).serialize(into: &sc, application: msrp)
+    var bytes = sc.bytes
+    bytes[0] = 0x02 // bump the protocolVersion octet
+
+    let pdu = try bytes.withParserSpan { try MRPDU(parsing: &$0, application: msrp) }
+    XCTAssertEqual(pdu.protocolVersion, 2)
+    XCTAssertEqual(pdu.messages.count, 1)
+  }
+
+  // MARK: - MMRP / MVRP indication-path integration tests
+  // Drive a peer declaration through a participant's rx and assert the bridge is
+  // programmed (previously MMRP/MVRP had only serialization coverage).
+
+  private func _makeMMRP(portIDs: [Int])
+    async throws -> (MRPController<MockPort>, MMRPApplication<MockPort>, MRPTestRecorder)
+  {
+    let recorder = MRPTestRecorder()
+    let ports = Set(portIDs.map { MockPort(id: $0) })
+    let bridge = MockBridge(ports: ports, recorder: recorder)
+    let controller = try await MRPController(
+      bridge: bridge,
+      logger: Logger(label: "com.padl.MRPTests.mmrp"),
+      timerConfiguration: MRPTimerConfiguration(leaveTime: .seconds(1))
+    )
+    let mmrp = try await MMRPApplication(controller: controller)
+    try await mmrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
+    return (controller, mmrp, recorder)
+  }
+
+  private func _driveMMRP(
+    _ mmrp: MMRPApplication<MockPort>,
+    port: Int,
+    value: some Value,
+    event: AttributeEvent,
+    fromLocal: Bool = false
+  ) async throws {
+    let message = Message(
+      attributeType: MMRPAttributeType.mac.rawValue,
+      attributeList: [VectorAttribute(
+        leaveAllEvent: .NullLeaveAllEvent,
+        firstValue: AnyValue(value),
+        attributeEvents: [event],
+        applicationEvents: nil
+      )]
+    )
+    let source: EUI48 = fromLocal
+      ? [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
+      : [0x02, 0x00, 0x00, 0x00, 0x00, 0x0A]
+    try await mmrp.rx(
+      pdu: MRPDU(protocolVersion: 0, messages: [message]),
+      for: MAPBaseSpanningTreeContext,
+      from: MockPort(id: port),
+      sourceMacAddress: source
+    )
+  }
+
+  // A peer JoinIn for a group MAC programs that address into the FDB on the
+  // context's ports.
+  func testMMRPJoinIndicationRegistersGroupAddress() async throws {
+    let (controller, mmrp, recorder) = try await _makeMMRP(portIDs: [0, 1])
+    let group: EUI48 = [0x01, 0x00, 0x5E, 0x00, 0x00, 0x01]
+    try await _driveMMRP(mmrp, port: 0, value: MMRPMACValue(macAddress: group), event: .JoinIn)
+
+    let registered = await _waitFor {
+      await recorder.fdbRegister.contains { _isEqualMacAddress($0.mac, group) }
+    }
+    XCTAssertTrue(registered, "MMRP join indication must register the group address")
+    _ = controller
+  }
+
+  // After a registered group is declared Leave, the leave timer expiry
+  // deregisters it from the FDB.
+  func testMMRPLeaveIndicationDeregistersGroupAddress() async throws {
+    let (controller, mmrp, recorder) = try await _makeMMRP(portIDs: [0])
+    let group: EUI48 = [0x01, 0x00, 0x5E, 0x00, 0x00, 0x02]
+    try await _driveMMRP(mmrp, port: 0, value: MMRPMACValue(macAddress: group), event: .JoinIn)
+    _ = await _waitFor {
+      await recorder.fdbRegister.contains { _isEqualMacAddress($0.mac, group) }
+    }
+
+    try await _driveMMRP(mmrp, port: 0, value: MMRPMACValue(macAddress: group), event: .Lv)
+    let deregistered = await _waitFor(timeoutMs: 5000) {
+      await recorder.fdbDeregister.contains { _isEqualMacAddress($0.mac, group) }
+    }
+    XCTAssertTrue(deregistered, "MMRP leave must deregister the group address")
+    _ = controller
+  }
+
+  private func _makeMVRP(portIDs: [Int], exclusions: Set<VLAN> = [], localApplicant: Bool = false)
+    async throws -> (MRPController<MockPort>, MVRPApplication<MockPort>, MRPTestRecorder)
+  {
+    let recorder = MRPTestRecorder()
+    let ports = Set(portIDs.map { MockPort(id: $0) })
+    var bridge = MockBridge(ports: ports, recorder: recorder)
+    bridge.hasLocalMVRPApplicant = localApplicant
+    let controller = try await MRPController(
+      bridge: bridge,
+      logger: Logger(label: "com.padl.MRPTests.mvrp")
+    )
+    let mvrp = try await MVRPApplication(controller: controller, vlanExclusions: exclusions)
+    try await mvrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
+    return (controller, mvrp, recorder)
+  }
+
+  private func _driveMVRP(
+    _ mvrp: MVRPApplication<MockPort>,
+    port: Int,
+    vid: UInt16,
+    event: AttributeEvent,
+    fromLocal: Bool = false
+  ) async throws {
+    let message = Message(
+      attributeType: MVRPAttributeType.vid.rawValue,
+      attributeList: [VectorAttribute(
+        leaveAllEvent: .NullLeaveAllEvent,
+        firstValue: AnyValue(VLAN(vid: vid)),
+        attributeEvents: [event],
+        applicationEvents: nil
+      )]
+    )
+    let source: EUI48 = fromLocal
+      ? [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
+      : [0x02, 0x00, 0x00, 0x00, 0x00, 0x0A]
+    try await mvrp.rx(
+      pdu: MRPDU(protocolVersion: 0, messages: [message]),
+      for: MAPBaseSpanningTreeContext,
+      from: MockPort(id: port),
+      sourceMacAddress: source
+    )
+  }
+
+  // A peer JoinIn for a VID registers that VLAN on the reception port.
+  func testMVRPJoinIndicationRegistersVLAN() async throws {
+    let (controller, mvrp, recorder) = try await _makeMVRP(portIDs: [0])
+    try await _driveMVRP(mvrp, port: 0, vid: 100, event: .JoinIn)
+
+    let registered = await _waitFor {
+      await recorder.vlanRegister.contains { $0.vlan.vid == 100 && $0.port == 0 }
+    }
+    XCTAssertTrue(registered, "MVRP join indication must register the VLAN")
+    _ = controller
+  }
+
+  // An excluded VID is not propagated to the FDB even when declared by a peer.
+  func testMVRPExcludedVLANNotRegistered() async throws {
+    let (controller, mvrp, recorder) = try await _makeMVRP(portIDs: [0], exclusions: [VLAN(vid: 100)])
+    try await _driveMVRP(mvrp, port: 0, vid: 100, event: .JoinIn)
+    try await _driveMVRP(mvrp, port: 0, vid: 200, event: .JoinIn)
+
+    let registered200 = await _waitFor {
+      await recorder.vlanRegister.contains { $0.vlan.vid == 200 }
+    }
+    XCTAssertTrue(registered200, "non-excluded VLAN still registers")
+    let registered100 = await recorder.vlanRegister.contains { $0.vlan.vid == 100 }
+    XCTAssertFalse(registered100, "excluded VLAN must not register")
+    _ = controller
+  }
+
+  // With a local (in-kernel) MVRP applicant present, a locally-sourced declaration
+  // is suppressed, but a peer declaration still registers.
+  func testMVRPLocalApplicantSuppressesLocalSourceOnly() async throws {
+    let (controller, mvrp, recorder) = try await _makeMVRP(portIDs: [0], localApplicant: true)
+    try await _driveMVRP(mvrp, port: 0, vid: 300, event: .JoinIn, fromLocal: true)
+    try await _driveMVRP(mvrp, port: 0, vid: 400, event: .JoinIn, fromLocal: false)
+
+    let registered400 = await _waitFor {
+      await recorder.vlanRegister.contains { $0.vlan.vid == 400 }
+    }
+    XCTAssertTrue(registered400, "peer-sourced VLAN still registers")
+    let registered300 = await recorder.vlanRegister.contains { $0.vlan.vid == 300 }
+    XCTAssertFalse(registered300, "locally-sourced VLAN suppressed when a local applicant exists")
+    _ = controller
+  }
+
+  // MARK: - Multi-value vector coalescing correctness
+  // Coalescing attributes that don't form an exact increment chain corrupts them on the
+  // wire, since the receiver reconstructs value[i] as FirstValue.makeValue(relativeTo: i).
+
+  private func _declareTalker(
+    _ msrp: MSRPApplication<MockPort>,
+    streamID: MSRPStreamID,
+    dest: EUI48
+  ) async throws {
+    try await msrp.registerStream(
+      streamID: streamID,
+      declarationType: .talkerAdvertise,
+      dataFrameParameters: MSRPDataFrameParameters(destinationAddress: dest, vlanIdentifier: 2),
+      tSpec: MSRPTSpec(maxFrameSize: 64, maxIntervalFrames: 1),
+      priorityAndRank: MSRPPriorityAndRank(dataFramePriority: .CA, rank: false),
+      accumulatedLatency: 1000
+    )
+  }
+
+  // Two talkers with consecutive stream IDs but unrelated destination MACs must not
+  // be coalesced: each destination must survive the round trip exactly.
+  func testCoalescingPreservesNonChainedDestinations() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0])
+    let destA: EUI48 = [0x91, 0xE0, 0xF0, 0x00, 0x00, 0x10]
+    let destB: EUI48 = [0x91, 0xE0, 0xF0, 0x00, 0x00, 0x20] // not destA + 1
+    try await _declareTalker(msrp, streamID: MSRPStreamID(0x0001_0000_0000_0001), dest: destA)
+    try await _declareTalker(msrp, streamID: MSRPStreamID(0x0001_0000_0000_0002), dest: destB)
+
+    let ok = await _waitFor {
+      let dests = await _transmittedTalkerDestinations(recorder, msrp)
+      return dests.contains(UInt64(eui48: destA)) && dests.contains(UInt64(eui48: destB))
+    }
+    XCTAssertTrue(ok, "both destination MACs must round-trip; the run must not be coalesced")
+    _ = controller
+  }
+
+  // The complementary case: an exact increment chain (consecutive stream IDs AND
+  // destination MACs) may coalesce, and both values must still round-trip.
+  func testCoalescingChainedTalkersRoundTrip() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0])
+    let destA: EUI48 = [0x91, 0xE0, 0xF0, 0x00, 0x00, 0x10]
+    let destB: EUI48 = [0x91, 0xE0, 0xF0, 0x00, 0x00, 0x11] // destA + 1
+    try await _declareTalker(msrp, streamID: MSRPStreamID(0x0001_0000_0000_0001), dest: destA)
+    try await _declareTalker(msrp, streamID: MSRPStreamID(0x0001_0000_0000_0002), dest: destB)
+
+    let ok = await _waitFor {
+      let dests = await _transmittedTalkerDestinations(recorder, msrp)
+      return dests.contains(UInt64(eui48: destA)) && dests.contains(UInt64(eui48: destB))
+    }
+    XCTAssertTrue(ok, "chained talkers must round-trip whether coalesced or not")
+    _ = controller
+  }
+
   func testPTPManagementErrorStatusParsing() throws {
     // Test that management error status TLV consumes all bytes before throwing
     // This verifies the fix for the ParserSpan migration bug
@@ -2827,9 +3281,9 @@ extension MRPTests {
     portIDs: [Int],
     flags: MSRPApplicationFlags = .defaultFlags
   ) async throws
-    -> (MRPController<MockPort>, MSRPApplication<MockPort>, MSRPTestRecorder)
+    -> (MRPController<MockPort>, MSRPApplication<MockPort>, MRPTestRecorder)
   {
-    let recorder = MSRPTestRecorder()
+    let recorder = MRPTestRecorder()
     let ports = Set(portIDs.map { MockPort(id: $0) })
     let bridge = MockBridge(ports: ports, recorder: recorder)
     let controller = try await MRPController(

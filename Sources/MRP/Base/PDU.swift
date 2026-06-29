@@ -275,10 +275,16 @@ struct VectorAttribute<V: Value>: Sendable, Equatable {
     guard input.count >= Int(attributeLength) else {
       throw MRPError.badPduLength
     }
+    let firstValueStart = input.count
     let firstValue = try AnyValue(application.deserialize(
       attributeOfType: attributeType,
       from: &input
     ))
+    // attributeLength must equal the firstValue octets actually consumed: a shorter
+    // length over-reads into the packed events, a longer one leaves stray octets.
+    guard firstValueStart - input.count == Int(attributeLength) else {
+      throw MRPError.badPduLength
+    }
 
     let numberOfValueOctets = Int.ceil(Int(vectorHeader.numberOfValues), 3)
     let threePacketEvents = try Array(parsing: &input, byteCount: numberOfValueOctets)
