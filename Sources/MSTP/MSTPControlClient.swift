@@ -150,7 +150,8 @@ private enum MSTPError: Error {
   case unsupported
 }
 
-// Run an async operation with a deadline; throws MSTPError.timedOut (cancelling the operation) if it
+// Run an async operation with a deadline; throws MSTPError.timedOut (cancelling the operation) if
+// it
 // does not finish in time. Bounds the mstpd round-trip so a wedged daemon can't stall the caller.
 private func _withTimeout<R: Sendable>(
   _ duration: Duration,
