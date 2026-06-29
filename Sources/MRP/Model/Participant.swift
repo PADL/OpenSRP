@@ -407,7 +407,10 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
     )
   }
 
-  private func _chunkAttributeEvents(_ attributeEvents: [EnqueuedEvent<A>.AttributeEvent])
+  private func _chunkAttributeEvents(
+    _ attributeEvents: [EnqueuedEvent<A>.AttributeEvent],
+    coalesce: Bool
+  )
     -> [[EnqueuedEvent<A>.AttributeEvent]]
   {
     guard !attributeEvents.isEmpty else { return [] }
@@ -426,7 +429,9 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
 
     // Coalesce only an exact increment chain: value[i] must equal value[i-1]+1, the
     // sequence the receiver reconstructs from FirstValue. A consecutive index isn't enough.
+    // When coalescing is disabled for the type, every value becomes its own single-value vector.
     func chains(after previous: _AttributeValue<A>, to candidate: _AttributeValue<A>) -> Bool {
+      guard coalesce else { return false }
       guard let expected = try? previous.value.makeValue(relativeTo: 1) else { return false }
       return expected == candidate.value
     }
@@ -469,7 +474,10 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
         .sorted(by: {
           $0.attributeValue.index < $1.attributeValue.index
         })
-      let attributeEventChunks = _chunkAttributeEvents(attributeEvents)
+      let attributeEventChunks = _chunkAttributeEvents(
+        attributeEvents,
+        coalesce: application.coalesceVectors(for: attributeType)
+      )
 
       var vectorAttributes: [VectorAttribute<AnyValue>] = attributeEventChunks
         .compactMap { attributeEventChunk in

@@ -66,6 +66,11 @@ public protocol Application<P>: Actor, Equatable, Hashable, Sendable {
   nonisolated func administrativeControl(for: AttributeType) throws -> AdministrativeControl
   nonisolated var nonBaseContextsSupported: Bool { get }
 
+  // Whether consecutive attributes of this type whose FirstValues form an increment chain may be
+  // coalesced into one multi-value VectorAttribute on transmit. Legal per 35.1.11, but some peers
+  // don't expand multi-value vectors, so an application may opt a type out. Defaults to true.
+  nonisolated func coalesceVectors(for: AttributeType) -> Bool
+
   // When true, the Registrar leaves immediately on a received Leave (IN / rLv! -> (Lv) -> MT),
   // skipping the leavetimer. Avnu ProAV Bridge §9.2 mandates this for MSRP only; default false.
   nonisolated var registrarLeaveImmediate: Bool { get }

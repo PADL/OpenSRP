@@ -530,6 +530,13 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     attributeType == MSRPAttributeType.listener.rawValue
   }
 
+  // Don't coalesce the Domain attribute: its FirstValue increment chain (Class B -> Class A)
+  // forms a multi-value vector that some non-compliant peers fail to expand, seeing only the
+  // Class B FirstValue. Emit each SR class as its own single-value vector.
+  public nonisolated func coalesceVectors(for attributeType: AttributeType) -> Bool {
+    attributeType != MSRPAttributeType.domain.rawValue
+  }
+
   public nonisolated func administrativeControl(for attributeType: AttributeType) throws
     -> AdministrativeControl
   {

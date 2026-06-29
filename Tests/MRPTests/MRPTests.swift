@@ -134,6 +134,29 @@ private func _transmittedTalkerDestinations(
   return dests
 }
 
+// the (srClassID, value-count) of every Domain vector in the captured transmissions
+private func _transmittedDomainVectors(
+  _ recorder: MRPTestRecorder,
+  _ msrp: MSRPApplication<MockPort>
+) async -> [(srClassID: SRclassID, count: UInt16)] {
+  var result = [(srClassID: SRclassID, count: UInt16)]()
+  for packet in await recorder.txPackets {
+    guard let pdu = try? packet.payload.withParserSpan({ input in
+      try MRPDU(parsing: &input, application: msrp)
+    }) else { continue }
+    for message in pdu.messages
+      where message.attributeType == MSRPAttributeType.domain.rawValue
+    {
+      for vector in message.attributeList {
+        if let domain = vector.firstValue.value as? MSRPDomainValue {
+          result.append((domain.srClassID, vector.numberOfValues))
+        }
+      }
+    }
+  }
+  return result
+}
+
 // is an attribute of this type declared (Applicant) on a port for the stream?
 // Free function (not a method) so it can be used inside _waitFor's @Sendable closure.
 private func _isDeclared(
@@ -2345,6 +2368,24 @@ final class MRPTests: XCTestCase {
       return dests.contains(UInt64(eui48: destA)) && dests.contains(UInt64(eui48: destB))
     }
     XCTAssertTrue(ok, "chained talkers must round-trip whether coalesced or not")
+    _ = controller
+  }
+
+  // The Domain attribute opts out of coalescing (some peers don't expand a multi-value Domain
+  // vector): each SR class must be emitted as its own single-value vector, not coalesced B->A.
+  func testDomainVectorsAreNotCoalesced() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0])
+    let ok = await _waitFor {
+      let domains = await _transmittedDomainVectors(recorder, msrp)
+      return domains.contains(where: { $0.srClassID == .A && $0.count == 1 })
+        && domains.contains(where: { $0.srClassID == .B && $0.count == 1 })
+    }
+    XCTAssertTrue(ok, "each SR class Domain must be a separate single-value vector")
+    let domains = await _transmittedDomainVectors(recorder, msrp)
+    XCTAssertFalse(
+      domains.contains(where: { $0.count > 1 }),
+      "Domain vectors must not be coalesced into a multi-value vector"
+    )
     _ = controller
   }
 
