@@ -136,16 +136,21 @@ public actor MSTPControlClient {
     return address
   }
   #else
-  public init() async throws { throw POSIXError(.ENOSYS) }
+  public init() async throws { throw MSTPError.unsupported }
   public func cistPortStatus(bridgeIndex: Int32, portIndex: Int32) async -> MSTPCISTPortStatus? {
     nil
   }
   #endif
 }
 
-private struct MSTPTimedOut: Error {}
+private enum MSTPError: Error {
+  // The mstpd round-trip exceeded its deadline (cancels the operation).
+  case timedOut
+  // The mstpd control client is only available on Linux (thrown by the non-Linux stub).
+  case unsupported
+}
 
-// Run an async operation with a deadline; throws MSTPTimedOut (cancelling the operation) if it
+// Run an async operation with a deadline; throws MSTPError.timedOut (cancelling the operation) if it
 // does not finish in time. Bounds the mstpd round-trip so a wedged daemon can't stall the caller.
 private func _withTimeout<R: Sendable>(
   _ duration: Duration,
@@ -155,7 +160,7 @@ private func _withTimeout<R: Sendable>(
     group.addTask { try await operation() }
     group.addTask {
       try await Task.sleep(for: duration)
-      throw MSTPTimedOut()
+      throw MSTPError.timedOut
     }
     defer { group.cancelAll() }
     return try await group.next()!

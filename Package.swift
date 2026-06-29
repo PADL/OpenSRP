@@ -206,7 +206,7 @@ let CommonTargets: [Target] = [
 let package = Package(
   name: "OpenSRP",
   platforms: [
-    .macOS(.v15),
+    .macOS(.v26),
   ],
   products: CommonProducts + PlatformProducts,
   traits: [.init(name: "RestAPI", description: "Build REST API")],
