@@ -4757,6 +4757,53 @@ extension MRPTests {
     _ = controller
   }
 
+  // Table 35-12 (35.2.4.4.3): the listener declarations on multiple egress ports merge into
+  // one declaration toward the talker. Ready + AskingFailed merges to ReadyFailed.
+  func testRecomputeMergesMixedListenersTowardTalker() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1, 2])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0041)
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .JoinIn
+    )
+    try await _drive(
+      msrp, port: 1, attributeType: .listener,
+      value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready
+    )
+    try await _drive(
+      msrp, port: 2, attributeType: .listener,
+      value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .askingFailed
+    )
+    let merged = await _waitFor {
+      await _declaredListenerSubtype(msrp, streamID, port: 0) == .readyFailed
+    }
+    XCTAssertTrue(merged, "Ready + AskingFailed must propagate toward the talker as ReadyFailed")
+    _ = controller
+  }
+
+  // The all-Ready case of the same merge stays Ready toward the talker.
+  func testRecomputeMergesAllReadyListenersAsReady() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1, 2])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0042)
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .JoinIn
+    )
+    try await _drive(
+      msrp, port: 1, attributeType: .listener,
+      value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready
+    )
+    try await _drive(
+      msrp, port: 2, attributeType: .listener,
+      value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready
+    )
+    let merged = await _waitFor {
+      await _declaredListenerSubtype(msrp, streamID, port: 0) == .ready
+    }
+    XCTAssertTrue(merged, "two Ready listeners must propagate toward the talker as Ready")
+    _ = controller
+  }
+
   // two independent streams (talkers on different ingress ports) sharing one listener egress
   // port: both reserve there, bound to their own talker, and neither talker port reserves.
   func testRecomputeMultipleStreamsShareListenerPort() async throws {
