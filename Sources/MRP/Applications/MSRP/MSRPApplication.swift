@@ -1614,7 +1614,18 @@ extension MSRPApplication {
           .getPortTcMaxLatency(for: boundTalker.1.priorityAndRank.dataFramePriority)
         guard l >= 0 else { throw MRPError.portLatencyIsNegative(l) }
         latency += UInt32(l)
-      } catch { latency += 500 }
+      } catch {
+        // gPTP/PMC couldn't supply a per-TC max latency for this hop; fall back to the spec's
+        // 500 ns propagation default. A run of these on the wire means the advertised accumulated
+        // latency is bogus (e.g. Avnu worst-case-latency tests will read implausibly small values).
+        _logger.debug(
+          """
+          MSRP: no port latency for stream \(streamID) on port \(participant.port.name) \
+          (\(error)); adding 500 ns fallback
+          """
+        )
+        latency += 500
+      }
 
       // 35.2.6: a type change (e.g. Advertise->Failed) behaves as if the old declaration was
       // withdrawn before the new one, so leave the opposite declared Talker type first.
