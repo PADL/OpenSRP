@@ -42,8 +42,14 @@ public struct MSRPApplicationFlags: OptionSet, Sendable {
   // clear it to fall back to the base 802.1Q leavetimer when interoperating with peers that
   // do not use the Avnu LeaveTime
   public static let leaveImmediate = Self(rawValue: 1 << 5)
+  // Disable 802.3x flow control (clause 31 PAUSE) on every AVB-capable port at
+  // setup, unconditionally, as required of AVB ports by IEEE 802.1BA-2011 §6.4 and
+  // as comparable AVB switches do. On by default; clear it to leave the port's
+  // autonegotiated flow control untouched.
+  public static let disableFlowControl = Self(rawValue: 1 << 6)
 
-  public static let defaultFlags = Self([.ignoreAsCapable, .leaveImmediate])
+  public static let defaultFlags =
+    Self([.ignoreAsCapable, .leaveImmediate, .disableFlowControl])
 }
 
 protocol MSRPAwareBridge<P>: Bridge where P: AVBPort {
@@ -243,6 +249,10 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     _flags.contains(.configureIngressQueues)
   }
 
+  fileprivate nonisolated var _disableFlowControl: Bool {
+    _flags.contains(.disableFlowControl)
+  }
+
   nonisolated var _ignoreAsCapable: Bool { _flags.contains(.ignoreAsCapable) }
   public nonisolated var registrarLeaveImmediate: Bool { _flags.contains(.leaveImmediate) }
   fileprivate nonisolated var _talkerPruning: Bool { _flags.contains(.talkerPruning) }
@@ -311,6 +321,25 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     }
   }
 
+  // IEEE 802.1BA-2011 §6.4: AVB ports do not use 802.3x flow control. Disable PAUSE
+  // once, at port setup (not per stream), so a received PAUSE can never stall
+  // reserved egress. Best effort and idempotent: an unsupported port is logged once
+  // and skipped. The kernel-side fix (mv88e6xxx mac_link_up honoring the resolved
+  // pause) is required for this to take effect on that hardware.
+  private func _setupFlowControl(port: P) async {
+    guard _disableFlowControl, port.isAvbCapable || _forceAvbCapable else { return }
+    do {
+      try await port.setFlowControl(false)
+    } catch MRPError.notSupported {
+      _logger
+        .warning(
+          "MSRP: flow control not configurable on port \(port); IEEE 802.1BA-2011 §6.4 PAUSE suppression not enforced"
+        )
+    } catch {
+      _logger.error("MSRP: failed to disable flow control on port \(port): \(error)")
+    }
+  }
+
   func onContextAdded(
     contextIdentifier: MAPContextIdentifier,
     with context: MAPContext<P>
@@ -325,6 +354,8 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     }
 
     for port in context {
+      await _setupFlowControl(port: port)
+
       if _configureEgressQueues || _configureIngressQueues,
          port.isAvbCapable || _forceAvbCapable
       {

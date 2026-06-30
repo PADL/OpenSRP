@@ -468,6 +468,32 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
     guard let _bridge else { throw MRPError.internalError }
     try await _rtnl.set(option: .mcastFlood, enabled, socket: _bridge._nlLinkSocket)
   }
+
+  public func setFlowControl(_ enabled: Bool) async throws {
+    let fileHandle = try FileHandle(
+      fileDescriptor: socket(CInt(AF_PACKET), Int32(SOCK_DGRAM.rawValue), 0),
+      closeOnDealloc: true
+    )
+    var pause = ethtool_pauseparam()
+    pause.cmd = UInt32(ETHTOOL_SPAUSEPARAM)
+    // Turn autonegotiation off so rx/tx are honored directly: 0/0 forces 802.3x
+    // PAUSE off, which the mv88e6xxx driver propagates to the port's ForcedFC bits
+    // so a received PAUSE cannot stall reserved egress. Re-enabling restores
+    // autonegotiated symmetric pause (the pre-reservation default).
+    pause.autoneg = enabled ? 1 : 0
+    pause.rx_pause = enabled ? 1 : 0
+    pause.tx_pause = enabled ? 1 : 0
+    do {
+      try _ethToolIoctl(fileHandle: fileHandle, name: _rtnl.name, arg: &pause)
+    } catch let error as Errno where error == .notSupported {
+      // ENOTSUP == EOPNOTSUPP on Linux, so this catches the driver's -EOPNOTSUPP.
+      // Port has no configurable pause (fixed-link, or a MAC that does not
+      // advertise symmetric pause); surface as notSupported so MSRP soft-fails and
+      // stops retrying. (An unpatched mv88e6xxx instead accepts the ioctl and
+      // silently ignores it, which is why the kernel-side fix is also required.)
+      throw MRPError.notSupported
+    }
+  }
 }
 
 private extension LinuxPort {

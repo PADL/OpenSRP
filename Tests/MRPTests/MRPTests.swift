@@ -66,6 +66,8 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
 
   func setMulticastFlooding(_ enabled: Bool) async throws {}
 
+  func setFlowControl(_ enabled: Bool) async throws {}
+
   init(id: ID) {
     self.id = id
   }

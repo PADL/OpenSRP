@@ -33,6 +33,7 @@ enum MRPError: Error, Equatable {
   case invalidSRclassPriority
   case invalidSRclassVID
   case internalError
+  case notSupported
   case participantNotFound
   case portAlreadyExists
   case portLatencyIsNegative(Int)
