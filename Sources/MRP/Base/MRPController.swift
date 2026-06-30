@@ -262,7 +262,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
     }
   }
 
-  private func _didAdd(port: P) async throws {
+  func _didAdd(port: P) async throws {
     logger.debug("added port \(port.id): \(port)")
 
     if timerConfiguration.periodicTime != .zero { _startPeriodicTimer() }
@@ -284,7 +284,31 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
     if timerConfiguration.periodicTime != .zero { _stopPeriodicTimer() }
   }
 
-  private func _didUpdate(port: P) async throws {
+  // The subset of a port's properties MRP reacts to. Equatable so a no-op netlink update (e.g. a
+  // statistics refresh) can be told apart from a real carrier/STP/VLAN/link change.
+  private struct PortMRPState: Equatable {
+    let isOperational, isEnabled, isPointToPoint: Bool
+    let stpPortState: STPPortState
+    let pvid: UInt16?
+    let vlans: Set<VLAN>
+    let mtu, linkSpeed: UInt
+
+    init(_ port: some Port) {
+      isOperational = port.isOperational
+      isEnabled = port.isEnabled
+      isPointToPoint = port.isPointToPoint
+      stpPortState = port.stpPortState
+      pvid = port.pvid
+      vlans = port.vlans
+      mtu = port.mtu
+      linkSpeed = port.linkSpeed
+    }
+  }
+
+  func _didUpdate(port: P) async throws {
+    // Ignore netlink no-ops (e.g. statistics refreshes): act only when an MRP-relevant property
+    // changed, so a benign RTM_NEWLINK does not ReDeclare and churn peer registrations.
+    if let previous = _ports[port.id], PortMRPState(previous) == PortMRPState(port) { return }
     logger.debug("updated port \(port.id): \(port)")
 
     try await _applyContextIdentifierChanges(beforeAddingOrUpdating: port, isNewPort: false)

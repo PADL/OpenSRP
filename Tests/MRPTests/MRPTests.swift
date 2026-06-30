@@ -38,7 +38,7 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
 
   func hash(into hasher: inout Hasher) {}
 
-  var isOperational: Bool { true }
+  var isOperational: Bool = true
 
   var isEnabled: Bool { true }
 
@@ -82,9 +82,14 @@ actor MRPTestRecorder {
   private(set) var vlanRegister = [(vlan: VLAN, port: Int)]()
   private(set) var vlanDeregister = [(vlan: VLAN, port: Int)]()
   private(set) var txPackets = [(port: Int, payload: [UInt8])]()
+  private(set) var stpStatusQueries = [Int]()
 
   func recordTx(port: Int, payload: [UInt8]) {
     txPackets.append((port, payload))
+  }
+
+  func recordStpStatusQuery(port: Int) {
+    stpStatusQueries.append(port)
   }
 
   func recordCBS(port: Int, queue: UInt, idleSlope: Int) {
@@ -218,7 +223,10 @@ struct MockBridge: MRP.Bridge, CustomStringConvertible {
   var description: String { "MockBridge" }
   func getVlans(controller: isolated MRPController<P>) async -> Set<MRP.VLAN> { [] }
 
-  func getStpPortStatus(port: P) async -> STPPortStatus? { nil }
+  func getStpPortStatus(port: P) async -> STPPortStatus? {
+    await recorder.recordStpStatusQuery(port: port.id)
+    return nil
+  }
 
   func register(
     groupAddress: EUI48,
@@ -1980,6 +1988,40 @@ final class MRPTests: XCTestCase {
     let logger = Logger(label: "com.padl.MRPTests.MVRP.decoderSafety")
     let controller = try await MRPController(bridge: MockBridge(), logger: logger)
     return try await MVRPApplication(controller: controller)
+  }
+
+  // A benign RTM_NEWLINK (e.g. a statistics refresh) re-presents the same port; the controller
+  // must ignore it so it does not ReDeclare and churn peer registrations. A real change — STP
+  // state, or a carrier flap that flips isOperational — must still be processed. _checkTopologyChange
+  // polls getStpPortStatus only on a processed update, so the query count is our proxy for that.
+  func testNoOpPortUpdateIsIgnoredButRealChangesAreProcessed() async throws {
+    let logger = Logger(label: "com.padl.MRPTests.portGuard")
+    let recorder = MRPTestRecorder()
+    let bridge = MockBridge(ports: [MockPort(id: 0)], recorder: recorder)
+    let controller = try await MRPController(bridge: bridge, logger: logger)
+    _ = try await MSRPApplication(controller: controller)
+
+    try await controller._didAdd(port: MockPort(id: 0))
+    let afterAdd = await recorder.stpStatusQueries.count
+
+    // identical snapshot -> ignored (no further STP poll)
+    try await controller._didUpdate(port: MockPort(id: 0))
+    let afterNoOp = await recorder.stpStatusQueries.count
+    XCTAssertEqual(afterNoOp, afterAdd, "no-op port update must be ignored")
+
+    // STP state transition -> processed
+    var blocking = MockPort(id: 0)
+    blocking.stpPortState = .blocking
+    try await controller._didUpdate(port: blocking)
+    let afterState = await recorder.stpStatusQueries.count
+    XCTAssertEqual(afterState, afterAdd + 1, "STP state change must be processed")
+
+    // carrier flap (isOperational flips, state unchanged) -> processed
+    var down = blocking
+    down.isOperational = false
+    try await controller._didUpdate(port: down)
+    let afterCarrier = await recorder.stpStatusQueries.count
+    XCTAssertEqual(afterCarrier, afterAdd + 2, "carrier flap must be processed")
   }
 
   // attributeLength shorter than the fixed firstValue over-reads into the packed
