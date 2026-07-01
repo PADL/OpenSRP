@@ -202,6 +202,18 @@ private func _declaredTalkerFailureCode(
   return (declared?.attributeValue as? MSRPTalkerFailedValue)?.failureCode
 }
 
+// the declared (propagated) Talker Advertise attribute for a stream on a port (nil if none)
+private func _declaredTalkerAdvertise(
+  _ msrp: MSRPApplication<MockPort>, _ streamID: MSRPStreamID, port: Int
+) async -> MSRPTalkerAdvertiseValue? {
+  guard let participant = try? await msrp.findParticipant(port: MockPort(id: port))
+  else { return nil }
+  let declared = await participant.findAllAttributes(
+    attributeType: MSRPAttributeType.talkerAdvertise.rawValue, matching: .matchAnyIndex(streamID.id)
+  ).first { $0.isDeclared }
+  return declared?.attributeValue as? MSRPTalkerAdvertiseValue
+}
+
 struct MockBridge: MRP.Bridge, CustomStringConvertible {
   var notifications = AsyncEmptySequence<MRP.PortNotification<MockPort>>().eraseToAnyAsyncSequence()
   var rxPackets = AsyncEmptySequence<(Int, IEEE802Packet)>().eraseToAnyAsyncSequence()
@@ -896,6 +908,22 @@ final class MRPTests: XCTestCase {
     let ee2 = MSRPEnqueuedEvent.attributeEvent(ae2)
 
     XCTAssertEqual(ee1, ee2)
+  }
+
+  // 35.2.2.8.5(c): the Reserved nibble is zero-filled on transmit and ignored on receive
+  func testMSRPPriorityAndRankIgnoresReservedBits() throws {
+    let clean = MSRPPriorityAndRank(dataFramePriority: .CA, rank: true)
+    XCTAssertEqual(clean.value & 0x0F, 0, "constructing must leave the Reserved nibble zero")
+
+    let raw = [clean.value | 0x0F]
+    let parsed = try raw.withParserSpan { try MSRPPriorityAndRank(parsing: &$0) }
+    XCTAssertEqual(parsed, clean, "Reserved bits must be ignored on receive")
+    XCTAssertEqual(parsed.dataFramePriority, clean.dataFramePriority)
+    XCTAssertEqual(parsed.rank, clean.rank)
+
+    var sc = SerializationContext()
+    try parsed.serialize(into: &sc)
+    XCTAssertEqual(sc.bytes, [clean.value], "Reserved bits must be zero on transmit")
   }
 
   func testMSRPSystemIDCreation() {
@@ -5240,5 +5268,135 @@ extension MRPTests {
     }
     XCTAssertTrue(changed, "the Listener subtype change to Asking Failed must replace Ready")
     _ = controller
+  }
+
+  // 35.2.2.8: MSRP does not support changing any FirstValue field of a registered StreamID. A
+  // peer re-declaration on the same stream with a changed MaxFrameSize, MaxIntervalFrames,
+  // DataFramePriority or Rank must be rejected — the propagated declaration keeps the original.
+  private func _assertFirstValueChangeRejected(
+    _ field: String,
+    changed: MSRPTalkerAdvertiseValue,
+    line: UInt = #line
+  ) async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0001)
+    let original = _talkerAdvertise(streamID)
+
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise, value: original, event: .JoinIn)
+    let propagated = await _waitFor {
+      await _declaredTalkerAdvertise(msrp, streamID, port: 1) != nil
+    }
+    XCTAssertTrue(propagated, "\(field): original advertise must propagate to the egress port", line: line)
+
+    // the illegal change, same StreamID and ingress port
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise, value: changed, event: .JoinIn)
+
+    // give any (erroneous) recompute time to leak the changed value downstream
+    let leaked = await _waitFor(timeoutMs: 300) {
+      guard let egress = await _declaredTalkerAdvertise(msrp, streamID, port: 1) else { return false }
+      return MSRPTalkerFirstValue(egress) == MSRPTalkerFirstValue(changed)
+    }
+    XCTAssertFalse(leaked, "\(field): a changed FirstValue field must not propagate", line: line)
+
+    let egress = await _declaredTalkerAdvertise(msrp, streamID, port: 1)
+    XCTAssertNotNil(egress, "\(field): the stream must remain advertised on its original value", line: line)
+    if let egress {
+      XCTAssertEqual(
+        MSRPTalkerFirstValue(egress), MSRPTalkerFirstValue(original),
+        "\(field): the egress declaration must keep the original FirstValue", line: line
+      )
+    }
+    _ = controller
+  }
+
+  func testRejectsChangedMaxFrameSize() async throws {
+    let streamID = MSRPStreamID(0x0001_0000_0000_0001)
+    var changed = _talkerAdvertise(streamID)
+    changed = MSRPTalkerAdvertiseValue(
+      streamID: streamID, dataFrameParameters: changed.dataFrameParameters,
+      tSpec: MSRPTSpec(maxFrameSize: 128, maxIntervalFrames: 1),
+      priorityAndRank: changed.priorityAndRank, accumulatedLatency: changed.accumulatedLatency
+    )
+    try await _assertFirstValueChangeRejected("MaxFrameSize", changed: changed)
+  }
+
+  func testRejectsChangedMaxIntervalFrames() async throws {
+    let streamID = MSRPStreamID(0x0001_0000_0000_0001)
+    let base = _talkerAdvertise(streamID)
+    let changed = MSRPTalkerAdvertiseValue(
+      streamID: streamID, dataFrameParameters: base.dataFrameParameters,
+      tSpec: MSRPTSpec(maxFrameSize: 64, maxIntervalFrames: 2),
+      priorityAndRank: base.priorityAndRank, accumulatedLatency: base.accumulatedLatency
+    )
+    try await _assertFirstValueChangeRejected("MaxIntervalFrames", changed: changed)
+  }
+
+  func testRejectsChangedDataFramePriority() async throws {
+    let streamID = MSRPStreamID(0x0001_0000_0000_0001)
+    let base = _talkerAdvertise(streamID)
+    let changed = MSRPTalkerAdvertiseValue(
+      streamID: streamID, dataFrameParameters: base.dataFrameParameters, tSpec: base.tSpec,
+      priorityAndRank: MSRPPriorityAndRank(dataFramePriority: .EE, rank: false),
+      accumulatedLatency: base.accumulatedLatency
+    )
+    try await _assertFirstValueChangeRejected("DataFramePriority", changed: changed)
+  }
+
+  func testRejectsChangedRank() async throws {
+    let streamID = MSRPStreamID(0x0001_0000_0000_0001)
+    let base = _talkerAdvertise(streamID)
+    let changed = MSRPTalkerAdvertiseValue(
+      streamID: streamID, dataFrameParameters: base.dataFrameParameters, tSpec: base.tSpec,
+      priorityAndRank: MSRPPriorityAndRank(dataFramePriority: .CA, rank: true),
+      accumulatedLatency: base.accumulatedLatency
+    )
+    try await _assertFirstValueChangeRejected("Rank", changed: changed)
+  }
+
+  // 35.2.2.8.5(c): the Reserved nibble is ignored on receive, so a re-declaration that differs
+  // only in the Reserved bits is NOT a FirstValue change — the stream must keep flowing, not fail.
+  func testChangedReservedIsNotAFirstValueChange() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0001)
+    let original = _talkerAdvertise(streamID)
+
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise, value: original, event: .JoinIn)
+    let propagated = await _waitFor { await _declaredTalkerAdvertise(msrp, streamID, port: 1) != nil }
+    XCTAssertTrue(propagated, "original advertise must propagate to the egress port")
+
+    // a peer re-declaration identical except the on-wire Reserved nibble is set
+    let onWire = try _talkerWithReservedBitsSet(original)
+    XCTAssertEqual(
+      onWire.priorityAndRank, original.priorityAndRank,
+      "Reserved bits must be masked off on receive"
+    )
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise, value: onWire, event: .JoinIn)
+
+    let failed = await _waitFor(timeoutMs: 300) {
+      await _declaredTalkerFailureCode(msrp, streamID, port: 1) != nil
+    }
+    XCTAssertFalse(failed, "a Reserved-only difference must not fail the stream")
+    let egress = await _declaredTalkerAdvertise(msrp, streamID, port: 1)
+    XCTAssertNotNil(egress, "the stream must remain advertised")
+    if let egress {
+      XCTAssertEqual(MSRPTalkerFirstValue(egress), MSRPTalkerFirstValue(original))
+    }
+    _ = controller
+  }
+
+  // round-trip a talker's PriorityAndRank through the wire with the Reserved nibble set, as a
+  // non-compliant peer might send it; parsing masks it back off
+  private func _talkerWithReservedBitsSet(
+    _ talker: MSRPTalkerAdvertiseValue
+  ) throws -> MSRPTalkerAdvertiseValue {
+    var sc = SerializationContext()
+    try talker.priorityAndRank.serialize(into: &sc)
+    var raw = sc.bytes
+    raw[0] |= 0x0F
+    let parsed = try raw.withParserSpan { try MSRPPriorityAndRank(parsing: &$0) }
+    return MSRPTalkerAdvertiseValue(
+      streamID: talker.streamID, dataFrameParameters: talker.dataFrameParameters,
+      tSpec: talker.tSpec, priorityAndRank: parsed, accumulatedLatency: talker.accumulatedLatency
+    )
   }
 }

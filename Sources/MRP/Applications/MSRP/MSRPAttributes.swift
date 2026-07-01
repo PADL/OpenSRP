@@ -107,6 +107,23 @@ extension MSRPTalkerValue {
   }
 }
 
+// 35.2.2.8: the FirstValue fields MSRP forbids changing for an existing StreamID. Projected into
+// an Equatable value (excluding the per-hop AccumulatedLatency and Failed-only fields) so an
+// Advertise and a Failed compare on identity alone, regardless of concrete declaration type.
+struct MSRPTalkerFirstValue: Equatable {
+  let streamID: MSRPStreamID
+  let dataFrameParameters: MSRPDataFrameParameters
+  let tSpec: MSRPTSpec
+  let priorityAndRank: MSRPPriorityAndRank
+
+  init(_ talker: any MSRPTalkerValue) {
+    streamID = talker.streamID
+    dataFrameParameters = talker.dataFrameParameters
+    tSpec = talker.tSpec
+    priorityAndRank = talker.priorityAndRank
+  }
+}
+
 struct MSRPTalkerAdvertiseValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equatable, Hashable {
   let streamID: MSRPStreamID
   let dataFrameParameters: MSRPDataFrameParameters

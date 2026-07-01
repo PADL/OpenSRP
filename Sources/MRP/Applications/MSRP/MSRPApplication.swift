@@ -1017,12 +1017,15 @@ extension MSRPApplication {
       if let existingTalkerRegistration = _findTalkerRegistration(
         for: talker.streamID,
         participant: participant
-      ), existingTalkerRegistration.dataFrameParameters != talker.dataFrameParameters {
+      ), MSRPTalkerFirstValue(existingTalkerRegistration) != MSRPTalkerFirstValue(talker) {
         _logger
           .error(
-            "MSRP: stream \(talker.streamID) is already registered on port \(port) with \(talker.dataFrameParameters)"
+            "MSRP: stream \(talker.streamID) is already registered on port \(port) with a different FirstValue"
           )
-        throw MSRPFailure(systemID: port.systemID, failureCode: .streamIDAlreadyInUse)
+        throw MSRPFailure(
+          systemID: port.systemID,
+          failureCode: .changeInFirstValueForRegisteredStreamID
+        )
       }
 
       // 35.2.2.8.3: SRP only supports multicast or locally-administered destination addresses
@@ -1449,10 +1452,27 @@ extension MSRPApplication {
           )
         throw MRPError.doNotPropagateAttribute
       }
+      let ingress = try findParticipant(for: contextIdentifier, port: port)
+      // 35.2.2.8: MSRP does not support changing a FirstValue field of a registered StreamID;
+      // reject the change and keep the existing valid registration rather than silently dropping it.
+      // Scope to the same declaration type: an Advertise<->Failed transition is not a FirstValue
+      // change and is handled by the mutual-exclusion deregistration below.
+      if let existing = ingress.findAttribute(
+        attributeType: attributeType.rawValue,
+        matching: .matchAnyIndex(talkerValue.streamID.index)
+      )?.1 as? any MSRPTalkerValue,
+        MSRPTalkerFirstValue(existing) != MSRPTalkerFirstValue(talkerValue)
+      {
+        _logger
+          .error(
+            "MSRP: rejecting changed FirstValue for registered stream \(talkerValue.streamID) on \(port) (35.2.2.8)"
+          )
+        throw MRPError.doNotPropagateAttribute
+      }
       // mutual exclusion: clear the opposite talker registration on the source port
       if eventSource == .peer {
-        try _deregisterOppositeTalkerRegistration(
-          participant: findParticipant(for: contextIdentifier, port: port),
+        _deregisterOppositeTalkerRegistration(
+          participant: ingress,
           declarationType: talkerValue.declarationType!,
           streamID: talkerValue.streamID
         )

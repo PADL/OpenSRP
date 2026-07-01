@@ -334,8 +334,10 @@ public struct MSRPPriorityAndRank: SerDes, Equatable, Hashable, Comparable,
 
   let value: UInt8
 
+  // 35.2.2.8.5(c): the 4-bit Reserved field is zero-filled on transmit and
+  // ignored on receive, so mask it off everywhere it is constructed
   init(_ value: UInt8 = 0) {
-    self.value = value
+    self.value = value & 0xF0
   }
 
   public init(dataFramePriority: SRclassPriority, rank: Bool = false) {
@@ -343,7 +345,7 @@ public struct MSRPPriorityAndRank: SerDes, Equatable, Hashable, Comparable,
   }
 
   public init(parsing input: inout ParserSpan) throws {
-    value = try UInt8(parsing: &input)
+    value = try UInt8(parsing: &input) & 0xF0
   }
 
   public func serialize(into serializationContext: inout SerializationContext) throws {
