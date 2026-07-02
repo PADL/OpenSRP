@@ -470,6 +470,19 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
     }
   }
 
+  public var pfcEnabledPriorities: Set<SRclassPriority> {
+    // ieee_pfc.pfc_en (DCB_CMD_IEEE_GET): a bitmap of priorities with PFC enabled. Best-effort —
+    // a switch/kernel without DCBNL PFC support reports none rather than blocking SRP.
+    get async throws {
+      guard let bridge = _bridge,
+            let pfcEnabled = try? await _rtnl.getDCBPFCEnabled(socket: bridge._nlLinkSocket)
+      else { return [] }
+      return Set((0..<8).compactMap { priority in
+        pfcEnabled & (1 << priority) != 0 ? SRclassPriority(rawValue: priority) : nil
+      })
+    }
+  }
+
   public func setMulticastFlooding(_ enabled: Bool) async throws {
     guard let _bridge else { throw MRPError.internalError }
     try await _rtnl.set(option: .mcastFlood, enabled, socket: _bridge._nlLinkSocket)

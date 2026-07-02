@@ -54,6 +54,11 @@ public protocol AVBPort: Port {
 
   func getPortTcMaxLatency(for: SRclassPriority) async throws -> Int
 
+  // The priorities for which priority-based flow control (PFC, 802.1Qbb) is enabled. PFC and the
+  // credit-based shaper are mutually exclusive on a priority (802.1Q 34.5), so an SR class whose
+  // priority has PFC enabled makes the port an SRP domain boundary port for that class (35.2.1.4).
+  var pfcEnabledPriorities: Set<SRclassPriority> { get async throws }
+
   // multicast flooding
   func setMulticastFlooding(_ enabled: Bool) async throws
 
