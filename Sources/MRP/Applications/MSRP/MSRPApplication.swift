@@ -118,7 +118,11 @@ struct MSRPPortState<P: AVBPort>: Sendable {
   var srpClassVID: [SRclassID: VLAN]
   // priorities with PFC enabled (34.5): an SR class mapped to one is always a boundary port
   var pfcEnabledPriorities: Set<SRclassPriority> = []
-  // Table 6-5—Default SRP domain boundary port priority regeneration override values
+  // Avnu Table 6-5 (boundary-port SR priority regeneration override) is not applied here. The
+  // regeneration is a per-port PCP->PCP table in the switch, and while the mv88e6xxx hardware can
+  // do it, there is no userspace API to program it: the DCB app table (DCB_APP_SEL_PCP) maps a
+  // priority to a *queue*, not to a regenerated priority. So it belongs behind a future kernel
+  // interface, not this daemon; we only detect the boundary (srpDomainBoundaryPort).
   var neighborProtocolVersion: MSRPProtocolVersion { .v0 }
   // TODO: make these configurable
   var talkerPruning: Bool { false }
