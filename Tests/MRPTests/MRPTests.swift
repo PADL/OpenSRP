@@ -2827,18 +2827,14 @@ final class MRPTests: XCTestCase {
     _ = controller
   }
 
-  // Per-class srClassVIDs override the SR_PVID in transmitted Domain declarations
-  // (35.2.1.4); unset classes fall back to the SR_PVID.
-  func testDomainUsesConfiguredSRClassVID() async throws {
-    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(
-      portIDs: [0],
-      srClassVIDs: [.B: VLAN(vid: 3)]
-    )
+  // Both SR classes declare the single SR_PVID (35.2.1.4) in transmitted Domains.
+  func testDomainUsesSRPVid() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0])
     let ok = await _waitFor {
       let vids = await _transmittedDomainVIDs(recorder, msrp)
-      return vids[.A] == SR_PVID.vid && vids[.B] == 3
+      return vids[.A] == SR_PVID.vid && vids[.B] == SR_PVID.vid
     }
-    XCTAssertTrue(ok, "Domain must declare srClassVID 2 for class A and 3 for class B")
+    XCTAssertTrue(ok, "both SR classes must declare srClassVID \(SR_PVID.vid)")
     _ = controller
   }
 
@@ -3818,8 +3814,7 @@ private typealias MSRPEnqueuedEvent = EnqueuedEvent<MSRPApplication<MockPort>>
 extension MRPTests {
   private func _makeRecomputeMSRP(
     portIDs: [Int],
-    flags: MSRPApplicationFlags = .defaultFlags,
-    srClassVIDs: [SRclassID: VLAN] = [:]
+    flags: MSRPApplicationFlags = .defaultFlags
   ) async throws
     -> (MRPController<MockPort>, MSRPApplication<MockPort>, MRPTestRecorder)
   {
@@ -3832,8 +3827,7 @@ extension MRPTests {
     )
     let msrp = try await MSRPApplication(
       controller: controller,
-      flags: flags,
-      srClassVIDs: srClassVIDs
+      flags: flags
     )
     try await msrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
     return (controller, msrp, recorder)
