@@ -39,9 +39,7 @@ ExecStartPre=/usr/sbin/nft add rule bridge nat PREROUTING meta ibrname $BR ether
 
 ExecStartPre=/bin/sh -c 'for ETH in $$INTERFACES; do for GRP in $$GROUPS; do bridge mdb add dev "$$BR" port "$$ETH" grp "$$GRP" permanent || true; done; done'
 
-# start SRP daemon; --configure-sr-vlans statically configures the SR class A (VID 2)
-# and class B (VID 3) VLANs on the bridge ports
-ExecStart=/usr/sbin/mrpd --enable-srp -b $BR --force-avb-capable --configure-egress-queues --configure-sr-vlans --sr-class-vid A:2 --sr-class-vid B:3 $MRPD_OPTS
+ExecStart=/usr/sbin/mrpd --enable-srp -b $BR --force-avb-capable --configure-egress-queues --configure-sr-vlans $MRPD_OPTS
 
 # unconfigure MVRP hook
 ExecStopPost=-/usr/sbin/nft delete table bridge nat
