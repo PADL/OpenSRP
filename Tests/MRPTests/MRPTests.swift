@@ -1244,6 +1244,18 @@ final class MRPTests: XCTestCase {
       XCTAssertEqual(error as? MRPError, .invalidAttributeValue)
     }
 
+    // 10.8.2.8 d): a peer-encoded FirstValue + NumberOfValues that overruns the value range
+    // must throw on reconstruction, not trap the daemon (regression: MSRP/MMRP used to crash)
+    XCTAssertThrowsError(
+      try MSRPStreamID(integerLiteral: .max).makeValue(relativeTo: 1)
+    ) { XCTAssertEqual($0 as? MRPError, .invalidAttributeValue) }
+    XCTAssertThrowsError(
+      try MSRPListenerValue(streamID: MSRPStreamID(integerLiteral: .max)).makeValue(relativeTo: 1)
+    ) { XCTAssertEqual($0 as? MRPError, .invalidAttributeValue) }
+    XCTAssertThrowsError(
+      try MMRPMACValue(macAddress: [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]).makeValue(relativeTo: 1)
+    ) { XCTAssertEqual($0 as? MRPError, .invalidAttributeValue) }
+
     XCTAssertThrowsError(try [0xFF, 0xFF].withParserSpan { input in
       try VLAN(parsing: &input)
     }) { error in
@@ -2665,7 +2677,7 @@ final class MRPTests: XCTestCase {
       from: MockPort(id: 0),
       for: MAPBaseSpanningTreeContext
     )
-    var declared2 = await _isVLANDeclared(mvrp, vid: 2, port: 2)
+    let declared2 = await _isVLANDeclared(mvrp, vid: 2, port: 2)
     XCTAssertTrue(declared2, "VID 2 must remain declared while other ports hold registrations")
     // withdrawing from port 1 leaves only port 2 registered: port 2's declaration (backed
     // by ports 0/1) is withdrawn, while port 0's (backed by port 2) survives
@@ -3933,6 +3945,35 @@ extension MRPTests {
       priorityAndRank: MSRPPriorityAndRank(dataFramePriority: .CA, rank: false),
       accumulatedLatency: 1000
     )
+  }
+
+  // A peer-encoded 2-value talker vector whose FirstValue StreamID is the 64-bit maximum overruns
+  // when value[1] = StreamID + 1 is reconstructed; rx must drop it gracefully, never trap.
+  func testMSRPRxRejectsOverflowingVectorWithoutTrapping() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0])
+    let vector = VectorAttribute(
+      leaveAllEvent: .NullLeaveAllEvent,
+      firstValue: AnyValue(_talkerAdvertise(MSRPStreamID(integerLiteral: .max))),
+      attributeEvents: [.JoinIn, .JoinIn], // numberOfValues = 2 -> reconstructs StreamID .max + 1
+      applicationEvents: nil
+    )
+    let pdu = MRPDU(
+      protocolVersion: 0,
+      messages: [Message(
+        attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
+        attributeList: [vector]
+      )]
+    )
+    // reaching the end without trapping is the assertion (a graceful throw is acceptable too)
+    do {
+      try await msrp.rx(
+        pdu: pdu,
+        for: MAPBaseSpanningTreeContext,
+        from: MockPort(id: 0),
+        sourceMacAddress: [0x02, 0x00, 0x00, 0x00, 0x00, 0x0A]
+      )
+    } catch {}
+    _ = controller
   }
 
   private func _drive(

@@ -89,7 +89,13 @@ struct MMRPMACValue: Value, Equatable, Hashable {
   }
 
   func makeValue(relativeTo index: UInt64) throws -> Self {
-    Self(_macAddress: _macAddress + UInt64(index))
+    // reject a FirstValue + NumberOfValues that overruns 48 bits (10.8.2.8 d) rather than
+    // trapping the serialize/index preconditions on reconstruction
+    let (newMAC, overflow) = _macAddress.addingReportingOverflow(index)
+    guard !overflow, (newMAC & 0xFFFF_0000_0000_0000) == 0 else {
+      throw MRPError.invalidAttributeValue
+    }
+    return Self(_macAddress: newMAC)
   }
 
   var macAddress: EUI48 {
