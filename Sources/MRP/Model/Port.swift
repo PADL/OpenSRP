@@ -52,7 +52,7 @@ public protocol AVBPort: Port {
   var isAvbCapable: Bool { get }
   var isAsCapable: Bool { get async throws }
 
-  func getPortTcMaxLatency(for: SRclassPriority) async throws -> Int
+  func getPortTcMaxLatency(for: SRclassPriority) async -> Int
 
   // The priorities for which priority-based flow control (PFC, 802.1Qbb) is enabled. PFC and the
   // credit-based shaper are mutually exclusive on a priority (802.1Q 34.5), so an SR class whose

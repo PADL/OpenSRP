@@ -458,13 +458,13 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
     return portDataSet.meanLinkDelay
   }
 
-  public func getPortTcMaxLatency(for _: SRclassPriority) async throws -> Int {
+  public func getPortTcMaxLatency(for _: SRclassPriority) async -> Int {
     // The knowable per-hop terms (b/c/d/e) don't depend on the SR class -- only term a) does, and
     // that one isn't observable here (see srpPortTcMaxLatency), so the class argument is unused.
     // Wire propagation (d): gPTP meanLinkDelay (PTP timeinterval is ns * 2^16), or the spec's
-    // 500 ns default when gPTP can't supply it (35.2.2.8.6 d).
+    // 500 ns default when gPTP can't supply a usable (non-negative) value (35.2.2.8.6 d).
     let meanLinkDelayNs: Int
-    if let meanLinkDelay = try? await _getMeanLinkDelay() {
+    if let meanLinkDelay = try? await _getMeanLinkDelay(), meanLinkDelay >= 0 {
       meanLinkDelayNs = Int(meanLinkDelay >> 16)
     } else {
       meanLinkDelayNs = 500

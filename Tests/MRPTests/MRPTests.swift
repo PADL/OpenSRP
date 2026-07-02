@@ -69,7 +69,7 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
 
   var isAsCapable: Bool { true }
 
-  func getPortTcMaxLatency(for: SRclassPriority) async throws -> Int { 0 }
+  func getPortTcMaxLatency(for: SRclassPriority) async -> Int { 0 }
 
   let _pfcEnabledPriorities: Set<SRclassPriority>
   var pfcEnabledPriorities: Set<SRclassPriority> { get async throws { _pfcEnabledPriorities } }
