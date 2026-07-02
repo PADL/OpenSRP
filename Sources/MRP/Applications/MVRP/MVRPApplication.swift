@@ -224,7 +224,9 @@ extension MVRPApplication {
     else { throw MRPError.unknownAttributeType }
     switch attributeType {
     case .vid:
-      let vlan = (attributeValue as! VLAN)
+      guard let vlan = _translateReceivedVID(attributeValue as! VLAN, port: port) else {
+        throw MRPError.doNotPropagateAttribute
+      }
       guard !_isVlanExcluded(vlan, port: port) else {
         throw MRPError.doNotPropagateAttribute
       }
@@ -236,7 +238,9 @@ extension MVRPApplication {
         .debug(
           "MVRP: join indication from port \(port) VID \(vlan.vid) isNew \(isNew) source \(eventSource)"
         )
-      // TODO: flush FDB entries following a topology change, if isNew is true
+      // No per-VID FDB flush on New: the kernel bridge/DSA already flushes the affected port's
+      // FDB on an STP topology change, and mstpd doesn't signal tcDetected to us, so there is
+      // nothing for MVRP to flush here.
       _dynamicVIDs[port.id, default: []].insert(vlan)
       try await bridge.register(vlan: vlan, on: port, static: false)
     }
@@ -262,7 +266,9 @@ extension MVRPApplication {
     else { throw MRPError.unknownAttributeType }
     switch attributeType {
     case .vid:
-      let vlan = (attributeValue as! VLAN)
+      guard let vlan = _translateReceivedVID(attributeValue as! VLAN, port: port) else {
+        throw MRPError.doNotPropagateAttribute
+      }
       guard !_isVlanExcluded(vlan, port: port) else {
         throw MRPError.doNotPropagateAttribute
       }
@@ -273,6 +279,14 @@ extension MVRPApplication {
       _dynamicVIDs[port.id]?.remove(vlan)
       try await bridge.deregister(vlan: vlan, from: port)
     }
+  }
+
+  // 11.2.3.1.7: all MVRP participants translate a received VID of 0 to the receiving Port's PVID.
+  // A port with no PVID has nothing to translate to, so the indication is dropped.
+  private func _translateReceivedVID(_ vlan: VLAN, port: P) -> VLAN? {
+    guard vlan.vid == 0 else { return vlan }
+    guard let pvid = port.pvid else { return nil }
+    return VLAN(vid: pvid)
   }
 
   // is the VID one we hold, or are configured to hold, as Registration Fixed on the port?
