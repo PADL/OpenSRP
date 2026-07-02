@@ -2502,6 +2502,25 @@ final class MRPTests: XCTestCase {
     )
   }
 
+  // 11.2.3.1.7: a received VID of 0 is translated to the receiving port's PVID, never registered
+  // as a bogus VLAN 0.
+  func testMVRPReceivedVIDZeroTranslatedToPVID() async throws {
+    let (controller, mvrp, recorder) = try await _makeMVRP(portIDs: [0, 1], pvid: 5)
+    try await _driveMVRP(mvrp, port: 0, vid: 0, event: .JoinIn)
+    // a normal dynamic VID still registers, proving the rx path ran
+    try await _driveMVRP(mvrp, port: 0, vid: 100, event: .JoinIn)
+    let registered100 = await _waitFor {
+      await recorder.vlanRegister.contains { $0.vlan.vid == 100 }
+    }
+    XCTAssertTrue(registered100, "a normal VID must register dynamically")
+    let registered0 = await recorder.vlanRegister.contains { $0.vlan.vid == 0 }
+    XCTAssertFalse(registered0, "VID 0 must be translated to the PVID, not registered as VLAN 0")
+    // the translated PVID (5) is Registration Fixed, present from setup
+    let pvidRegistered = await _isVLANRegistered(mvrp, vid: 5, port: 0)
+    XCTAssertTrue(pvidRegistered, "the PVID must be Registration Fixed")
+    _ = controller
+  }
+
   // A peer JoinIn for a VID registers that VLAN on the reception port.
   func testMVRPJoinIndicationRegistersVLAN() async throws {
     let (controller, mvrp, recorder) = try await _makeMVRP(portIDs: [0])
