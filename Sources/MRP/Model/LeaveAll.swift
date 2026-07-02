@@ -56,6 +56,9 @@ final class LeaveAll: Sendable, CustomStringConvertible {
   }
 
   private func _randomizeLeaveAllTime(_ baseTime: Duration) -> Duration {
+    // 10.7.4.3: T in LeaveAllTime < T < 1.5 x LeaveAllTime. The half-open range makes the strict
+    // lower bound inclusive, but T == base has measure zero for a continuous draw, so it never
+    // fires in practice.
     let baseSeconds = baseTime / .seconds(1)
     let randomizedSeconds = Double.random(in: baseSeconds..<(1.5 * baseSeconds))
     return Duration.seconds(randomizedSeconds)

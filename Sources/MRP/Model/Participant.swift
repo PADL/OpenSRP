@@ -1277,8 +1277,10 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
       // Leave), so a peer on this port receives a registerable Join even while the local
       // Applicant is only an Observer emitting In. Model this as upgrading the Applicant's
       // emission to a mandatory JoinIn (.sJ, which is never encoding-optional). This is purely
-      // an emission rule; Applicant state and MAP refcounting are untouched.
-      if registrar?.isAdministrativelyRegistered == true {
+      // an emission rule; Applicant state and MAP refcounting are untouched. Scope it so a New
+      // (.sN, e.g. from a Re-declare!) is preserved rather than downgraded to JoinIn -- New
+      // already carries JoinIn semantics plus the New flag.
+      if registrar?.isAdministrativelyRegistered == true, applicantAction != .sN {
         applicantAction = .sJ
       }
 
