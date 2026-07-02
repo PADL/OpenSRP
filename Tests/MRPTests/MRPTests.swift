@@ -2551,6 +2551,21 @@ final class MRPTests: XCTestCase {
     )
   }
 
+  // 10.3 d): a port added after a peer registration already exists on another port must be
+  // declared that dynamic VLAN via MAP, not left waiting for the next LeaveAll. (The codebase
+  // already does this for static VLANs; this covers the dynamic half.)
+  func testMVRPNewPortReceivesExistingDynamicRegistrations() async throws {
+    let (controller, mvrp, _) = try await _makeMVRP(portIDs: [0, 1])
+    try await _driveMVRP(mvrp, port: 0, vid: 100, event: .JoinIn)
+    _ = await _waitFor { await _isVLANRegistered(mvrp, vid: 100, port: 0) }
+
+    // a port added after the fact must be declared the already-registered VID 100
+    try await mvrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: [MockPort(id: 2)])
+    let declared = await _waitFor { await _isVLANDeclared(mvrp, vid: 100, port: 2) }
+    XCTAssertTrue(declared, "a newly-added port must be declared the dynamic VID 100 from port 0")
+    _ = controller
+  }
+
   // 11.2.3.1.7: a received VID of 0 is translated to the receiving port's PVID, never registered
   // as a bogus VLAN 0.
   func testMVRPReceivedVIDZeroTranslatedToPVID() async throws {

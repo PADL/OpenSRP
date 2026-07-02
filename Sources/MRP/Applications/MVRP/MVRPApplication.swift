@@ -336,6 +336,27 @@ extension MVRPApplication {
         )
       }
     }
+    // 10.3 d) likewise for dynamic (peer-learned) registrations on the other ports: declare them
+    // onto each added port via MAP, so it does not have to wait for the next LeaveAll to learn
+    // them (the static loop above cannot cover these -- they are not administrative registrations)
+    for newPort in context {
+      guard let participant = try? findParticipant(
+        for: MAPBaseSpanningTreeContext,
+        port: newPort
+      ) else { continue }
+      var vlans = Set<VLAN>()
+      for (portID, dynamic) in _dynamicVIDs where portID != newPort.id {
+        vlans.formUnion(dynamic)
+      }
+      for vlan in vlans {
+        try? participant.join(
+          attributeType: MVRPAttributeType.vid.rawValue,
+          attributeValue: vlan,
+          isNew: false,
+          eventSource: .map
+        )
+      }
+    }
   }
 
   func onContextUpdated(
