@@ -108,6 +108,7 @@ actor MRPTestRecorder {
   private(set) var staticVlanAdd = [(vlan: VLAN, port: Int)]()
   private(set) var txPackets = [(port: Int, payload: [UInt8])]()
   private(set) var stpStatusQueries = [Int]()
+  private var stpStatuses = [Int: STPPortStatus]()
 
   func recordTx(port: Int, payload: [UInt8]) {
     txPackets.append((port, payload))
@@ -115,6 +116,14 @@ actor MRPTestRecorder {
 
   func recordStpStatusQuery(port: Int) {
     stpStatusQueries.append(port)
+  }
+
+  func setStpStatus(_ status: STPPortStatus?, port: Int) {
+    stpStatuses[port] = status
+  }
+
+  func stpStatus(port: Int) -> STPPortStatus? {
+    stpStatuses[port]
   }
 
   func recordCBS(port: Int, queue: UInt, idleSlope: Int) {
@@ -268,6 +277,17 @@ private func _isVLANRegistered(
   }
 }
 
+// the Registrar state (IN/LV/MT) MVRP holds for a VID on a port, or nil if no such attribute.
+private func _vlanRegistrarState(
+  _ mvrp: MVRPApplication<MockPort>, vid: UInt16, port: Int
+) async -> Registrar.State? {
+  guard let participant = try? await mvrp.findParticipant(port: MockPort(id: port))
+  else { return nil }
+  return await participant.findAllAttributes(
+    attributeType: MVRPAttributeType.vid.rawValue, matching: .matchAny
+  ).first { ($0.attributeValue as? VLAN)?.vid == vid }?.registrarState
+}
+
 // is a group MAC declared (Applicant) by MMRP on a port?
 private func _isMMRPMacDeclared(
   _ mmrp: MMRPApplication<MockPort>, mac: EUI48, port: Int
@@ -356,7 +376,7 @@ struct MockBridge: MRP.Bridge, CustomStringConvertible {
 
   func getStpPortStatus(port: P) async -> STPPortStatus? {
     await recorder.recordStpStatusQuery(port: port.id)
-    return nil
+    return await recorder.stpStatus(port: port.id)
   }
 
   func register(
@@ -2190,6 +2210,35 @@ final class MRPTests: XCTestCase {
     try await controller._didUpdate(port: down)
     let afterCarrier = await recorder.stpStatusQueries.count
     XCTAssertEqual(afterCarrier, afterAdd + 2, "carrier flap must be processed")
+  }
+
+  // 10.7.5.3: a port role change from Designated to Root (or Alternate) generates Re-declare! --
+  // a registered attribute's Registrar moves IN -> LV so it re-declares rather than waiting for
+  // the next LeaveAll.
+  func testRedeclareOnDesignatedToRootRoleChange() async throws {
+    let recorder = MRPTestRecorder()
+    let bridge = MockBridge(ports: [MockPort(id: 0)], recorder: recorder)
+    let controller = try await MRPController(
+      bridge: bridge,
+      logger: Logger(label: "com.padl.MRPTests.stp")
+    )
+    let mvrp = try await MVRPApplication(controller: controller)
+    await recorder.setStpStatus(STPPortStatus(role: .designated, state: .forwarding), port: 0)
+    try await controller._didAdd(port: MockPort(id: 0))
+
+    // a peer join registers VID 100 (registrar IN)
+    try await _driveMVRP(mvrp, port: 0, vid: 100, event: .JoinIn)
+    let registered = await _waitFor { await _vlanRegistrarState(mvrp, vid: 100, port: 0) == .IN }
+    XCTAssertTrue(registered, "peer join must register VID 100 (registrar IN)")
+
+    // role Designated -> Root: Re-declare! moves the registrar IN -> LV
+    await recorder.setStpStatus(STPPortStatus(role: .root, state: .forwarding), port: 0)
+    var moved = MockPort(id: 0)
+    moved.stpPortState = .listening // change a field so the update is not a no-op
+    try await controller._didUpdate(port: moved)
+    let redeclared = await _waitFor { await _vlanRegistrarState(mvrp, vid: 100, port: 0) == .LV }
+    XCTAssertTrue(redeclared, "Designated->Root must Re-declare!, moving the registrar to LV")
+    _ = controller
   }
 
   // attributeLength shorter than the fixed firstValue over-reads into the packed

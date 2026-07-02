@@ -222,4 +222,8 @@ extension Application {
   func redeclare(for contextIdentifier: MAPContextIdentifier) throws {
     try apply(for: contextIdentifier) { try $0.redeclare() }
   }
+
+  func redeclare(for contextIdentifier: MAPContextIdentifier, port: P) throws {
+    try findParticipant(for: contextIdentifier, port: port).redeclare()
+  }
 }
