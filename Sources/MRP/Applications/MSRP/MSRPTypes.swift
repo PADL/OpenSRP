@@ -181,7 +181,11 @@ public struct MSRPStreamID: Sendable, ExpressibleByIntegerLiteral, ExpressibleBy
   }
 
   public func makeValue(relativeTo index: UInt64) throws -> Self {
-    Self(integerLiteral: id + index)
+    // a peer can encode a FirstValue + NumberOfValues that overruns the 64-bit range
+    // (10.8.2.8 d); reject it rather than trap on reconstruction
+    let (newID, overflow) = id.addingReportingOverflow(index)
+    guard !overflow else { throw MRPError.invalidAttributeValue }
+    return Self(integerLiteral: newID)
   }
 }
 
