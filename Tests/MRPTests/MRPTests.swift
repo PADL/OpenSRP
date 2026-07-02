@@ -51,7 +51,11 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
   let _pvid: UInt16?
   var pvid: UInt16? { _pvid }
 
-  var vlans: Set<MRP.VLAN> { [VLAN(vid: 2)] }
+  let _vlans: Set<UInt16>
+  var vlans: Set<MRP.VLAN> { Set(_vlans.map { VLAN(vid: $0) }) }
+
+  let _dynamicVlans: Set<UInt16>
+  var dynamicVlans: Set<MRP.VLAN> { Set(_dynamicVlans.map { VLAN(vid: $0) }) }
 
   var macAddress: EUI48 { [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF] }
 
@@ -69,9 +73,16 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
 
   func setFlowControl(_ enabled: Bool) async throws {}
 
-  init(id: ID, pvid: UInt16? = nil) {
+  init(
+    id: ID,
+    pvid: UInt16? = nil,
+    vlans: Set<UInt16> = [2],
+    dynamicVlans: Set<UInt16> = []
+  ) {
     self.id = id
     _pvid = pvid
+    _vlans = vlans
+    _dynamicVlans = dynamicVlans
   }
 
   static var now: ContinuousClock.Instant { .now }
@@ -2355,15 +2366,24 @@ final class MRPTests: XCTestCase {
     _ = controller
   }
 
-  private func _makeMVRP(portIDs: [Int], exclusions: Set<VLAN> = [], pvid: UInt16? = nil)
+  private func _makeMVRP(
+    portIDs: [Int],
+    exclusions: Set<VLAN> = [],
+    pvid: UInt16? = nil,
+    vlans: Set<UInt16> = [2],
+    dynamicVlans: Set<UInt16> = []
+  )
     async throws -> (MRPController<MockPort>, MVRPApplication<MockPort>, MRPTestRecorder)
   {
     let recorder = MRPTestRecorder()
-    let ports = Set(portIDs.map { MockPort(id: $0, pvid: pvid) })
+    let ports = Set(portIDs.map {
+      MockPort(id: $0, pvid: pvid, vlans: vlans, dynamicVlans: dynamicVlans)
+    })
     let bridge = MockBridge(ports: ports, recorder: recorder)
     let controller = try await MRPController(
       bridge: bridge,
-      logger: Logger(label: "com.padl.MRPTests.mvrp")
+      logger: Logger(label: "com.padl.MRPTests.mvrp"),
+      timerConfiguration: MRPTimerConfiguration(leaveTime: .seconds(1))
     )
     let mvrp = try await MVRPApplication(controller: controller, vlanExclusions: exclusions)
     try await mvrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
@@ -2504,10 +2524,47 @@ final class MRPTests: XCTestCase {
       for: MAPBaseSpanningTreeContext
     )
     // the applicant remains in LA (still declared) until the Leave transmits
-    let withdrawn2 = await _waitFor { !(await _isVLANDeclared(mvrp, vid: 2, port: 2)) }
+    let withdrawn2 = await _waitFor { await !_isVLANDeclared(mvrp, vid: 2, port: 2) }
     XCTAssertTrue(withdrawn2, "VID 2 must be withdrawn once no other port holds a registration")
     let declared0 = await _isVLANDeclared(mvrp, vid: 2, port: 0)
     XCTAssertTrue(declared0, "port 2's remaining registration must back port 0's declaration")
+    _ = controller
+  }
+
+  // A VLAN carrying BRIDGE_VLAN_INFO_DYNAMIC (port.dynamicVlans) is a peer registration
+  // left over from a previous run: it must not be captured as static at startup.
+  func testMVRPKernelDynamicVLANNotCapturedAsStatic() async throws {
+    let (controller, mvrp, _) = try await _makeMVRP(
+      portIDs: [0, 1],
+      vlans: [2, 100],
+      dynamicVlans: [100]
+    )
+    let registered2 = await _isVLANRegistered(mvrp, vid: 2, port: 0)
+    XCTAssertTrue(registered2, "static VID 2 must still be Registration Fixed")
+    let registered100 = await _isVLANRegistered(mvrp, vid: 100, port: 0)
+    XCTAssertFalse(registered100, "dynamic VID 100 must not be promoted to Registration Fixed")
+    let declared100 = await _isVLANDeclared(mvrp, vid: 100, port: 1)
+    XCTAssertFalse(declared100, "dynamic VID 100 must not be propagated as static")
+    _ = controller
+  }
+
+  // A VLAN we registered dynamically for a peer this run is excluded from the static set
+  // even without kernel dynamic-flag support (in-process tracking): after the peer leaves,
+  // the registration must clear, which it would not if wrongly promoted to Fixed.
+  func testMVRPDynamicRegistrationNotPromotedToStatic() async throws {
+    let (controller, mvrp, recorder) = try await _makeMVRP(portIDs: [0, 1])
+    try await _driveMVRP(mvrp, port: 0, vid: 100, event: .JoinIn)
+    _ = await _waitFor { await recorder.vlanRegister.contains { $0.vlan.vid == 100 } }
+
+    // the kernel entry now appears in port.vlans (flagless kernel: not in dynamicVlans);
+    // a VLAN change notification would recompute the static set from it
+    await mvrp._updateStaticVLANs(port: MockPort(id: 0, vlans: [2, 100]))
+
+    try await _driveMVRP(mvrp, port: 0, vid: 100, event: .Lv)
+    let cleared = await _waitFor(timeoutMs: 4000) {
+      await !_isVLANRegistered(mvrp, vid: 100, port: 0)
+    }
+    XCTAssertTrue(cleared, "dynamic VID 100 must deregister on peer Leave, not become Fixed")
     _ = controller
   }
 

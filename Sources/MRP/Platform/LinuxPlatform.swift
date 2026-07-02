@@ -420,10 +420,18 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
   }
 
   public var vlans: Set<VLAN> {
-    // Live VLANs: seeded from the AF_BRIDGE dump when the port is registered and kept
-    // current by RTM_NEWVLAN/DELVLAN, so runtime removals are reflected. Falls back to
+    // Live VLANs: seeded when the port is registered and kept current by
+    // RTM_NEWVLAN/DELVLAN, so runtime removals are reflected. Falls back to
     // the frozen _rtnl snapshot before the bridge has seeded the live map.
-    let vids = _bridge?._portTaggedVLANs.withLock { $0[id] } ?? _vlans ?? []
+    let vids = _bridge?._portVLANs.withLock { $0[id].map { Set($0.keys) } } ?? _vlans ?? []
+    return Set(vids.map { VLAN(id: $0) })
+  }
+
+  public var dynamicVlans: Set<VLAN> {
+    // The subset of vlans carrying BRIDGE_VLAN_INFO_DYNAMIC (802.1Q Dynamic VLAN
+    // Registration Entries); empty on kernels without the flag.
+    let vids = _bridge?._portVLANs
+      .withLock { $0[id].map { Set($0.filter(\.value).keys) } } ?? []
     return Set(vids.map { VLAN(id: $0) })
   }
 
@@ -510,18 +518,20 @@ private extension LinuxPort {
   func _add(vlan: VLAN) async throws {
     guard let rtnl = _rtnl as? RTNLLinkBridge else { throw Errno.noSuchAddressOrDevice }
 
-    var flags = Int32(0)
+    // this path is only used for dynamic (peer) MVRP registrations, so mark the entry
+    // as a Dynamic VLAN Registration Entry; older kernels silently ignore the flag
+    var flags: BridgeVLANFlags = .dynamic
 
     if _untaggedVlans?.contains(vlan.vid) ?? false {
       // preserve untagging status, this may not be on spec but saves blowing away management
       // interface
-      flags |= BRIDGE_VLAN_INFO_UNTAGGED
+      flags.insert(.untagged)
     }
     if _pvid == vlan.vid {
-      flags |= BRIDGE_VLAN_INFO_PVID
+      flags.insert(.pvid)
     }
 
-    try await rtnl.add(vlans: Set([vlan.vid]), flags: UInt16(flags), socket: _bridge!._nlLinkSocket)
+    try await rtnl.add(vlans: Set([vlan.vid]), flags: flags, socket: _bridge!._nlLinkSocket)
   }
 
   func _remove(vlan: VLAN) async throws {
@@ -542,11 +552,13 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   private let _bridgeName: String
   private var _bridgeIndex: Int = 0
   private var _bridgePort: P?
-  // Per-port tagged VLANs learned from RTM_NEWVLAN/DELVLAN after the initial
-  // dump (kernel-MVRP or manual `bridge vlan add`). _rtnl is a frozen snapshot
-  // that won't reflect later changes, so LinuxPort.vlans merges this in. Keyed
-  // by port ifindex; a Mutex so LinuxPort.vlans can read it synchronously.
-  let _portTaggedVLANs = Mutex<[Int: Set<UInt16>]>([:])
+  // Per-port tagged VLANs (VID -> BRIDGE_VLAN_INFO_DYNAMIC), keyed by port ifindex:
+  // seeded from the RTM_GETVLAN dump at startup (the libnl bitmaps carry no flags) and
+  // kept live by VLAN DB notifications; _rtnl is a frozen snapshot that won't reflect
+  // later changes. The dynamic flag marks 802.1Q Dynamic VLAN Registration Entries
+  // (e.g. our own MVRP-created entries); it is never set on kernels without the flag.
+  // A Mutex so LinuxPort.vlans can read it synchronously.
+  let _portVLANs = Mutex<[Int: [UInt16: Bool]]>([:])
   // Per-port PVID by ifindex; seeded from the AF_BRIDGE dump, kept live by VLAN DB.
   let _portPVID = Mutex<[Int: UInt16]>([:])
   private let _portNotificationChannel = AsyncChannel<PortNotification<P>>()
@@ -621,9 +633,12 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
       if case .new = linkMessage {
         portNotification = .added(port)
         // seed the live VLAN map from the link's AF_BRIDGE info unless VLAN DB
-        // notifications have already populated it (they are the fresher source)
-        _portTaggedVLANs.withLock {
-          if $0[port.id] == nil { $0[port.id] = port._vlans ?? [] }
+        // notifications have already populated it (they are the fresher source, and
+        // carry the dynamic flag, which the libnl bitmaps do not)
+        _portVLANs.withLock { map in
+          if map[port.id] == nil {
+            map[port.id] = .init(uniqueKeysWithValues: (port._vlans ?? []).map { ($0, false) })
+          }
         }
         if !_portExclusions.contains(port.name) {
           try _addLinkLocalRxTask(port: port)
@@ -631,7 +646,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
       } else {
         try _cancelLinkLocalRxTask(port: port)
         _portPropertiesCache[port.id] = nil
-        _portTaggedVLANs.withLock { $0[port.id] = nil }
+        _portVLANs.withLock { $0[port.id] = nil }
         _portPVID.withLock { $0[port.id] = nil }
         portNotification = .removed(port)
       }
@@ -683,13 +698,18 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     case .new: true
     case .del: false
     }
-    _portTaggedVLANs.withLock { map in
+    _portVLANs.withLock { map in
       if isNew {
-        map[vlandb.ifIndex, default: []].formUnion(taggedVids)
+        // a re-add updates the dynamic flag (a static re-add promotes a dynamic entry)
+        for entry in vlandb.entries where !entry.isUntagged {
+          map[vlandb.ifIndex, default: [:]][entry.vid] = entry.isDynamic
+        }
       } else {
-        // keep an empty set rather than removing the key: the key marks the port as
+        // keep an empty map rather than removing the key: the key marks the port as
         // seeded, so port.vlans must not fall back to the stale frozen snapshot
-        map[vlandb.ifIndex]?.subtract(taggedVids)
+        for vid in taggedVids {
+          map[vlandb.ifIndex]?[vid] = nil
+        }
       }
     }
     // Keep the per-port PVID live.
@@ -858,13 +878,33 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
       }
     }
 
+    // Seed the live VLAN map from an RTM_GETVLAN dump: unlike the libnl AF_BRIDGE
+    // bitmaps this carries the per-VID flags, so dynamic (protocol-created) entries
+    // left over from a previous run are recognised as such and not treated as static.
+    if let vlandbs = try? await _nlLinkSocket.getBridgeVLANs() {
+      do {
+        for try await vlandb in vlandbs {
+          let entries = vlandb.entries.filter { !$0.isUntagged }
+          _portVLANs.withLock {
+            $0[vlandb.ifIndex] = Dictionary(
+              entries.map { ($0.vid, $0.isDynamic) },
+              uniquingKeysWith: { $0 || $1 }
+            )
+          }
+        }
+      } catch {
+        _logger.info("LinuxBridge: VLAN DB dump failed, falling back to AF_BRIDGE info")
+      }
+    }
+
     let ports = try await _getMemberPorts()
     for port in ports {
       if let pvid = port._pvid { _portPVID.withLock { $0[port.id] = pvid } }
-      // seed the live VLAN map from the initial AF_BRIDGE dump so later RTM_DELVLAN
-      // removals are reflected (port.vlans prefers the live map once seeded)
-      _portTaggedVLANs.withLock {
-        if $0[port.id] == nil { $0[port.id] = port._vlans ?? [] }
+      // fall back to the (flagless) AF_BRIDGE info for ports the dump did not cover
+      _portVLANs.withLock { map in
+        if map[port.id] == nil {
+          map[port.id] = .init(uniqueKeysWithValues: (port._vlans ?? []).map { ($0, false) })
+        }
       }
       await _portNotificationChannel.send(.added(port))
       if !_portExclusions.contains(port.name) {

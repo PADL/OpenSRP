@@ -36,6 +36,8 @@ public protocol Port: Hashable, Sendable, Identifiable where ID: Hashable & Send
 
   var pvid: UInt16? { get }
   var vlans: Set<VLAN> { get }
+  // the subset of vlans that are 802.1Q Dynamic VLAN Registration Entries
+  var dynamicVlans: Set<VLAN> { get }
 
   // MTU in octets
   var mtu: UInt { get }

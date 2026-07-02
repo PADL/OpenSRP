@@ -64,13 +64,16 @@ public actor MVRPApplication<P: Port>: BaseApplication, BaseApplicationEventObse
   var _participants: [MAPContextIdentifier: Set<Participant<MVRPApplication<P>>>] = [:]
   let _logger: Logger
   let _vlanExclusions: Set<VLAN>
-  // statically-configured VIDs per port, captured when the port is added and held as
-  // Registration Fixed (8.8.2). The kernel VLAN table has no dynamic bit, so VLANs
-  // appearing after capture are NOT honoured as static: they may be our own dynamic
-  // (peer) registrations, which must never be promoted to Registration Fixed (doing so
-  // would ignore the peer's Leave and could loop propagation). Runtime removals ARE
-  // honoured; advertising a static VLAN added at runtime requires a daemon restart.
+  // statically-configured VIDs per port currently held as Registration Fixed (8.8.2).
+  // Dynamic (peer-registered) VLANs must never be promoted to Registration Fixed (that
+  // would ignore the peer's Leave and could loop propagation); they are excluded via
+  // port.dynamicVlans (BRIDGE_VLAN_INFO_DYNAMIC, which also survives a daemon restart)
+  // and _dynamicVIDs. On kernels without the flag, dynamic entries left over from a
+  // previous run are indistinguishable from static configuration and will be promoted.
   private var _staticVIDs = [P.ID: Set<VLAN>]()
+  // VIDs registered dynamically (by a peer) this run, tracked so they are excluded from
+  // the static set even on kernels without BRIDGE_VLAN_INFO_DYNAMIC
+  private var _dynamicVIDs = [P.ID: Set<VLAN>]()
   private var _vlanNotificationTask: Task<(), Error>?
 
   public init(controller: MRPController<P>, vlanExclusions: Set<VLAN> = []) async throws {
@@ -221,6 +224,7 @@ extension MVRPApplication {
           "MVRP: join indication from port \(port) VID \(vlan.vid) isNew \(isNew) source \(eventSource)"
         )
       // TODO: flush FDB entries following a topology change, if isNew is true
+      _dynamicVIDs[port.id, default: []].insert(vlan)
       try await bridge.register(vlan: vlan, on: port)
     }
   }
@@ -251,6 +255,7 @@ extension MVRPApplication {
       }
       _logger
         .debug("MVRP: leave indication from port \(port) VID \(vlan.vid) source \(eventSource)")
+      _dynamicVIDs[port.id]?.remove(vlan)
       try await bridge.deregister(vlan: vlan, from: port)
     }
   }
@@ -263,7 +268,7 @@ extension MVRPApplication {
   ) async throws {
     // register each port's statically-configured VLANs (8.8.2) and propagate them (10.3 a)
     for port in context {
-      _registerStaticVLANs(port: port)
+      _updateStaticVLANs(port: port)
     }
     // 10.3 d): the added ports have not declared attributes that other ports have
     // registered, so re-propagate the other ports' static registrations to them
@@ -294,6 +299,7 @@ extension MVRPApplication {
     // drop our per-port tracking so a re-added port re-registers from scratch.
     for port in context {
       _staticVIDs[port.id] = nil
+      _dynamicVIDs[port.id] = nil
     }
   }
 
@@ -303,21 +309,25 @@ extension MVRPApplication {
   ) async throws where B.P == P {
     for try await notification in bridge.vlanRegistrationNotifications {
       guard let port = try? await controller.port(with: notification.portID) else { continue }
-      _pruneStaticVLANs(port: port)
+      _updateStaticVLANs(port: port)
     }
   }
 
-  // Capture the port's statically-configured VLANs (the PVID, per 11.2.1.3, and tagged
-  // VLANs, minus operator exclusions) when the port is added, and hold them as Registration
-  // Fixed (8.8.2, 10.7.2), declaring them out the other ports via MAP. Capture happens once
-  // per port lifetime: see _staticVIDs for why later additions are not honoured.
-  private func _registerStaticVLANs(port: P) {
-    guard _staticVIDs[port.id] == nil else { return }
+  // Hold the port's statically-configured VLANs — its tagged VLANs and PVID (11.2.1.3),
+  // minus dynamic (peer-registered) entries and operator exclusions — as Registration
+  // Fixed (8.8.2, 10.7.2), declaring them out the other ports via MAP; withdraw those no
+  // longer statically configured. Runtime additions and removals are both honoured.
+  // Idempotent: recomputed from live state, so duplicate notifications are harmless.
+  // Internal (not private) so tests can drive it directly.
+  func _updateStaticVLANs(port: P) {
     var desired = Set(port.vlans.filter { !_vlanExclusions.contains($0) })
+    desired.subtract(port.dynamicVlans) // kernel-flagged (also survives our restart)
+    desired.subtract(_dynamicVIDs[port.id] ?? []) // ours this run (flagless-kernel fallback)
     if let pvid = port.pvid, !_vlanExclusions.contains(VLAN(vid: pvid)) {
       desired.insert(VLAN(vid: pvid))
     }
-    for vlan in desired {
+    let current = _staticVIDs[port.id] ?? []
+    for vlan in desired.subtracting(current) {
       _logger.debug("MVRP: statically registering VLAN \(vlan.vid) on port \(port)")
       try? administrativelyRegister(
         attributeType: MVRPAttributeType.vid.rawValue,
@@ -326,18 +336,7 @@ extension MVRPApplication {
         for: MAPBaseSpanningTreeContext
       )
     }
-    _staticVIDs[port.id] = desired
-  }
-
-  // Withdraw static registrations whose VLANs were removed from the bridge at runtime.
-  // Additions are deliberately ignored (see _staticVIDs).
-  private func _pruneStaticVLANs(port: P) {
-    guard let current = _staticVIDs[port.id], !current.isEmpty else { return }
-    var live = Set(port.vlans)
-    if let pvid = port.pvid { live.insert(VLAN(vid: pvid)) }
-    let removed = current.subtracting(live)
-    guard !removed.isEmpty else { return }
-    for vlan in removed {
+    for vlan in current.subtracting(desired) {
       _logger.debug("MVRP: withdrawing static VLAN \(vlan.vid) on port \(port)")
       try? administrativelyDeregister(
         attributeType: MVRPAttributeType.vid.rawValue,
@@ -346,7 +345,7 @@ extension MVRPApplication {
         for: MAPBaseSpanningTreeContext
       )
     }
-    _staticVIDs[port.id] = current.subtracting(removed)
+    _staticVIDs[port.id] = desired.isEmpty ? nil : desired
   }
 }
 
