@@ -69,6 +69,9 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
 
   func getPortTcMaxLatency(for: SRclassPriority) async throws -> Int { 0 }
 
+  let _pfcEnabledPriorities: Set<SRclassPriority>
+  var pfcEnabledPriorities: Set<SRclassPriority> { get async throws { _pfcEnabledPriorities } }
+
   func setMulticastFlooding(_ enabled: Bool) async throws {}
 
   func setFlowControl(_ enabled: Bool) async throws {}
@@ -77,12 +80,14 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
     id: ID,
     pvid: UInt16? = nil,
     vlans: Set<UInt16> = [2],
-    dynamicVlans: Set<UInt16> = []
+    dynamicVlans: Set<UInt16> = [],
+    pfcEnabledPriorities: Set<SRclassPriority> = []
   ) {
     self.id = id
     _pvid = pvid
     _vlans = vlans
     _dynamicVlans = dynamicVlans
+    _pfcEnabledPriorities = pfcEnabledPriorities
   }
 
   static var now: ContinuousClock.Instant { .now }
@@ -2907,6 +2912,55 @@ final class MRPTests: XCTestCase {
       mismatched, true,
       "a mismatched SRclassPriority must mark the port an SRP domain boundary port"
     )
+    _ = controller
+  }
+
+  // 35.2.1.4(h): withdrawing the peer's Domain registration returns the port to boundary state
+  // (a leave must not leave it "core" -- previously it was cleared to nil, read as non-boundary).
+  func testDomainLeaveRestoresBoundaryPort() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0])
+    let port = MockPort(id: 0)
+    let domain = MSRPDomainValue(srClassID: .A, srClassPriority: .CA, srClassVID: SR_PVID.vid)
+
+    do {
+      try await msrp.onJoinIndication(
+        contextIdentifier: MAPBaseSpanningTreeContext, port: port,
+        attributeType: MSRPAttributeType.domain.rawValue, attributeSubtype: nil,
+        attributeValue: domain, isNew: true, eventSource: .peer
+      )
+    } catch MRPError.doNotPropagateAttribute {}
+    let core = try await msrp.withPortState(port: port) { $0.srpDomainBoundaryPort[.A] }
+    XCTAssertEqual(core, false, "a matching Domain registration makes the port a core port")
+
+    do {
+      try await msrp.onLeaveIndication(
+        contextIdentifier: MAPBaseSpanningTreeContext, port: port,
+        attributeType: MSRPAttributeType.domain.rawValue, attributeSubtype: nil,
+        attributeValue: domain, eventSource: .peer
+      )
+    } catch MRPError.doNotPropagateAttribute {}
+    let boundary = try await msrp.withPortState(port: port) { $0.srpDomainBoundaryPort[.A] }
+    XCTAssertEqual(boundary, true, "withdrawing the Domain returns the port to boundary state")
+    _ = controller
+  }
+
+  // 802.1Q 34.5/35.2.1.4: PFC enabled on an SR class's priority (mutually exclusive with the
+  // credit-based shaper) makes the port an SRP domain boundary port for that class at setup.
+  func testPFCOnSRClassPriorityMarksBoundaryPort() async throws {
+    let recorder = MRPTestRecorder()
+    let ports: Set<MockPort> = [MockPort(id: 0, pfcEnabledPriorities: [.CA])] // Class A priority
+    let bridge = MockBridge(ports: ports, recorder: recorder)
+    let controller = try await MRPController(
+      bridge: bridge,
+      logger: Logger(label: "com.padl.MRPTests.recompute")
+    )
+    let msrp = try await MSRPApplication(controller: controller)
+    try await msrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
+    let port = MockPort(id: 0)
+    let boundaryA = try await msrp.withPortState(port: port) { $0.srpDomainBoundaryPort[.A] }
+    let boundaryB = try await msrp.withPortState(port: port) { $0.srpDomainBoundaryPort[.B] }
+    XCTAssertEqual(boundaryA, true, "PFC on Class A priority must mark the port a boundary port for A")
+    XCTAssertEqual(boundaryB, false, "Class B (no PFC on its priority) must remain a core port")
     _ = controller
   }
 

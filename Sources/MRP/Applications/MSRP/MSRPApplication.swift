@@ -347,6 +347,7 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     guard contextIdentifier == MAPBaseSpanningTreeContext else { return }
 
     var srClassPriorityMap = [P.ID: SRClassPriorityMap]()
+    var pfcEnabledPriorities = [P.ID: Set<SRclassPriority>]()
 
     guard let bridge = (controller?.bridge as? any MSRPAwareBridge<P>) else {
       _logger.error("MSRP: bridge is not MSRP-aware, cannot declare domains")
@@ -405,12 +406,22 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
         _logger.debug("MSRP: port \(port) is not AVB capable, skipping")
         continue
       }
+      // best-effort; folded into the boundary-port state below (fetched here, in the awaiting
+      // loop, so the state-building loop stays synchronous)
+      pfcEnabledPriorities[port.id] = (try? await port.pfcEnabledPriorities) ?? []
     }
 
     for port in context {
       var portState = try MSRPPortState(msrp: self, port: port)
       if let srClassPriorityMap = srClassPriorityMap[port.id] {
         portState.srClassPriorityMap = srClassPriorityMap
+      }
+      // 802.1Q 34.5/35.2.1.4: an SR class whose priority has PFC enabled (mutually exclusive with
+      // the credit-based shaper) makes this an SRP domain boundary port for that class
+      if let pfc = pfcEnabledPriorities[port.id], !pfc.isEmpty {
+        for (srClassID, priority) in portState.srClassPriorityMap where pfc.contains(priority) {
+          portState.srpDomainBoundaryPort[srClassID] = true
+        }
       }
       _portStates[port.id] = portState
     }
@@ -1836,7 +1847,10 @@ extension MSRPApplication {
     case .domain:
       let domain = (attributeValue as! MSRPDomainValue)
       try withPortState(port: port) { portState in
-        portState.srpDomainBoundaryPort[domain.srClassID] = nil
+        // 35.2.1.4(h): with the peer's Domain registration withdrawn, the port declares a Domain
+        // for the class but no longer has a registration for it, so it is again a boundary port
+        // (not "unknown"/core -- a nil here reads as non-boundary in _canBridgeTalker).
+        portState.srpDomainBoundaryPort[domain.srClassID] = true
       }
     }
 
