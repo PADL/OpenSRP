@@ -412,5 +412,30 @@ public let SR_PVID = VLAN(vid: 2)
 
 // The AVB maximum frame size (octets, excluding media framing): the reference
 // size for stream latency (35.2.2.8.4). A port whose MTU exceeds this can't
-// bound stream latency and is treated as not AVB capable.
+// bound stream latency and is treated as not AVB capable. It also serves as
+// msrpLatencyMaxFrameSize, the worst-case interfering-frame size (35.2.2.8.6).
 public let AVBMaxFrameSize: UInt = 2000
+
+// The per-hop SRUW7F0D[/DWHQF\ (35.2.2.8.6), summing only the terms observable from this daemon:
+//   d) wire propagation: the gPTP meanLinkDelay (caller supplies it, in ns)
+//   c) internal processing: store-and-forward of the frame -- one max-size frame time at the
+//      egress link rate
+//   b) lower-priority interference: one max-size (msrpLatencyMaxFrameSize) frame that could have
+//      just begun transmitting -- another frame time at the egress link rate
+//   e) media access delay: ~0 on a full-duplex switched link
+// Term a) -- the time to drain the equal/higher-priority queues -- depends on the switch's
+// credit-based-shaper credit state and queue depths, which are not observable here (the standard
+// also declines to specify it, 35.2.2.8.6 note), so it is not included.
+func srpPortTcMaxLatency(
+  meanLinkDelayNs: Int,
+  linkSpeedKbps: UInt,
+  maxFrameSize: UInt = AVBMaxFrameSize
+) -> Int {
+  var latency = meanLinkDelayNs
+  if linkSpeedKbps > 0 {
+    // one max-size frame time in ns: bytes * 8 bits / (kbps * 1000) s, scaled to ns
+    let frameTimeNs = Int(maxFrameSize * 8_000_000 / linkSpeedKbps)
+    latency += 2 * frameTimeNs // c) store-and-forward + b) one interfering lower-priority frame
+  }
+  return latency
+}

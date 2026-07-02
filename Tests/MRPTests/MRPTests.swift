@@ -1673,6 +1673,21 @@ final class MRPTests: XCTestCase {
     XCTAssertEqual(bandwidthUsed, 17024) // 8000 * 266 * 8 / 1000 = 17024 kbps
   }
 
+  // 35.2.2.8.6 per-hop latency (knowable terms): propagation plus two max-frame store-and-forward
+  // /interference terms at the egress link rate. Faster links yield lower latency; the omitted,
+  // class-dependent queue-drain (a) is not observable from the daemon.
+  func testSrpPortTcMaxLatencyAddsFrameTermsAtLinkRate() {
+    // 2000-byte max frame at 1 Gbps = 16 us per frame time; two of them plus 500 ns propagation
+    let oneGbps = srpPortTcMaxLatency(meanLinkDelayNs: 500, linkSpeedKbps: 1_000_000)
+    XCTAssertEqual(oneGbps, 500 + 2 * 16_000)
+    // a ten-times-faster link makes the frame terms ten times smaller
+    let tenGbps = srpPortTcMaxLatency(meanLinkDelayNs: 500, linkSpeedKbps: 10_000_000)
+    XCTAssertEqual(tenGbps, 500 + 2 * 1_600)
+    XCTAssertLessThan(tenGbps, oneGbps)
+    // an unknown link speed contributes only the propagation term (no divide by zero)
+    XCTAssertEqual(srpPortTcMaxLatency(meanLinkDelayNs: 500, linkSpeedKbps: 0), 500)
+  }
+
   func testCBSParametersClassA() {
     // Test CBS parameter calculations for Class A with specific values
     // idleslope: 20 Mbps, transmission rate: 1 Gbps, max interfering frame: 1500 bytes
