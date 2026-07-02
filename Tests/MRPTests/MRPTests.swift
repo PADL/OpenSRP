@@ -164,6 +164,17 @@ private func _transmittedDomainVectors(
   return result
 }
 
+// is a VID declared (Applicant) by MVRP on a port?
+private func _isVLANDeclared(
+  _ mvrp: MVRPApplication<MockPort>, vid: UInt16, port: Int
+) async -> Bool {
+  guard let participant = try? await mvrp.findParticipant(port: MockPort(id: port))
+  else { return false }
+  return await participant.findAllAttributes(
+    attributeType: MVRPAttributeType.vid.rawValue, matching: .matchAny
+  ).contains { $0.isDeclared && ($0.attributeValue as? VLAN)?.vid == vid }
+}
+
 // is an attribute of this type declared (Applicant) on a port for the stream?
 // Free function (not a method) so it can be used inside _waitFor's @Sendable closure.
 private func _isDeclared(
@@ -334,6 +345,10 @@ extension MockBridge: MMRPAwareBridge {
 }
 
 extension MockBridge: MVRPAwareBridge {
+  var vlanRegistrationNotifications: AnyAsyncSequence<VLANRegistrationNotification<P>> {
+    AsyncEmptySequence<VLANRegistrationNotification<P>>().eraseToAnyAsyncSequence()
+  }
+
   func register(vlan: VLAN, on port: P) async throws {
     await recorder.recordVLANRegister(vlan: vlan, port: port.id)
   }
@@ -2362,6 +2377,23 @@ final class MRPTests: XCTestCase {
     XCTAssertTrue(registered200, "non-excluded VLAN still registers")
     let registered100 = await recorder.vlanRegister.contains { $0.vlan.vid == 100 }
     XCTAssertFalse(registered100, "excluded VLAN must not register")
+    _ = controller
+  }
+
+  // On startup MVRP declares each port's statically-configured VLANs (MockPort.vlans = {2}),
+  // so peers learn the bridge's membership without waiting for an inbound declaration.
+  func testMVRPDeclaresStaticVLANs() async throws {
+    let (controller, mvrp, _) = try await _makeMVRP(portIDs: [0])
+    let declared = await _isVLANDeclared(mvrp, vid: 2, port: 0)
+    XCTAssertTrue(declared, "statically-configured VID 2 must be declared on startup")
+    _ = controller
+  }
+
+  // A statically-configured VLAN in the exclusion set is not declared.
+  func testMVRPExcludedStaticVLANNotDeclared() async throws {
+    let (controller, mvrp, _) = try await _makeMVRP(portIDs: [0], exclusions: [VLAN(vid: 2)])
+    let declared = await _isVLANDeclared(mvrp, vid: 2, port: 0)
+    XCTAssertFalse(declared, "excluded VID 2 must not be declared")
     _ = controller
   }
 

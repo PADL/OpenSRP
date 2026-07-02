@@ -127,6 +127,13 @@ public enum SRClassPriorityMapNotification<P: Port>: Sendable {
   }
 }
 
+// A port's statically-configured VLAN membership changed; the consumer re-reads
+// port.vlans and updates its MVRP declarations (the VID delta is not carried,
+// so ordering/duplicate notifications are harmless).
+public struct VLANRegistrationNotification<P: Port>: Sendable {
+  public let portID: P.ID
+}
+
 extension Port {
   var contextIdentifiers: Set<MAPContextIdentifier> {
     Set(vlans.map { MAPContextIdentifier(vlan: $0) })

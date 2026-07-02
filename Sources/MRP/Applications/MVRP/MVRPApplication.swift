@@ -14,6 +14,7 @@
 // limitations under the License.
 //
 
+import AsyncExtensions
 import BinaryParsing
 import IEEE802
 import Logging
@@ -25,6 +26,9 @@ import FlyingFox
 public let MVRPEtherType: UInt16 = 0x88F5
 
 protocol MVRPAwareBridge<P>: Bridge where P: Port {
+  // fires when a port's statically-configured VLAN membership changes
+  var vlanRegistrationNotifications: AnyAsyncSequence<VLANRegistrationNotification<P>> { get }
+
   func register(vlan: VLAN, on port: P) async throws
   func deregister(vlan: VLAN, from port: P) async throws
 }
@@ -60,12 +64,24 @@ public actor MVRPApplication<P: Port>: BaseApplication, BaseApplicationEventObse
   var _participants: [MAPContextIdentifier: Set<Participant<MVRPApplication<P>>>] = [:]
   let _logger: Logger
   let _vlanExclusions: Set<VLAN>
+  // VIDs currently declared by us per port, so the update can compute the join/leave delta.
+  private var _declaredVIDs = [P.ID: Set<VLAN>]()
+  private var _vlanNotificationTask: Task<(), Error>?
 
   public init(controller: MRPController<P>, vlanExclusions: Set<VLAN> = []) async throws {
     _controller = Weak(controller)
     _logger = controller.logger
     _vlanExclusions = vlanExclusions
     try await controller.register(application: self)
+    _vlanNotificationTask = Task { [weak self] in
+      guard let self, let controller = self.controller,
+            let bridge = controller.bridge as? any MVRPAwareBridge<P> else { return }
+      try? await _observeVLANNotifications(bridge: bridge, controller: controller)
+    }
+  }
+
+  deinit {
+    _vlanNotificationTask?.cancel()
   }
 
   public nonisolated var description: String {
@@ -240,9 +256,11 @@ extension MVRPApplication {
     contextIdentifier: MAPContextIdentifier,
     with context: MAPContext<P>
   ) async throws {
-    // MVRP does not proactively declare the base-context VID (VID 0); SwiftMRP registers and
-    // MAP-propagates peer VID declarations. Proactive declaration of statically-configured tagged
-    // VLANs (excluding PVID) is a separate feature driven off VLAN-membership notifications.
+    // Declare each port's statically-configured VLANs now (later changes arrive via
+    // vlanRegistrationNotifications). Catches VLANs whose notification preceded the participant.
+    for port in context {
+      _updateDeclaredVLANs(port: port)
+    }
   }
 
   func onContextUpdated(
@@ -254,7 +272,49 @@ extension MVRPApplication {
     contextIdentifier: MAPContextIdentifier,
     with context: MAPContext<P>
   ) async throws {
-    // See onContextAdded: MVRP does not proactively declare or withdraw the base-context VID.
+    // Participants are torn down (and their declarations withdrawn) by the context removal; just
+    // drop our per-port tracking so a re-added port re-declares from scratch.
+    for port in context {
+      _declaredVIDs[port.id] = nil
+    }
+  }
+
+  private func _observeVLANNotifications<B: MVRPAwareBridge>(
+    bridge: B,
+    controller: MRPController<P>
+  ) async throws where B.P == P {
+    for try await notification in bridge.vlanRegistrationNotifications {
+      guard let port = try? await controller.port(with: notification.portID) else { continue }
+      _updateDeclaredVLANs(port: port)
+    }
+  }
+
+  // Declare the port's statically-configured tagged VLANs (minus PVID and operator exclusions,
+  // per _isVlanExcluded) and withdraw any we previously declared that are no longer members.
+  // Idempotent: re-reads live membership, so duplicate/out-of-order notifications are harmless.
+  private func _updateDeclaredVLANs(port: P) {
+    guard let participant = try? findParticipant(for: MAPBaseSpanningTreeContext, port: port)
+    else { return }
+    let desired = Set(port.vlans.filter { !_isVlanExcluded($0, port: port) })
+    let declared = _declaredVIDs[port.id] ?? []
+    for vlan in desired.subtracting(declared) {
+      _logger.debug("MVRP: declaring static VLAN \(vlan.vid) on port \(port)")
+      try? participant.join(
+        attributeType: MVRPAttributeType.vid.rawValue,
+        attributeValue: vlan,
+        isNew: false,
+        eventSource: .application
+      )
+    }
+    for vlan in declared.subtracting(desired) {
+      _logger.debug("MVRP: withdrawing static VLAN \(vlan.vid) on port \(port)")
+      try? participant.leave(
+        attributeType: MVRPAttributeType.vid.rawValue,
+        attributeValue: vlan,
+        eventSource: .application
+      )
+    }
+    _declaredVIDs[port.id] = desired.isEmpty ? nil : desired
   }
 }
 

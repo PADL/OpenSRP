@@ -560,6 +560,11 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   private let _srClassPriorityMapStream: AsyncStream<SRClassPriorityMapNotification<P>>
   private let _srClassPriorityMapContinuation:
     AsyncStream<SRClassPriorityMapNotification<P>>.Continuation
+  // Buffered like _srClassPriorityMapStream: a per-port ping on static VLAN membership change,
+  // consumed by MVRP to update its declarations. Harmless if MVRP is disabled.
+  private let _vlanRegistrationStream: AsyncStream<VLANRegistrationNotification<P>>
+  private let _vlanRegistrationContinuation:
+    AsyncStream<VLANRegistrationNotification<P>>.Continuation
   fileprivate let _pmc: PTPManagementClient
   private var _portPropertiesCache = [P.ID: PortPropertiesNP]()
   private let _portExclusions: Set<String>
@@ -593,6 +598,10 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     (_srClassPriorityMapStream, _srClassPriorityMapContinuation) = AsyncStream.makeStream(
       of: SRClassPriorityMapNotification<P>.self,
       bufferingPolicy: .bufferingNewest(64)
+    )
+    (_vlanRegistrationStream, _vlanRegistrationContinuation) = AsyncStream.makeStream(
+      of: VLANRegistrationNotification<P>.self,
+      bufferingPolicy: .bufferingNewest(256)
     )
   }
 
@@ -686,6 +695,8 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     _logger.debug(
       "LinuxBridge: VLAN \(isNew ? "new" : "del") on ifindex \(vlandb.ifIndex): \(vlandb.entries)"
     )
+    // Ping MVRP to update declarations to the updated static membership.
+    _vlanRegistrationContinuation.yield(VLANRegistrationNotification(portID: vlandb.ifIndex))
   }
 
   public func getVlans(controller: isolated MRPController<P>) async -> Set<VLAN> {
@@ -1038,6 +1049,10 @@ extension LinuxBridge: MMRPAwareBridge {
 }
 
 extension LinuxBridge: MVRPAwareBridge {
+  nonisolated var vlanRegistrationNotifications: AnyAsyncSequence<VLANRegistrationNotification<P>> {
+    _vlanRegistrationStream.eraseToAnyAsyncSequence()
+  }
+
   func register(vlan: VLAN, on port: P) async throws {
     try await port._add(vlan: vlan)
   }
