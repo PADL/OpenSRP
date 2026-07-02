@@ -414,7 +414,7 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
       }
       // best-effort; folded into the boundary-port state below (fetched here, in the awaiting
       // loop, so the state-building loop stays synchronous)
-      pfcEnabledPriorities[port.id] = (try? await port.pfcEnabledPriorities) ?? []
+      pfcEnabledPriorities[port.id] = await (try? port.pfcEnabledPriorities) ?? []
     }
 
     for port in context {
