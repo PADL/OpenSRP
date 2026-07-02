@@ -1657,24 +1657,13 @@ extension MSRPApplication {
         continue // pruned: the sweep below withdraws any existing declaration
       }
 
+      // getPortTcMaxLatency always yields a non-negative per-hop latency, substituting the spec's
+      // 500 ns propagation default itself when gPTP can't supply meanLinkDelay (35.2.2.8.6 d), so
+      // there is no fallback to apply here.
       var latency = boundTalker.1.accumulatedLatency
-      do {
-        let l = try await participant.port
-          .getPortTcMaxLatency(for: boundTalker.1.priorityAndRank.dataFramePriority)
-        guard l >= 0 else { throw MRPError.portLatencyIsNegative(l) }
-        latency += UInt32(l)
-      } catch {
-        // gPTP/PMC couldn't supply a per-TC max latency for this hop; fall back to the spec's
-        // 500 ns propagation default. A run of these on the wire means the advertised accumulated
-        // latency is bogus (e.g. Avnu worst-case-latency tests will read implausibly small values).
-        _logger.debug(
-          """
-          MSRP: no port latency for stream \(streamID) on port \(participant.port.name) \
-          (\(error)); adding 500 ns fallback
-          """
-        )
-        latency += 500
-      }
+      let l = await participant.port
+        .getPortTcMaxLatency(for: boundTalker.1.priorityAndRank.dataFramePriority)
+      latency += UInt32(clamping: l)
 
       // 35.2.6: a type change (e.g. Advertise->Failed) behaves as if the old declaration was
       // withdrawn before the new one, so leave the opposite declared Talker type first.

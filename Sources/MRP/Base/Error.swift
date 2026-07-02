@@ -36,7 +36,6 @@ enum MRPError: Error, Equatable {
   case notSupported
   case participantNotFound
   case portAlreadyExists
-  case portLatencyIsNegative(Int)
   case portNotFound
   case unknownApplication
   case unknownAttributeEvent
