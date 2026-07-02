@@ -2897,11 +2897,12 @@ final class MRPTests: XCTestCase {
     _ = controller
   }
 
-  // 35.2.1.4: a port becomes an SRP domain boundary port for an SR class when a received Domain
-  // declares a different SRclassPriority than the port's own; a matching priority leaves it a
-  // core (non-boundary) port.
+  // 35.2.1.4: on a *bridge* (>=2 ports) a port becomes an SRP domain boundary port for an SR
+  // class when a received Domain declares a different SRclassPriority than the port's own; a
+  // matching priority leaves it a core (non-boundary) port. (An end station adopts instead --
+  // see testEndStationAdoptsNeighbourSRClassPriorityAndVID.)
   func testDomainPriorityMismatchMarksBoundaryPort() async throws {
-    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0])
+    let (controller, msrp, _) = try await _makeBridgeMSRP(portIDs: [0, 1]) // >= 2 ports = a bridge
     let port = MockPort(id: 0)
 
     // a received Domain indication is consumed locally and never propagated to MAP (it throws
@@ -2938,10 +2939,32 @@ final class MRPTests: XCTestCase {
     _ = controller
   }
 
+  // 35.2.2.9.3/.4: an end station (single port) adopts its neighbour's SRclassPriority and
+  // SRclassVID rather than treating a difference as a domain boundary.
+  func testEndStationAdoptsNeighbourSRClassPriorityAndVID() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0]) // 1 port => end station
+    let port = MockPort(id: 0)
+    do {
+      try await msrp.onJoinIndication(
+        contextIdentifier: MAPBaseSpanningTreeContext, port: port,
+        attributeType: MSRPAttributeType.domain.rawValue, attributeSubtype: nil,
+        attributeValue: MSRPDomainValue(srClassID: .A, srClassPriority: .VI, srClassVID: 3),
+        isNew: true, eventSource: .peer
+      )
+    } catch MRPError.doNotPropagateAttribute {}
+    let priority = try await msrp.withPortState(port: port) { $0.srClassPriorityMap[.A] }
+    XCTAssertEqual(priority, .VI, "an end station must adopt the neighbour's SRclassPriority")
+    let vid = try await msrp.withPortState(port: port) { $0.srpClassVID[.A] }
+    XCTAssertEqual(vid, VLAN(vid: 3), "an end station must adopt the neighbour's SRclassVID")
+    let boundary = try await msrp.withPortState(port: port) { $0.srpDomainBoundaryPort[.A] }
+    XCTAssertEqual(boundary, false, "an end station that adopted the domain is not a boundary port")
+    _ = controller
+  }
+
   // 35.2.1.4(h): withdrawing the peer's Domain registration returns the port to boundary state
   // (a leave must not leave it "core" -- previously it was cleared to nil, read as non-boundary).
   func testDomainLeaveRestoresBoundaryPort() async throws {
-    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0])
+    let (controller, msrp, _) = try await _makeBridgeMSRP(portIDs: [0, 1]) // >= 2 ports = a bridge
     let port = MockPort(id: 0)
     let domain = MSRPDomainValue(srClassID: .A, srClassPriority: .CA, srClassVID: SR_PVID.vid)
 
@@ -4061,6 +4084,24 @@ extension MRPTests {
       flags: flags
     )
     try await msrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
+    return (controller, msrp, recorder)
+  }
+
+  // Like _makeRecomputeMSRP but seeds the controller's ports through the real port-add path, so
+  // controller.isEndStation is false (>= 2 ports = a bridge). _makeRecomputeMSRP leaves the
+  // controller's port set empty, which reads as an end station.
+  private func _makeBridgeMSRP(portIDs: [Int]) async throws
+    -> (MRPController<MockPort>, MSRPApplication<MockPort>, MRPTestRecorder)
+  {
+    let recorder = MRPTestRecorder()
+    let ports = Set(portIDs.map { MockPort(id: $0) })
+    let bridge = MockBridge(ports: ports, recorder: recorder)
+    let controller = try await MRPController(
+      bridge: bridge,
+      logger: Logger(label: "com.padl.MRPTests.bridge")
+    )
+    let msrp = try await MSRPApplication(controller: controller)
+    for port in ports { try await controller._didAdd(port: port) }
     return (controller, msrp, recorder)
   }
 
