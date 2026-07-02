@@ -69,7 +69,8 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
 
   var isAsCapable: Bool { true }
 
-  func getPortTcMaxLatency(for: SRclassPriority) async -> Int { 0 }
+  let _portTcMaxLatency: Int
+  func getPortTcMaxLatency(for: SRclassPriority) async -> Int { _portTcMaxLatency }
 
   let _pfcEnabledPriorities: Set<SRclassPriority>
   var pfcEnabledPriorities: Set<SRclassPriority> { get async throws { _pfcEnabledPriorities } }
@@ -84,7 +85,8 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
     vlans: Set<UInt16> = [2],
     dynamicVlans: Set<UInt16> = [],
     pfcEnabledPriorities: Set<SRclassPriority> = [],
-    mtu: UInt = 1500
+    mtu: UInt = 1500,
+    portTcMaxLatency: Int = 0
   ) {
     self.id = id
     _pvid = pvid
@@ -92,6 +94,7 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
     _dynamicVlans = dynamicVlans
     _mtu = mtu
     _pfcEnabledPriorities = pfcEnabledPriorities
+    _portTcMaxLatency = portTcMaxLatency
   }
 
   static var now: ContinuousClock.Instant { .now }
@@ -4147,12 +4150,13 @@ private typealias MSRPEnqueuedEvent = EnqueuedEvent<MSRPApplication<MockPort>>
 extension MRPTests {
   private func _makeRecomputeMSRP(
     portIDs: [Int],
-    flags: MSRPApplicationFlags = .defaultFlags
+    flags: MSRPApplicationFlags = .defaultFlags,
+    portTcMaxLatency: [Int: Int] = [:]
   ) async throws
     -> (MRPController<MockPort>, MSRPApplication<MockPort>, MRPTestRecorder)
   {
     let recorder = MRPTestRecorder()
-    let ports = Set(portIDs.map { MockPort(id: $0) })
+    let ports = Set(portIDs.map { MockPort(id: $0, portTcMaxLatency: portTcMaxLatency[$0] ?? 0) })
     let bridge = MockBridge(ports: ports, recorder: recorder)
     let controller = try await MRPController(
       bridge: bridge,
@@ -4736,6 +4740,34 @@ extension MRPTests {
     XCTAssertTrue(propagated, "advertise should reach the Forwarding egress (1)")
     let blockedDeclared = await _isDeclared(msrp, .talkerAdvertise, streamID, port: 2)
     XCTAssertFalse(blockedDeclared, "advertise must not be forwarded out the blocked egress (2)")
+    _ = controller
+  }
+
+  // 35.2.2.8.6: a bridge relaying a Talker Advertise increases its accumulatedLatency by the
+  // egress port's per-hop latency (the value getPortTcMaxLatency yields).
+  func testTalkerAdvertiseAccumulatesEgressPerHopLatency() async throws {
+    let perHop = 12_345
+    // the talker arrives on port 0 and is relayed out port 1, which carries the per-hop latency
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(
+      portIDs: [0, 1],
+      portTcMaxLatency: [1: perHop]
+    )
+    let streamID = MSRPStreamID(0x0001_0000_0000_00AA)
+    try await _drive(
+      msrp,
+      port: 0,
+      attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), // accumulatedLatency 1000
+      event: .JoinIn
+    )
+    let relayed = await _waitFor { await _declaredTalkerAdvertise(msrp, streamID, port: 1) != nil }
+    XCTAssertTrue(relayed, "advertise must propagate to the egress")
+    let advertise = await _declaredTalkerAdvertise(msrp, streamID, port: 1)
+    XCTAssertEqual(
+      advertise?.accumulatedLatency,
+      1000 + UInt32(perHop),
+      "the relayed advertise must add the egress per-hop latency to the received latency"
+    )
     _ = controller
   }
 
