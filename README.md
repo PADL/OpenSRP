@@ -16,7 +16,11 @@ MMRP, MVRP, and MSRP are "applications" of the generalized MRP protocol and stat
 
 Note that whilst OpenSRP does have a platform abstraction layer, the initial platform is Linux, and we would prefer to push switch-specific functionality into the kernel rather than separate platform backends.
 
-Note: as Linux has an in-kernel MVRP applicant, `mrpd` does not automatically advertise statically configured VLANs. If you wish to do so, you should create a VLAN interface and set the `mvrp` flag to `on` using `ip link set dev` . (If you wish to send AVTP packets you should also read [this](https://tsn.readthedocs.io/vlan.html) document on configuring `egress-qos-map`. But bear in mind that OpenSRP end-station support is incomplete at the time of writing.)
+Note: `mrpd` is the sole MVRP entity on the bridge. It automatically declares each port's statically configured (tagged) VLANs — excluding the port's PVID and any VLANs passed with `--exclude-vlan` — so peers learn the bridge's membership without waiting for an inbound declaration (this matters when ingress filtering is enabled, and for interoperability tests). Configure the desired VLANs (e.g. the SR class A and B VIDs) with `bridge vlan add` before starting `mrpd`; VLANs added or removed while it is running are picked up automatically.
+
+Because `mrpd` runs its own MVRP applicant/registrar and performs attribute propagation itself, do **not** also enable the Linux in-kernel MVRP applicant on a bridge port it manages (i.e. do not `ip link set dev <vlan-if> type vlan mvrp on` stacked over a managed port), and do not run a second MVRP daemon (such as [mvrpd](https://github.com/michael-dev/mvrpd)) against the same bridge. The kernel's 8021q MVRP applicant is still the correct way for a Linux *end station* to declare VLAN membership toward the bridge — that is a peer on the far end of a link, not a co-resident applicant. The pre-routing nftables drop rule (see below) is mandatory: it stops the bridge from flooding MVRP frames so that `mrpd` can propagate them itself.
+
+(If you wish to send AVTP packets from a local end station you should create a VLAN interface and read [this](https://tsn.readthedocs.io/vlan.html) document on configuring `egress-qos-map`, but bear in mind that OpenSRP end-station support is incomplete at the time of writing.)
 
 ## Configuring
 
