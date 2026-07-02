@@ -463,11 +463,12 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
     // that one isn't observable here (see srpPortTcMaxLatency), so the class argument is unused.
     // Wire propagation (d): gPTP meanLinkDelay (PTP timeinterval is ns * 2^16), or the spec's
     // 500 ns default when gPTP can't supply a usable (non-negative) value (35.2.2.8.6 d).
-    let meanLinkDelayNs: Int
-    if let meanLinkDelay = try? await _getMeanLinkDelay(), meanLinkDelay >= 0 {
-      meanLinkDelayNs = Int(meanLinkDelay >> 16)
+    let meanLinkDelayNs = if let meanLinkDelay = try? await _getMeanLinkDelay(),
+                             meanLinkDelay >= 0
+    {
+      Int(meanLinkDelay >> 16)
     } else {
-      meanLinkDelayNs = 500
+      500
     }
     return srpPortTcMaxLatency(meanLinkDelayNs: meanLinkDelayNs, linkSpeedKbps: linkSpeed)
   }
