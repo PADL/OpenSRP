@@ -203,8 +203,6 @@ extension BaseApplication {
     switch eventSource {
     case .joinTimer:
       fallthrough
-    case .local:
-      fallthrough
     case .peer:
       fallthrough
     case .application:

@@ -657,10 +657,10 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
     defer { _rxInProgress = false }
 
     var leaveAll = false
-    let eventSource: EventSource = _isEqualMacAddress(
-      sourceMacAddress,
-      port.macAddress
-    ) ? .local : .peer
+    // All received PDUs are peer-sourced: we snoop MRP via an ingress-only NFLOG trap, so our own
+    // transmissions never re-enter here (self-MAC frames were formerly classified EventSource.local
+    // for a co-resident kernel applicant that does not exist).
+    let eventSource: EventSource = .peer
     for message in pdu.messages {
       try rx(message: message, eventSource: eventSource, leaveAll: &leaveAll)
     }

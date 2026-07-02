@@ -25,9 +25,6 @@ import FlyingFox
 public let MVRPEtherType: UInt16 = 0x88F5
 
 protocol MVRPAwareBridge<P>: Bridge where P: Port {
-  // allow use of platform MVRP applicant (e.g. in-kernel Linux MVRP implementation)
-  var hasLocalMVRPApplicant: Bool { get }
-
   func register(vlan: VLAN, on port: P) async throws
   func deregister(vlan: VLAN, from port: P) async throws
 }
@@ -198,8 +195,6 @@ extension MVRPApplication {
       guard !_isVlanExcluded(vlan, port: port) else {
         throw MRPError.doNotPropagateAttribute
       }
-      guard !bridge.hasLocalMVRPApplicant || eventSource != .local
-      else { throw MRPError.doNotPropagateAttribute }
       _logger
         .debug(
           "MVRP: join indication from port \(port) VID \(vlan.vid) isNew \(isNew) source \(eventSource)"
@@ -233,8 +228,6 @@ extension MVRPApplication {
       guard !_isVlanExcluded(vlan, port: port) else {
         throw MRPError.doNotPropagateAttribute
       }
-      guard !bridge.hasLocalMVRPApplicant || eventSource != .local
-      else { throw MRPError.doNotPropagateAttribute }
       _logger
         .debug("MVRP: leave indication from port \(port) VID \(vlan.vid) source \(eventSource)")
       try await bridge.deregister(vlan: vlan, from: port)
@@ -247,14 +240,9 @@ extension MVRPApplication {
     contextIdentifier: MAPContextIdentifier,
     with context: MAPContext<P>
   ) async throws {
-    guard let bridge = controller?.bridge as? any MVRPAwareBridge<P>,
-          !bridge.hasLocalMVRPApplicant else { return }
-    try join(
-      attributeType: MVRPAttributeType.vid.rawValue,
-      attributeValue: VLAN(contextIdentifier: contextIdentifier),
-      isNew: true,
-      for: MAPBaseSpanningTreeContext
-    )
+    // MVRP does not proactively declare the base-context VID (VID 0); SwiftMRP registers and
+    // MAP-propagates peer VID declarations. Proactive declaration of statically-configured tagged
+    // VLANs (excluding PVID) is a separate feature driven off VLAN-membership notifications.
   }
 
   func onContextUpdated(
@@ -266,13 +254,7 @@ extension MVRPApplication {
     contextIdentifier: MAPContextIdentifier,
     with context: MAPContext<P>
   ) async throws {
-    guard let bridge = controller?.bridge as? any MVRPAwareBridge<P>,
-          !bridge.hasLocalMVRPApplicant else { return }
-    try leave(
-      attributeType: MVRPAttributeType.vid.rawValue,
-      attributeValue: VLAN(contextIdentifier: contextIdentifier),
-      for: MAPBaseSpanningTreeContext
-    )
+    // See onContextAdded: MVRP does not proactively declare or withdraw the base-context VID.
   }
 }
 

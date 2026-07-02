@@ -219,7 +219,6 @@ struct MockBridge: MRP.Bridge, CustomStringConvertible {
   var rxPackets = AsyncEmptySequence<(Int, IEEE802Packet)>().eraseToAnyAsyncSequence()
   var ports: Set<MockPort> = [MockPort(id: 0)]
   var recorder = MRPTestRecorder()
-  var hasLocalMVRPApplicant = false
 
   init() {}
 
@@ -2245,8 +2244,7 @@ final class MRPTests: XCTestCase {
     _ mmrp: MMRPApplication<MockPort>,
     port: Int,
     value: some Value,
-    event: AttributeEvent,
-    fromLocal: Bool = false
+    event: AttributeEvent
   ) async throws {
     let message = Message(
       attributeType: MMRPAttributeType.mac.rawValue,
@@ -2257,9 +2255,7 @@ final class MRPTests: XCTestCase {
         applicationEvents: nil
       )]
     )
-    let source: EUI48 = fromLocal
-      ? [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
-      : [0x02, 0x00, 0x00, 0x00, 0x00, 0x0A]
+    let source: EUI48 = [0x02, 0x00, 0x00, 0x00, 0x00, 0x0A]
     try await mmrp.rx(
       pdu: MRPDU(protocolVersion: 0, messages: [message]),
       for: MAPBaseSpanningTreeContext,
@@ -2300,13 +2296,12 @@ final class MRPTests: XCTestCase {
     _ = controller
   }
 
-  private func _makeMVRP(portIDs: [Int], exclusions: Set<VLAN> = [], localApplicant: Bool = false)
+  private func _makeMVRP(portIDs: [Int], exclusions: Set<VLAN> = [])
     async throws -> (MRPController<MockPort>, MVRPApplication<MockPort>, MRPTestRecorder)
   {
     let recorder = MRPTestRecorder()
     let ports = Set(portIDs.map { MockPort(id: $0) })
-    var bridge = MockBridge(ports: ports, recorder: recorder)
-    bridge.hasLocalMVRPApplicant = localApplicant
+    let bridge = MockBridge(ports: ports, recorder: recorder)
     let controller = try await MRPController(
       bridge: bridge,
       logger: Logger(label: "com.padl.MRPTests.mvrp")
@@ -2320,8 +2315,7 @@ final class MRPTests: XCTestCase {
     _ mvrp: MVRPApplication<MockPort>,
     port: Int,
     vid: UInt16,
-    event: AttributeEvent,
-    fromLocal: Bool = false
+    event: AttributeEvent
   ) async throws {
     let message = Message(
       attributeType: MVRPAttributeType.vid.rawValue,
@@ -2332,9 +2326,7 @@ final class MRPTests: XCTestCase {
         applicationEvents: nil
       )]
     )
-    let source: EUI48 = fromLocal
-      ? [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
-      : [0x02, 0x00, 0x00, 0x00, 0x00, 0x0A]
+    let source: EUI48 = [0x02, 0x00, 0x00, 0x00, 0x00, 0x0A]
     try await mvrp.rx(
       pdu: MRPDU(protocolVersion: 0, messages: [message]),
       for: MAPBaseSpanningTreeContext,
@@ -2370,22 +2362,6 @@ final class MRPTests: XCTestCase {
     XCTAssertTrue(registered200, "non-excluded VLAN still registers")
     let registered100 = await recorder.vlanRegister.contains { $0.vlan.vid == 100 }
     XCTAssertFalse(registered100, "excluded VLAN must not register")
-    _ = controller
-  }
-
-  // With a local (in-kernel) MVRP applicant present, a locally-sourced declaration
-  // is suppressed, but a peer declaration still registers.
-  func testMVRPLocalApplicantSuppressesLocalSourceOnly() async throws {
-    let (controller, mvrp, recorder) = try await _makeMVRP(portIDs: [0], localApplicant: true)
-    try await _driveMVRP(mvrp, port: 0, vid: 300, event: .JoinIn, fromLocal: true)
-    try await _driveMVRP(mvrp, port: 0, vid: 400, event: .JoinIn, fromLocal: false)
-
-    let registered400 = await _waitFor {
-      await recorder.vlanRegister.contains { $0.vlan.vid == 400 }
-    }
-    XCTAssertTrue(registered400, "peer-sourced VLAN still registers")
-    let registered300 = await recorder.vlanRegister.contains { $0.vlan.vid == 300 }
-    XCTAssertFalse(registered300, "locally-sourced VLAN suppressed when a local applicant exists")
     _ = controller
   }
 
