@@ -51,6 +51,9 @@ final class LeaveAll: Sendable, CustomStringConvertible {
   var state: State { _state.withLock { $0 } }
 
   func startLeaveAllTimer() {
+    // leaveAllTime == 0 disables periodic LeaveAll (10.7.4.3); skip like init(), else
+    // _randomizeLeaveAllTime draws Double.random(in: 0..<0), an empty range that traps.
+    guard _leaveAllTime != Duration.zero else { return }
     let randomizedInterval = _randomizeLeaveAllTime(_leaveAllTime)
     _leaveAllTimer.start(interval: randomizedInterval)
   }
