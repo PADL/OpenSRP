@@ -471,7 +471,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
   }
 
   func deregister(application: some Application<P>) async throws {
-    guard _applications[application.etherType] == nil
+    guard _applications[application.etherType] != nil
     else { throw MRPError.unknownApplication }
     _applications.removeValue(forKey: application.etherType)
     try? await bridge.deregister(

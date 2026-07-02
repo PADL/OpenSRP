@@ -2259,6 +2259,35 @@ final class MRPTests: XCTestCase {
     _ = controller
   }
 
+  // leaveAllTime == 0 disables periodic LeaveAll; a .startLeaveAllTimer action (peer LeaveAll,
+  // Flush) must be a no-op, not trap on Double.random(in: 0..<0).
+  func testDisabledLeaveAllTimerDoesNotTrap() {
+    let leaveAll = LeaveAll(interval: .zero, onLeaveAllTimerExpired: {})
+    leaveAll.startLeaveAllTimer() // pre-fix: empty-range random traps here
+    let (action, _) = leaveAll.action(for: .rLA)
+    guard case .startLeaveAllTimer? = action else {
+      return XCTFail("rLA must yield .startLeaveAllTimer")
+    }
+    leaveAll.startLeaveAllTimer() // applying the action must also not trap
+  }
+
+  // deregister must succeed for a registered application (regression: an inverted guard threw
+  // unknownApplication for registered apps) and still reject an absent one.
+  func testDeregisterApplicationSucceedsForRegisteredApp() async throws {
+    let recorder = MRPTestRecorder()
+    let bridge = MockBridge(ports: [MockPort(id: 0)], recorder: recorder)
+    let controller = try await MRPController(
+      bridge: bridge,
+      logger: Logger(label: "com.padl.MRPTests.dereg")
+    )
+    let mvrp = try await MVRPApplication(controller: controller) // auto-registers
+    try await controller.deregister(application: mvrp) // must not throw
+    do {
+      try await controller.deregister(application: mvrp)
+      XCTFail("deregistering an absent application must throw unknownApplication")
+    } catch MRPError.unknownApplication {}
+  }
+
   // attributeLength shorter than the fixed firstValue over-reads into the packed
   // events; longer leaves stray octets. Both must be rejected (the new guard).
   func testMSRPRejectsMismatchedAttributeLength() async throws {
