@@ -467,11 +467,16 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
     func chains(after previous: _AttributeValue<A>, to candidate: _AttributeValue<A>) -> Bool {
       guard coalesce else { return false }
       guard let expected = try? previous.value.makeValue(relativeTo: 1) else { return false }
+      // Cheap reject first: `==` is weaker than byte-equality (it may ignore wire fields), but it
+      // is still necessary for it -- unequal values can't have equal encodings -- so a `==` miss
+      // rules out coalescing without serializing. This keeps the common non-chaining case (most
+      // adjacent attributes) off the allocation path.
+      guard expected == candidate.value else { return false }
       // The receiver reconstructs value[i] as FirstValue.makeValue(relativeTo: i), so two values
       // may only coalesce if that reconstruction is byte-identical to the real one -- not merely
       // `==`, whose per-type definition can ignore fields that still ride on the wire (e.g. a
       // talker's AccumulatedLatency, 35.2.2.8.6), which would otherwise be silently rewritten to
-      // the FirstValue's on the peer. Compare serialized encodings.
+      // the FirstValue's on the peer. Confirm with the serialized encodings.
       guard let expectedBytes = try? expected.serialized(),
             let candidateBytes = try? candidate.value.serialized() else { return false }
       return expectedBytes == candidateBytes
