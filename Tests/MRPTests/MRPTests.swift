@@ -2857,6 +2857,47 @@ final class MRPTests: XCTestCase {
     _ = controller
   }
 
+  // 35.2.1.4: a port becomes an SRP domain boundary port for an SR class when a received Domain
+  // declares a different SRclassPriority than the port's own; a matching priority leaves it a
+  // core (non-boundary) port.
+  func testDomainPriorityMismatchMarksBoundaryPort() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0])
+    let port = MockPort(id: 0)
+
+    // a received Domain indication is consumed locally and never propagated to MAP (it throws
+    // doNotPropagateAttribute); drive it directly and swallow that expected signal
+    func receiveDomain(priority: SRclassPriority) async throws {
+      do {
+        try await msrp.onJoinIndication(
+          contextIdentifier: MAPBaseSpanningTreeContext,
+          port: port,
+          attributeType: MSRPAttributeType.domain.rawValue,
+          attributeSubtype: nil,
+          attributeValue: MSRPDomainValue(
+            srClassID: .A, srClassPriority: priority, srClassVID: SR_PVID.vid
+          ),
+          isNew: true,
+          eventSource: .peer
+        )
+      } catch MRPError.doNotPropagateAttribute {}
+    }
+
+    // class A's local priority is CA (DefaultSRClassPriorityMap): a peer declaring CA matches,
+    // so the port stays a core (non-boundary) port for class A
+    try await receiveDomain(priority: .CA)
+    let matched = try await msrp.withPortState(port: port) { $0.srpDomainBoundaryPort[.A] }
+    XCTAssertEqual(matched, false, "a matching SRclassPriority must leave the port a core port")
+
+    // a peer declaring EE (class B's priority) on class A mismatches CA -> boundary port
+    try await receiveDomain(priority: .EE)
+    let mismatched = try await msrp.withPortState(port: port) { $0.srpDomainBoundaryPort[.A] }
+    XCTAssertEqual(
+      mismatched, true,
+      "a mismatched SRclassPriority must mark the port an SRP domain boundary port"
+    )
+    _ = controller
+  }
+
   // The Domain attribute opts out of coalescing (some peers don't expand a multi-value Domain
   // vector): each SR class must be emitted as its own single-value vector, not coalesced B->A.
   func testDomainVectorsAreNotCoalesced() async throws {
