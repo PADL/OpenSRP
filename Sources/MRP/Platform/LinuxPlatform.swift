@@ -776,7 +776,18 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
           for try await packet in try await filterRegistration._rxPackets(port: port) {
             await _rxPacketsChannel.send((port.id, packet))
           }
-        } catch Errno.interrupted {} // restart on interrupted system call
+        } catch Errno.interrupted {
+          // restart on interrupted system call
+        } catch {
+          // a port link flap makes io_uring cancel the in-flight recv (ECANCELED); rebuild
+          // the socket rather than let reception die permanently. a short backoff only
+          // caps a pathological immediate re-throw (the normal rebuild blocks in recv).
+          guard !Task.isCancelled else { break }
+          _logger.debug(
+            "LinuxBridge: rebuilding link-local RX for \(port) \(filterRegistration) after \(error)"
+          )
+          try? await Task.sleep(for: .milliseconds(1), clock: .continuous)
+        }
       } while !Task.isCancelled
     }
   }
