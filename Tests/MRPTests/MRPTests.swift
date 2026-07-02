@@ -2683,6 +2683,54 @@ final class MRPTests: XCTestCase {
     _ = controller
   }
 
+  // The mirror of registration: administratively withdrawing a static VLAN clears its Fixed
+  // Registrar on that port (not merely the MAP declaration). Once the last registration is
+  // gone, the propagated declaration on the other port is withdrawn too.
+  func testMVRPStaticVLANDeregisterClearsRegistrar() async throws {
+    let (controller, mvrp, _) = try await _makeMVRP(portIDs: [0, 1])
+    let before = await _isVLANRegistered(mvrp, vid: 2, port: 0)
+    XCTAssertTrue(before, "static VID 2 must start Registration Fixed")
+
+    try await mvrp.administrativelyDeregister(
+      attributeType: MVRPAttributeType.vid.rawValue,
+      attributeValue: VLAN(vid: 2),
+      from: MockPort(id: 0),
+      for: MAPBaseSpanningTreeContext
+    )
+    let cleared0 = await _isVLANRegistered(mvrp, vid: 2, port: 0)
+    XCTAssertFalse(cleared0, "deregistration must clear the Fixed Registrar on port 0")
+    // port 1 still holds a registration, so port 0's declaration (backed by port 1) survives
+    let stillDeclared = await _isVLANDeclared(mvrp, vid: 2, port: 0)
+    XCTAssertTrue(stillDeclared, "port 1's registration must still back port 0's declaration")
+
+    try await mvrp.administrativelyDeregister(
+      attributeType: MVRPAttributeType.vid.rawValue,
+      attributeValue: VLAN(vid: 2),
+      from: MockPort(id: 1),
+      for: MAPBaseSpanningTreeContext
+    )
+    let cleared1 = await _isVLANRegistered(mvrp, vid: 2, port: 1)
+    XCTAssertFalse(cleared1, "deregistration must clear the Fixed Registrar on port 1")
+    let withdrawn = await _waitFor { await !_isVLANDeclared(mvrp, vid: 2, port: 0) }
+    XCTAssertTrue(withdrawn, "with no registration left, VID 2 must be withdrawn everywhere")
+    _ = controller
+  }
+
+  // The runtime removal path (operator `bridge vlan del`): recomputing the static set without
+  // a previously-static VID deregisters it -- the mirror of the add in _updateStaticVLANs.
+  func testMVRPStaticVLANRemovedAtRuntimeDeregisters() async throws {
+    let (controller, mvrp, _) = try await _makeMVRP(portIDs: [0, 1], vlans: [2, 100])
+    let registered = await _isVLANRegistered(mvrp, vid: 100, port: 0)
+    XCTAssertTrue(registered, "static VID 100 must start Registration Fixed")
+
+    // VID 100 removed from the kernel VLAN DB on port 0
+    await mvrp._updateStaticVLANs(port: MockPort(id: 0, vlans: [2]))
+
+    let cleared = await _waitFor { await !_isVLANRegistered(mvrp, vid: 100, port: 0) }
+    XCTAssertTrue(cleared, "removing VID 100 from the VLAN DB must clear its Fixed Registrar")
+    _ = controller
+  }
+
   // A VLAN carrying BRIDGE_VLAN_INFO_DYNAMIC (port.dynamicVlans) is a peer registration
   // left over from a previous run: it must not be captured as static at startup.
   func testMVRPKernelDynamicVLANNotCapturedAsStatic() async throws {
