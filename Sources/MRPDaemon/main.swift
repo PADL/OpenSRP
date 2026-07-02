@@ -140,8 +140,11 @@ private final class MRPDaemon: AsyncParsableCommand {
   @Option(name: .long, help: "MRP LeaveAll time interval")
   var leaveAllTime: Duration = LeaveAllTime
 
-  @Option(name: .long, help: "MRP Periodic TX time interval")
-  var periodicTime: Duration = .seconds(1)
+  // disabled by default: an Avnu ProAV Bridge shall disable the Periodic Transmission
+  // state machine (Avnu ProAV §11, per the note at the end of 802.1Q 5.4.4); LeaveAll
+  // provides the periodic refresh
+  @Option(name: .long, help: "MRP Periodic TX time interval (0 = disabled, the default)")
+  var periodicTime: Duration = .zero
 
   #if RestAPI
   @Option(name: .shortAndLong, help: "REST HTTP server port")
