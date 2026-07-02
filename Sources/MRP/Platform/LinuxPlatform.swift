@@ -1092,24 +1092,12 @@ extension LinuxBridge: MVRPAwareBridge {
     _vlanRegistrationStream.eraseToAnyAsyncSequence()
   }
 
-  func register(vlan: VLAN, on port: P) async throws {
-    try await port._add(vlan: vlan, dynamic: true)
+  func register(vlan: VLAN, on port: P, static isStatic: Bool) async throws {
+    try await port._add(vlan: vlan, dynamic: !isStatic)
   }
 
   func deregister(vlan: VLAN, from port: P) async throws {
     try await port._remove(vlan: vlan)
-  }
-
-  // fail-open per VLAN: an entry that already exists (or cannot be added) must not
-  // prevent the remaining VLANs from being configured
-  func add(staticVlans: Set<VLAN>, on port: P) async throws {
-    for vlan in staticVlans.sorted(by: { $0.vid < $1.vid }) {
-      do {
-        try await port._add(vlan: vlan, dynamic: false)
-      } catch {
-        _logger.info("LinuxBridge: failed to add static VLAN \(vlan.vid) on \(port): \(error)")
-      }
-    }
   }
 }
 

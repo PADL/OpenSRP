@@ -417,18 +417,16 @@ extension MockBridge: MVRPAwareBridge {
     AsyncEmptySequence<VLANRegistrationNotification<P>>().eraseToAnyAsyncSequence()
   }
 
-  func register(vlan: VLAN, on port: P) async throws {
-    await recorder.recordVLANRegister(vlan: vlan, port: port.id)
+  func register(vlan: VLAN, on port: P, static isStatic: Bool) async throws {
+    if isStatic {
+      await recorder.recordStaticVlanAdd(vlan: vlan, port: port.id)
+    } else {
+      await recorder.recordVLANRegister(vlan: vlan, port: port.id)
+    }
   }
 
   func deregister(vlan: VLAN, from port: P) async throws {
     await recorder.recordVLANDeregister(vlan: vlan, port: port.id)
-  }
-
-  func add(staticVlans: Set<VLAN>, on port: P) async throws {
-    for vlan in staticVlans {
-      await recorder.recordStaticVlanAdd(vlan: vlan, port: port.id)
-    }
   }
 }
 

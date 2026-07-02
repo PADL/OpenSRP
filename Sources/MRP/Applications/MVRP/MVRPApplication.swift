@@ -29,12 +29,10 @@ protocol MVRPAwareBridge<P>: Bridge where P: Port {
   // fires when a port's statically-configured VLAN membership changes
   var vlanRegistrationNotifications: AnyAsyncSequence<VLANRegistrationNotification<P>> { get }
 
-  // dynamic VLAN registration entries, reflecting peer MVRP registrations
-  func register(vlan: VLAN, on port: P) async throws
+  // VLAN registration entries: dynamic ones reflect peer MVRP registrations; static ones
+  // are administratively configured (e.g. the SR class VLANs) and held Registration Fixed
+  func register(vlan: VLAN, on port: P, static: Bool) async throws
   func deregister(vlan: VLAN, from port: P) async throws
-
-  // static VLAN registration entries, administratively configured (e.g. the SR class VLANs)
-  func add(staticVlans: Set<VLAN>, on port: P) async throws
 }
 
 public actor MVRPApplication<P: Port>: BaseApplication, BaseApplicationEventObserver, Sendable,
@@ -240,7 +238,7 @@ extension MVRPApplication {
         )
       // TODO: flush FDB entries following a topology change, if isNew is true
       _dynamicVIDs[port.id, default: []].insert(vlan)
-      try await bridge.register(vlan: vlan, on: port)
+      try await bridge.register(vlan: vlan, on: port, static: false)
     }
   }
 
@@ -293,11 +291,15 @@ extension MVRPApplication {
     if !_configuredStaticVlans.isEmpty,
        let bridge = controller?.bridge as? any MVRPAwareBridge<P>
     {
+      // fail-open per VLAN: an entry that already exists (or cannot be added) must not
+      // prevent the remaining VLANs from being configured
       for port in context {
-        do {
-          try await bridge.add(staticVlans: _configuredStaticVlans, on: port)
-        } catch {
-          _logger.error("MVRP: failed to configure static VLANs on port \(port): \(error)")
+        for vlan in _configuredStaticVlans.sorted(by: { $0.vid < $1.vid }) {
+          do {
+            try await bridge.register(vlan: vlan, on: port, static: true)
+          } catch {
+            _logger.error("MVRP: failed to configure static VLAN \(vlan.vid) on port \(port): \(error)")
+          }
         }
       }
     }
