@@ -1454,7 +1454,8 @@ extension MSRPApplication {
       }
       let ingress = try findParticipant(for: contextIdentifier, port: port)
       // 35.2.2.8: MSRP does not support changing a FirstValue field of a registered StreamID;
-      // reject the change and keep the existing valid registration rather than silently dropping it.
+      // reject the change and keep the existing valid registration rather than silently dropping
+      // it.
       // Scope to the same declaration type: an Advertise<->Failed transition is not a FirstValue
       // change and is handled by the mutual-exclusion deregistration below.
       if let existing = ingress.findAttribute(
