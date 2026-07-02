@@ -18,10 +18,35 @@ import BinaryParsing
 import IEEE802
 import Logging
 
-public enum AdministrativeControl {
-  case normalParticipant // the state machine participates normally in MRP exchanges
-  case newOnlyParticipant // the state machine sends only New MRP messages
-  case nonParticipant // the state machine does not send any MRP messages
+// 10.7.8 Registrar Administrative Control: how the Registrar records declarations, independent of
+// what the Applicant declares.
+public enum RegistrarAdministrativeControl: Sendable {
+  case normalRegistration // register/deregister normally from received messages
+  case registrationFixed // Registrar held IN regardless of received messages (New still propagated)
+  case registrationForbidden // Registrar held MT: no registration
+}
+
+// 10.7.7 Applicant Administrative Control (plus the New-Only mode, Table 10-3 fn 12): how the
+// Applicant declares, independent of what the Registrar records.
+public enum ApplicantAdministrativeControl: Sendable {
+  case normalParticipant // declares normally in MRP exchanges
+  case newOnlyParticipant // declares, but a received LeaveAll returns it to VO, not LO (fn 12)
+}
+
+// The Registrar and Applicant controls are orthogonal (10.7.7 vs 10.7.8): keep them as separate
+// fields rather than one conflated value. Both default to normal; no application overrides them
+// today, so this is a latent capability wired for correctness.
+public struct AdministrativeControl: Sendable {
+  public var registrar: RegistrarAdministrativeControl
+  public var applicant: ApplicantAdministrativeControl
+
+  public init(
+    registrar: RegistrarAdministrativeControl = .normalRegistration,
+    applicant: ApplicantAdministrativeControl = .normalParticipant
+  ) {
+    self.registrar = registrar
+    self.applicant = applicant
+  }
 }
 
 public typealias AttributeSubtype = UInt8

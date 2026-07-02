@@ -589,7 +589,7 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
   public nonisolated func administrativeControl(for attributeType: AttributeType) throws
     -> AdministrativeControl
   {
-    .normalParticipant
+    AdministrativeControl()
   }
 
   // 35.1.3.1: block a Talker Declaration until its SR-class VLAN is present on

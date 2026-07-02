@@ -68,7 +68,6 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
   // applications, so the recompute never takes an actor transition.
   private var _stpPortStatus = [P.ID: STPPortStatus]()
   private var _periodicTimer: Timer?
-  private var _administrativeControl = AdministrativeControl.normalParticipant
   private var _taskGroup: ThrowingTaskGroup<(), Error>?
   private let _rxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)>
   private let _portExclusions: Set<String>
