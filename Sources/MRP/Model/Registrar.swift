@@ -39,14 +39,28 @@ final class Registrar: Sendable, CustomStringConvertible {
   private let _leaveTime: Duration
   private let _state = Mutex(State.MT)
   private let _leavetimer: Timer
+  // Registration Fixed (New ignored) (10.7.2): an administrative registration (e.g.
+  // a Static VLAN Registration Entry, 8.8.2) that holds the Registrar IN and
+  // ignores all MRP messages. Immutable: transitions replace the attribute
+  // (transplanting its Applicant).
+  let isAdministrativelyRegistered: Bool
 
-  init(leaveTime: Duration = LeaveTime, onLeaveTimerExpired: @escaping Timer.Action) {
+  init(
+    leaveTime: Duration = LeaveTime,
+    administrativelyRegistered: Bool = false,
+    onLeaveTimerExpired: @escaping Timer.Action
+  ) {
     _leaveTime = leaveTime
+    isAdministrativelyRegistered = administrativelyRegistered
     _leavetimer = Timer(label: "leavetimer", onExpiry: onLeaveTimerExpired)
   }
 
   // note: this function has side effects, it will start/stop leavetimer
   func action(for event: ProtocolEvent, flags: StateMachineHandlerFlags) -> Action? {
+    // Registration Fixed (New ignored): the Registrar ignores all MRP messages and
+    // remains IN (10.7.2), so no action and no leavetimer changes.
+    guard !isAdministrativelyRegistered else { return nil }
+
     enum LeaveTimerAction { case none; case start; case stop }
 
     let (leaveTimerAction, stateAction) = _state.withLock { state in
@@ -79,7 +93,9 @@ final class Registrar: Sendable, CustomStringConvertible {
     return stateAction
   }
 
-  var state: State { _state.withLock { $0 } }
+  var state: State {
+    isAdministrativelyRegistered ? .IN : _state.withLock { $0 }
+  }
 
   private func _startLeaveTimer() {
     _leavetimer.start(interval: _leaveTime)

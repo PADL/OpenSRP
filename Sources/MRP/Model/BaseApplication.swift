@@ -289,8 +289,19 @@ extension BaseApplication {
     eventSource: EventSource
   ) throws {
     guard shouldPropagate(eventSource: eventSource) else { return }
+    let participants = findParticipants(for: contextIdentifier)
     try apply(for: contextIdentifier) { participant in
       guard participant.port != port else { return }
+      // 10.3 b): propagate a Leave to a port if and only if no registration for the
+      // attribute now exists on any other port excluding it
+      let isRegisteredElsewhere = participants.contains {
+        $0.port != participant.port && $0.isRegisteredUnchecked(
+          attributeType: attributeType,
+          matching: .matchEqual(attributeValue),
+          isolation: self
+        )
+      }
+      guard !isRegisteredElsewhere else { return }
       try participant.leave(
         attributeType: attributeType,
         attributeSubtype: attributeSubtype,
@@ -298,6 +309,57 @@ extension BaseApplication {
         eventSource: .map
       )
     }
+  }
+
+  // Administratively register an attribute on a port (Registration Fixed, 10.7.2), e.g.
+  // realizing a Static VLAN Registration Entry (8.8.2), and propagate it via MAP (10.3 a)
+  // to the other ports. onJoinIndication is not invoked: the registration is already
+  // present administratively (e.g. the kernel bridge VLAN), so only propagation is needed.
+  func administrativelyRegister(
+    attributeType: AttributeType,
+    attributeValue: some Value,
+    isNew: Bool = false,
+    on port: P,
+    for contextIdentifier: MAPContextIdentifier
+  ) throws {
+    let participant = try findParticipant(for: contextIdentifier, port: port)
+    try participant.administrativelyRegister(
+      attributeType: attributeType,
+      attributeValue: attributeValue
+    )
+    try _propagateJoinIndicated(
+      contextIdentifier: contextIdentifier,
+      port: port,
+      attributeType: attributeType,
+      attributeSubtype: nil,
+      attributeValue: attributeValue,
+      isNew: isNew,
+      eventSource: .application
+    )
+  }
+
+  // Clear an administrative registration and withdraw it via MAP (10.3 b). Any underlying
+  // dynamic registration is revealed and times out normally (and, being still registered,
+  // suppresses the propagated withdrawal until it does).
+  func administrativelyDeregister(
+    attributeType: AttributeType,
+    attributeValue: some Value,
+    from port: P,
+    for contextIdentifier: MAPContextIdentifier
+  ) throws {
+    let participant = try findParticipant(for: contextIdentifier, port: port)
+    try participant.administrativelyDeregister(
+      attributeType: attributeType,
+      attributeValue: attributeValue
+    )
+    try _propagateLeaveIndicated(
+      contextIdentifier: contextIdentifier,
+      port: port,
+      attributeType: attributeType,
+      attributeSubtype: nil,
+      attributeValue: attributeValue,
+      eventSource: .application
+    )
   }
 
   public func leaveIndicated(

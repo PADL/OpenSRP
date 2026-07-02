@@ -341,13 +341,19 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
     attributeType: AttributeType,
     attributeSubtype: AttributeSubtype?,
     matching filter: AttributeValueFilter,
-    createIfMissing: Bool
+    createIfMissing: Bool,
+    administrativelyRegistered: Bool = false
   ) throws -> _AttributeValue<A> {
     _assertIsolatedToApplication()
 
     if let attributeValue = _attributes[attributeType]?
       .first(where: { $0.matches(attributeType: attributeType, matching: filter) })
     {
+      // an existing (dynamically created) attribute transitions to Registration Fixed:
+      // the administrative registration is immutable, so replace the attribute
+      if administrativelyRegistered, !attributeValue.isAdministrativelyRegistered {
+        return _replaceAttribute(attributeValue, administrativelyRegistered: true)
+      }
       return attributeValue
     }
 
@@ -363,7 +369,8 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
       participant: self,
       type: attributeType,
       subtype: attributeSubtype,
-      value: filterValue
+      value: filterValue,
+      administrativelyRegistered: administrativelyRegistered
     )
     if let index = _attributes.index(forKey: attributeType) {
       _attributes.values[index].insert(attributeValue)
@@ -371,6 +378,33 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
       _attributes[attributeType] = [attributeValue]
     }
     return attributeValue
+  }
+
+  // Replace an attribute to change its (immutable) Registrar administrative registration,
+  // transplanting the live Applicant so declared state is preserved. The old Registrar's
+  // leavetimer is stopped by its deinit; any underlying dynamic registration is discarded
+  // (peers re-Join it within a LeaveAll cycle).
+  private func _replaceAttribute(
+    _ attribute: _AttributeValue<A>,
+    administrativelyRegistered: Bool
+  ) -> _AttributeValue<A> {
+    _assertIsolatedToApplication()
+
+    _gcAttributeValue(attribute)
+    let replacement = _AttributeValue(
+      participant: self,
+      type: attribute.attributeType,
+      subtype: attribute.attributeSubtype,
+      value: attribute.unwrappedValue,
+      applicant: attribute.applicant,
+      administrativelyRegistered: administrativelyRegistered
+    )
+    if let index = _attributes.index(forKey: replacement.attributeType) {
+      _attributes.values[index].insert(replacement)
+    } else {
+      _attributes[replacement.attributeType] = [replacement]
+    }
+    return replacement
   }
 
   private func _findRegisteredAttributes(
@@ -868,6 +902,41 @@ public extension Participant {
     try _apply(protocolEvent: .periodic, eventSource: .periodicTimer)
     // timer is restarted by the caller
   }
+
+  // Administratively register an attribute (Registration Fixed, 10.7.2), e.g. realizing a
+  // Static VLAN Registration Entry (8.8.2): the Registrar is held IN and ignores MRP messages.
+  // MAP propagation to other ports is driven by the application, not here.
+  func administrativelyRegister(
+    attributeType: AttributeType,
+    attributeValue: some Value
+  ) throws {
+    _ = try _findOrCreateAttribute(
+      attributeType: attributeType,
+      attributeSubtype: nil,
+      matching: .matchEqual(attributeValue),
+      createIfMissing: true,
+      administrativelyRegistered: true
+    )
+  }
+
+  // Clear an administrative registration by replacing the attribute (the registration is
+  // immutable), preserving the Applicant. Per the Avnu ProAV clarification of 10.7.2, on
+  // return to Normal Registration the state machines act as though rLv! occurred; an idle
+  // attribute is then GC'd.
+  func administrativelyDeregister(
+    attributeType: AttributeType,
+    attributeValue: some Value
+  ) throws {
+    let attribute = try _findOrCreateAttribute(
+      attributeType: attributeType,
+      attributeSubtype: nil,
+      matching: .matchEqual(attributeValue),
+      createIfMissing: false
+    )
+    guard attribute.isAdministrativelyRegistered else { return }
+    let replacement = _replaceAttribute(attribute, administrativelyRegistered: false)
+    try _handleAttributeValue(replacement, protocolEvent: .rLv, eventSource: .application)
+  }
 }
 
 // MARK: - for use by REST APIs
@@ -925,6 +994,19 @@ extension Participant {
       isolation: application
     )
   }
+
+  // synchronous registration check used by MAP leave propagation (10.3 b)
+  func isRegisteredUnchecked(
+    attributeType: AttributeType,
+    matching filter: AttributeValueFilter,
+    isolation: isolated A
+  ) -> Bool {
+    _assertIsolatedToApplication()
+
+    return (_attributes[attributeType] ?? []).contains {
+      $0.matches(attributeType: attributeType, matching: filter) && $0.isRegistered
+    }
+  }
 }
 
 private typealias ParticipantApplyFunction<A: Application> =
@@ -948,7 +1030,7 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
   private let _participant: Weak<P>
   private let _attributeSubtype: Mutex<AttributeSubtype?>
 
-  private let applicant = Applicant() // A per-Attribute Applicant state machine (10.7.7)
+  fileprivate let applicant: Applicant // A per-Attribute Applicant state machine (10.7.7)
   // note registrar is not mutated outside init() so it does not need a mutex
   private nonisolated(unsafe) var registrar: Registrar? // A per-Attribute Registrar state machine
   // (10.7.8)
@@ -988,6 +1070,10 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
     registrarState?.isRegistered ?? false
   }
 
+  fileprivate var isAdministrativelyRegistered: Bool {
+    registrar?.isAdministrativelyRegistered ?? false
+  }
+
   // Returns true if attribute can be garbage collected.
   // An attribute is safe to GC if:
   // - We are not running the Registrar state machine, OR the registrar state is MT (not registered)
@@ -1012,22 +1098,34 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
   ) {
     precondition(!(value.value is AnyValue))
     _participant = participant
+    applicant = Applicant()
     registrar = nil
     attributeType = type
     _attributeSubtype = .init(subtype)
     self.value = value
   }
 
-  init(participant: P, type: AttributeType, subtype: AttributeSubtype?, value: some Value) {
+  // applicant is injectable so that an attribute replaced to change its (immutable)
+  // Registrar administrative registration retains its live Applicant state
+  init(
+    participant: P,
+    type: AttributeType,
+    subtype: AttributeSubtype?,
+    value: some Value,
+    applicant: Applicant = Applicant(),
+    administrativelyRegistered: Bool = false
+  ) {
     precondition(!(value is AnyValue))
     _participant = Weak(participant)
+    self.applicant = applicant
     attributeType = type
     _attributeSubtype = .init(subtype)
     self.value = AnyValue(value)
     if participant._type != .applicantOnly {
-      registrar = Registrar(leaveTime: participant.controller!.timerConfiguration
-        .leaveTime)
-      { @Sendable [weak self] in
+      registrar = Registrar(
+        leaveTime: participant.controller!.timerConfiguration.leaveTime,
+        administrativelyRegistered: administrativelyRegistered
+      ) { @Sendable [weak self] in
         guard let self, let application = self.participant?.application else { return }
         try await _onLeaveTimerExpired(isolation: application)
       }

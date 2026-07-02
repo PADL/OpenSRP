@@ -420,12 +420,10 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
   }
 
   public var vlans: Set<VLAN> {
-    var vids = _vlans ?? []
-    // Merge VLANs learned from netlink notifications after the initial dump;
-    // _rtnl is a frozen snapshot and won't reflect later kernel-MVRP/manual adds.
-    if let live = _bridge?._portTaggedVLANs.withLock({ $0[id] }) {
-      vids.formUnion(live)
-    }
+    // Live VLANs: seeded from the AF_BRIDGE dump when the port is registered and kept
+    // current by RTM_NEWVLAN/DELVLAN, so runtime removals are reflected. Falls back to
+    // the frozen _rtnl snapshot before the bridge has seeded the live map.
+    let vids = _bridge?._portTaggedVLANs.withLock { $0[id] } ?? _vlans ?? []
     return Set(vids.map { VLAN(id: $0) })
   }
 
@@ -622,6 +620,11 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     } else if port._rtnl.master == _bridgeIndex {
       if case .new = linkMessage {
         portNotification = .added(port)
+        // seed the live VLAN map from the link's AF_BRIDGE info unless VLAN DB
+        // notifications have already populated it (they are the fresher source)
+        _portTaggedVLANs.withLock {
+          if $0[port.id] == nil { $0[port.id] = port._vlans ?? [] }
+        }
         if !_portExclusions.contains(port.name) {
           try _addLinkLocalRxTask(port: port)
         }
@@ -684,8 +687,9 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
       if isNew {
         map[vlandb.ifIndex, default: []].formUnion(taggedVids)
       } else {
+        // keep an empty set rather than removing the key: the key marks the port as
+        // seeded, so port.vlans must not fall back to the stale frozen snapshot
         map[vlandb.ifIndex]?.subtract(taggedVids)
-        if map[vlandb.ifIndex]?.isEmpty == true { map[vlandb.ifIndex] = nil }
       }
     }
     // Keep the per-port PVID live.
@@ -857,6 +861,11 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     let ports = try await _getMemberPorts()
     for port in ports {
       if let pvid = port._pvid { _portPVID.withLock { $0[port.id] = pvid } }
+      // seed the live VLAN map from the initial AF_BRIDGE dump so later RTM_DELVLAN
+      // removals are reflected (port.vlans prefers the live map once seeded)
+      _portTaggedVLANs.withLock {
+        if $0[port.id] == nil { $0[port.id] = port._vlans ?? [] }
+      }
       await _portNotificationChannel.send(.added(port))
       if !_portExclusions.contains(port.name) {
         try _addLinkLocalRxTask(port: port)

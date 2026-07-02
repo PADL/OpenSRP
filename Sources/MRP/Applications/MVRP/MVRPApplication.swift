@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2024 PADL Software Pty Ltd
+// Copyright (c) 2024-2026 PADL Software Pty Ltd
 //
 // Licensed under the Apache License, Version 2.0 (the License);
 // you may not use this file except in compliance with the License.
@@ -64,8 +64,13 @@ public actor MVRPApplication<P: Port>: BaseApplication, BaseApplicationEventObse
   var _participants: [MAPContextIdentifier: Set<Participant<MVRPApplication<P>>>] = [:]
   let _logger: Logger
   let _vlanExclusions: Set<VLAN>
-  // VIDs currently declared by us per port, so the update can compute the join/leave delta.
-  private var _declaredVIDs = [P.ID: Set<VLAN>]()
+  // statically-configured VIDs per port, captured when the port is added and held as
+  // Registration Fixed (8.8.2). The kernel VLAN table has no dynamic bit, so VLANs
+  // appearing after capture are NOT honoured as static: they may be our own dynamic
+  // (peer) registrations, which must never be promoted to Registration Fixed (doing so
+  // would ignore the peer's Leave and could loop propagation). Runtime removals ARE
+  // honoured; advertising a static VLAN added at runtime requires a daemon restart.
+  private var _staticVIDs = [P.ID: Set<VLAN>]()
   private var _vlanNotificationTask: Task<(), Error>?
 
   public init(controller: MRPController<P>, vlanExclusions: Set<VLAN> = []) async throws {
@@ -256,10 +261,23 @@ extension MVRPApplication {
     contextIdentifier: MAPContextIdentifier,
     with context: MAPContext<P>
   ) async throws {
-    // Declare each port's statically-configured VLANs now (later changes arrive via
-    // vlanRegistrationNotifications). Catches VLANs whose notification preceded the participant.
+    // register each port's statically-configured VLANs (8.8.2) and propagate them (10.3 a)
     for port in context {
-      _updateDeclaredVLANs(port: port)
+      _registerStaticVLANs(port: port)
+    }
+    // 10.3 d): the added ports have not declared attributes that other ports have
+    // registered, so re-propagate the other ports' static registrations to them
+    for (portID, vlans) in _staticVIDs where !context.contains(where: { $0.id == portID }) {
+      guard let controller, let port = try? await controller.port(with: portID)
+      else { continue }
+      for vlan in vlans {
+        try? administrativelyRegister(
+          attributeType: MVRPAttributeType.vid.rawValue,
+          attributeValue: vlan,
+          on: port,
+          for: MAPBaseSpanningTreeContext
+        )
+      }
     }
   }
 
@@ -272,10 +290,10 @@ extension MVRPApplication {
     contextIdentifier: MAPContextIdentifier,
     with context: MAPContext<P>
   ) async throws {
-    // Participants are torn down (and their declarations withdrawn) by the context removal; just
-    // drop our per-port tracking so a re-added port re-declares from scratch.
+    // Participants are torn down (and their attributes flushed) by the context removal; just
+    // drop our per-port tracking so a re-added port re-registers from scratch.
     for port in context {
-      _declaredVIDs[port.id] = nil
+      _staticVIDs[port.id] = nil
     }
   }
 
@@ -285,36 +303,50 @@ extension MVRPApplication {
   ) async throws where B.P == P {
     for try await notification in bridge.vlanRegistrationNotifications {
       guard let port = try? await controller.port(with: notification.portID) else { continue }
-      _updateDeclaredVLANs(port: port)
+      _pruneStaticVLANs(port: port)
     }
   }
 
-  // Declare the port's statically-configured tagged VLANs (minus PVID and operator exclusions,
-  // per _isVlanExcluded) and withdraw any we previously declared that are no longer members.
-  // Idempotent: re-reads live membership, so duplicate/out-of-order notifications are harmless.
-  private func _updateDeclaredVLANs(port: P) {
-    guard let participant = try? findParticipant(for: MAPBaseSpanningTreeContext, port: port)
-    else { return }
-    let desired = Set(port.vlans.filter { !_isVlanExcluded($0, port: port) })
-    let declared = _declaredVIDs[port.id] ?? []
-    for vlan in desired.subtracting(declared) {
-      _logger.debug("MVRP: declaring static VLAN \(vlan.vid) on port \(port)")
-      try? participant.join(
+  // Capture the port's statically-configured VLANs (the PVID, per 11.2.1.3, and tagged
+  // VLANs, minus operator exclusions) when the port is added, and hold them as Registration
+  // Fixed (8.8.2, 10.7.2), declaring them out the other ports via MAP. Capture happens once
+  // per port lifetime: see _staticVIDs for why later additions are not honoured.
+  private func _registerStaticVLANs(port: P) {
+    guard _staticVIDs[port.id] == nil else { return }
+    var desired = Set(port.vlans.filter { !_vlanExclusions.contains($0) })
+    if let pvid = port.pvid, !_vlanExclusions.contains(VLAN(vid: pvid)) {
+      desired.insert(VLAN(vid: pvid))
+    }
+    for vlan in desired {
+      _logger.debug("MVRP: statically registering VLAN \(vlan.vid) on port \(port)")
+      try? administrativelyRegister(
         attributeType: MVRPAttributeType.vid.rawValue,
         attributeValue: vlan,
-        isNew: false,
-        eventSource: .application
+        on: port,
+        for: MAPBaseSpanningTreeContext
       )
     }
-    for vlan in declared.subtracting(desired) {
+    _staticVIDs[port.id] = desired
+  }
+
+  // Withdraw static registrations whose VLANs were removed from the bridge at runtime.
+  // Additions are deliberately ignored (see _staticVIDs).
+  private func _pruneStaticVLANs(port: P) {
+    guard let current = _staticVIDs[port.id], !current.isEmpty else { return }
+    var live = Set(port.vlans)
+    if let pvid = port.pvid { live.insert(VLAN(vid: pvid)) }
+    let removed = current.subtracting(live)
+    guard !removed.isEmpty else { return }
+    for vlan in removed {
       _logger.debug("MVRP: withdrawing static VLAN \(vlan.vid) on port \(port)")
-      try? participant.leave(
+      try? administrativelyDeregister(
         attributeType: MVRPAttributeType.vid.rawValue,
         attributeValue: vlan,
-        eventSource: .application
+        from: port,
+        for: MAPBaseSpanningTreeContext
       )
     }
-    _declaredVIDs[port.id] = desired.isEmpty ? nil : desired
+    _staticVIDs[port.id] = current.subtracting(removed)
   }
 }
 

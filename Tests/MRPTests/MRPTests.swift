@@ -48,7 +48,8 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
 
   var description: String { name }
 
-  var pvid: UInt16? { nil }
+  let _pvid: UInt16?
+  var pvid: UInt16? { _pvid }
 
   var vlans: Set<MRP.VLAN> { [VLAN(vid: 2)] }
 
@@ -68,8 +69,9 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
 
   func setFlowControl(_ enabled: Bool) async throws {}
 
-  init(id: ID) {
+  init(id: ID, pvid: UInt16? = nil) {
     self.id = id
+    _pvid = pvid
   }
 
   static var now: ContinuousClock.Instant { .now }
@@ -173,6 +175,33 @@ private func _isVLANDeclared(
   return await participant.findAllAttributes(
     attributeType: MVRPAttributeType.vid.rawValue, matching: .matchAny
   ).contains { $0.isDeclared && ($0.attributeValue as? VLAN)?.vid == vid }
+}
+
+// is a VID registered (Registrar IN/LV, incl. Registration Fixed) by MVRP on a port?
+private func _isVLANRegistered(
+  _ mvrp: MVRPApplication<MockPort>, vid: UInt16, port: Int
+) async -> Bool {
+  guard let participant = try? await mvrp.findParticipant(port: MockPort(id: port))
+  else { return false }
+  return await participant.findAllAttributes(
+    attributeType: MVRPAttributeType.vid.rawValue, matching: .matchAny
+  ).contains {
+    ($0.registrarState?.isRegistered ?? false) && ($0.attributeValue as? VLAN)?.vid == vid
+  }
+}
+
+// is a group MAC declared (Applicant) by MMRP on a port?
+private func _isMMRPMacDeclared(
+  _ mmrp: MMRPApplication<MockPort>, mac: EUI48, port: Int
+) async -> Bool {
+  guard let participant = try? await mmrp.findParticipant(port: MockPort(id: port))
+  else { return false }
+  return await participant.findAllAttributes(
+    attributeType: MMRPAttributeType.mac.rawValue, matching: .matchAny
+  ).contains {
+    guard let value = $0.attributeValue as? MMRPMACValue else { return false }
+    return $0.isDeclared && _isEqualMacAddress(value.macAddress, mac)
+  }
 }
 
 // is an attribute of this type declared (Applicant) on a port for the stream?
@@ -2036,7 +2065,8 @@ final class MRPTests: XCTestCase {
 
   // A benign RTM_NEWLINK (e.g. a statistics refresh) re-presents the same port; the controller
   // must ignore it so it does not ReDeclare and churn peer registrations. A real change — STP
-  // state, or a carrier flap that flips isOperational — must still be processed. _checkTopologyChange
+  // state, or a carrier flap that flips isOperational — must still be processed.
+  // _checkTopologyChange
   // polls getStpPortStatus only on a processed update, so the query count is our proxy for that.
   func testNoOpPortUpdateIsIgnoredButRealChangesAreProcessed() async throws {
     let logger = Logger(label: "com.padl.MRPTests.portGuard")
@@ -2293,6 +2323,20 @@ final class MRPTests: XCTestCase {
     _ = controller
   }
 
+  // MAP propagates a peer registration on one port as declarations on the other
+  // ports (10.3 a) — guards the refcounted leave propagation against regressions.
+  func testMMRPJoinPropagatedToOtherPorts() async throws {
+    let (controller, mmrp, _) = try await _makeMMRP(portIDs: [0, 1])
+    let group: EUI48 = [0x01, 0x00, 0x5E, 0x00, 0x00, 0x03]
+    try await _driveMMRP(mmrp, port: 0, value: MMRPMACValue(macAddress: group), event: .JoinIn)
+
+    let declared = await _waitFor { await _isMMRPMacDeclared(mmrp, mac: group, port: 1) }
+    XCTAssertTrue(declared, "a registration on port 0 must be declared on port 1 via MAP")
+    let echoed = await _isMMRPMacDeclared(mmrp, mac: group, port: 0)
+    XCTAssertFalse(echoed, "MAP must not echo the declaration back to the registering port")
+    _ = controller
+  }
+
   // After a registered group is declared Leave, the leave timer expiry
   // deregisters it from the FDB.
   func testMMRPLeaveIndicationDeregistersGroupAddress() async throws {
@@ -2311,11 +2355,11 @@ final class MRPTests: XCTestCase {
     _ = controller
   }
 
-  private func _makeMVRP(portIDs: [Int], exclusions: Set<VLAN> = [])
+  private func _makeMVRP(portIDs: [Int], exclusions: Set<VLAN> = [], pvid: UInt16? = nil)
     async throws -> (MRPController<MockPort>, MVRPApplication<MockPort>, MRPTestRecorder)
   {
     let recorder = MRPTestRecorder()
-    let ports = Set(portIDs.map { MockPort(id: $0) })
+    let ports = Set(portIDs.map { MockPort(id: $0, pvid: pvid) })
     let bridge = MockBridge(ports: ports, recorder: recorder)
     let controller = try await MRPController(
       bridge: bridge,
@@ -2380,20 +2424,90 @@ final class MRPTests: XCTestCase {
     _ = controller
   }
 
-  // On startup MVRP declares each port's statically-configured VLANs (MockPort.vlans = {2}),
-  // so peers learn the bridge's membership without waiting for an inbound declaration.
-  func testMVRPDeclaresStaticVLANs() async throws {
-    let (controller, mvrp, _) = try await _makeMVRP(portIDs: [0])
-    let declared = await _isVLANDeclared(mvrp, vid: 2, port: 0)
-    XCTAssertTrue(declared, "statically-configured VID 2 must be declared on startup")
+  // A statically-configured VLAN (8.8.2, MockPort.vlans = {2}) is held Registration Fixed
+  // on its member port and declared out the other ports via MAP (10.3 a).
+  func testMVRPStaticVLANRegisteredFixedAndPropagated() async throws {
+    let (controller, mvrp, _) = try await _makeMVRP(portIDs: [0, 1])
+    let registered = await _isVLANRegistered(mvrp, vid: 2, port: 0)
+    XCTAssertTrue(registered, "static VID 2 must be Registration Fixed on its member port")
+    let declared0 = await _isVLANDeclared(mvrp, vid: 2, port: 0)
+    let declared1 = await _isVLANDeclared(mvrp, vid: 2, port: 1)
+    XCTAssertTrue(declared0, "VID 2 (static on port 1) must be declared on port 0")
+    XCTAssertTrue(declared1, "VID 2 (static on port 0) must be declared on port 1")
     _ = controller
   }
 
-  // A statically-configured VLAN in the exclusion set is not declared.
-  func testMVRPExcludedStaticVLANNotDeclared() async throws {
-    let (controller, mvrp, _) = try await _makeMVRP(portIDs: [0], exclusions: [VLAN(vid: 2)])
+  // A single-port static VLAN is registered but not echoed back out its own port:
+  // MAP propagates registrations to the *other* ports only.
+  func testMVRPStaticVLANSinglePortNotEchoed() async throws {
+    let (controller, mvrp, _) = try await _makeMVRP(portIDs: [0])
+    let registered = await _isVLANRegistered(mvrp, vid: 2, port: 0)
+    XCTAssertTrue(registered, "static VID 2 must be Registration Fixed on its member port")
     let declared = await _isVLANDeclared(mvrp, vid: 2, port: 0)
+    XCTAssertFalse(declared, "single-port static VLAN must not be echoed to its own port")
+    _ = controller
+  }
+
+  // A statically-configured VLAN in the exclusion set is neither registered nor declared.
+  func testMVRPExcludedStaticVLANNotRegistered() async throws {
+    let (controller, mvrp, _) = try await _makeMVRP(portIDs: [0, 1], exclusions: [VLAN(vid: 2)])
+    let registered = await _isVLANRegistered(mvrp, vid: 2, port: 0)
+    XCTAssertFalse(registered, "excluded VID 2 must not be registered")
+    let declared = await _isVLANDeclared(mvrp, vid: 2, port: 1)
     XCTAssertFalse(declared, "excluded VID 2 must not be declared")
+    _ = controller
+  }
+
+  // The PVID has a Static VLAN Registration Entry with Registration Fixed on all ports
+  // (11.2.1.3), so its membership is propagated like any other static VLAN.
+  func testMVRPDeclaresPVID() async throws {
+    let (controller, mvrp, _) = try await _makeMVRP(portIDs: [0, 1], pvid: 1)
+    let registered = await _isVLANRegistered(mvrp, vid: 1, port: 0)
+    XCTAssertTrue(registered, "PVID must be Registration Fixed (11.2.1.3)")
+    let declared = await _isVLANDeclared(mvrp, vid: 1, port: 1)
+    XCTAssertTrue(declared, "PVID membership must be propagated to the other ports")
+    _ = controller
+  }
+
+  // Registration Fixed ignores all MRP messages (10.7.2): a peer Leave neither clears the
+  // registration nor withdraws the propagated declarations.
+  func testMVRPStaticVLANSurvivesPeerLeave() async throws {
+    let (controller, mvrp, _) = try await _makeMVRP(portIDs: [0, 1])
+    try await _driveMVRP(mvrp, port: 0, vid: 2, event: .Lv)
+    let registered = await _isVLANRegistered(mvrp, vid: 2, port: 0)
+    XCTAssertTrue(registered, "Registration Fixed must ignore a peer Leave")
+    let declared = await _isVLANDeclared(mvrp, vid: 2, port: 1)
+    XCTAssertTrue(declared, "propagated declaration must survive a peer Leave")
+    _ = controller
+  }
+
+  // MAP leave propagation is refcounted (10.3 b): a withdrawal reaches a port only when no
+  // other port still holds a registration for the attribute.
+  func testMVRPAdministrativeWithdrawIsRefcounted() async throws {
+    let (controller, mvrp, _) = try await _makeMVRP(portIDs: [0, 1, 2])
+    // static VID 2 on all three ports; withdrawing it from port 0 must not withdraw any
+    // declaration, as ports 1 and 2 still hold registrations
+    try await mvrp.administrativelyDeregister(
+      attributeType: MVRPAttributeType.vid.rawValue,
+      attributeValue: VLAN(vid: 2),
+      from: MockPort(id: 0),
+      for: MAPBaseSpanningTreeContext
+    )
+    var declared2 = await _isVLANDeclared(mvrp, vid: 2, port: 2)
+    XCTAssertTrue(declared2, "VID 2 must remain declared while other ports hold registrations")
+    // withdrawing from port 1 leaves only port 2 registered: port 2's declaration (backed
+    // by ports 0/1) is withdrawn, while port 0's (backed by port 2) survives
+    try await mvrp.administrativelyDeregister(
+      attributeType: MVRPAttributeType.vid.rawValue,
+      attributeValue: VLAN(vid: 2),
+      from: MockPort(id: 1),
+      for: MAPBaseSpanningTreeContext
+    )
+    // the applicant remains in LA (still declared) until the Leave transmits
+    let withdrawn2 = await _waitFor { !(await _isVLANDeclared(mvrp, vid: 2, port: 2)) }
+    XCTAssertTrue(withdrawn2, "VID 2 must be withdrawn once no other port holds a registration")
+    let declared0 = await _isVLANDeclared(mvrp, vid: 2, port: 0)
+    XCTAssertTrue(declared0, "port 2's remaining registration must back port 0's declaration")
     _ = controller
   }
 
@@ -5290,24 +5404,39 @@ extension MRPTests {
     let streamID = MSRPStreamID(0x0001_0000_0000_0001)
     let original = _talkerAdvertise(streamID)
 
-    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise, value: original, event: .JoinIn)
+    try await _drive(
+      msrp,
+      port: 0,
+      attributeType: .talkerAdvertise,
+      value: original,
+      event: .JoinIn
+    )
     let propagated = await _waitFor {
       await _declaredTalkerAdvertise(msrp, streamID, port: 1) != nil
     }
-    XCTAssertTrue(propagated, "\(field): original advertise must propagate to the egress port", line: line)
+    XCTAssertTrue(
+      propagated,
+      "\(field): original advertise must propagate to the egress port",
+      line: line
+    )
 
     // the illegal change, same StreamID and ingress port
     try await _drive(msrp, port: 0, attributeType: .talkerAdvertise, value: changed, event: .JoinIn)
 
     // give any (erroneous) recompute time to leak the changed value downstream
     let leaked = await _waitFor(timeoutMs: 300) {
-      guard let egress = await _declaredTalkerAdvertise(msrp, streamID, port: 1) else { return false }
+      guard let egress = await _declaredTalkerAdvertise(msrp, streamID, port: 1)
+      else { return false }
       return MSRPTalkerFirstValue(egress) == MSRPTalkerFirstValue(changed)
     }
     XCTAssertFalse(leaked, "\(field): a changed FirstValue field must not propagate", line: line)
 
     let egress = await _declaredTalkerAdvertise(msrp, streamID, port: 1)
-    XCTAssertNotNil(egress, "\(field): the stream must remain advertised on its original value", line: line)
+    XCTAssertNotNil(
+      egress,
+      "\(field): the stream must remain advertised on its original value",
+      line: line
+    )
     if let egress {
       XCTAssertEqual(
         MSRPTalkerFirstValue(egress), MSRPTalkerFirstValue(original),
@@ -5368,8 +5497,16 @@ extension MRPTests {
     let streamID = MSRPStreamID(0x0001_0000_0000_0001)
     let original = _talkerAdvertise(streamID)
 
-    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise, value: original, event: .JoinIn)
-    let propagated = await _waitFor { await _declaredTalkerAdvertise(msrp, streamID, port: 1) != nil }
+    try await _drive(
+      msrp,
+      port: 0,
+      attributeType: .talkerAdvertise,
+      value: original,
+      event: .JoinIn
+    )
+    let propagated = await _waitFor {
+      await _declaredTalkerAdvertise(msrp, streamID, port: 1) != nil
+    }
     XCTAssertTrue(propagated, "original advertise must propagate to the egress port")
 
     // a peer re-declaration identical except the on-wire Reserved nibble is set

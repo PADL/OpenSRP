@@ -39,6 +39,11 @@ ExecStartPre=/usr/sbin/nft add rule bridge nat PREROUTING meta ibrname $BR ether
 
 ExecStartPre=/bin/sh -c 'for ETH in $$INTERFACES; do for GRP in $$GROUPS; do bridge mdb add dev "$$BR" port "$$ETH" grp "$$GRP" permanent || true; done; done'
 
+# statically configure the SR class A (VID 2) and class B (VID 3) VLANs on all AVB
+# ports before mrpd starts: mrpd captures the static VLANs at startup, holds them as
+# MVRP Registration Fixed and declares them to peers (802.1Q 8.8.2, 11.2.1.3)
+ExecStartPre=/bin/sh -c 'for ETH in $$INTERFACES; do for VID in 2 3; do bridge vlan add dev "$$ETH" vid "$$VID" || true; done; done'
+
 # start SRP daemon
 ExecStart=/usr/sbin/mrpd --enable-srp -b $BR --force-avb-capable --configure-egress-queues $MRPD_OPTS
 
