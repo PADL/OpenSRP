@@ -905,7 +905,8 @@ public extension Participant {
 
   // Administratively register an attribute (Registration Fixed, 10.7.2), e.g. realizing a
   // Static VLAN Registration Entry (8.8.2): the Registrar is held IN and ignores MRP messages.
-  // MAP propagation to other ports is driven by the application, not here.
+  // 10.7.2 also requires such a port to send In *and JoinIn* messages; that emission rule is
+  // applied when the Applicant transmits (see _handleApplicant), so it needs no change here.
   func administrativelyRegister(
     attributeType: AttributeType,
     attributeValue: some Value
@@ -1256,7 +1257,16 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
       flags: context.smFlags
     )
 
-    if let applicantAction {
+    if var applicantAction {
+      // 10.7.2: a Registration Fixed Registrar always sends In *and* JoinIn (never Empty or
+      // Leave), so a peer on this port receives a registerable Join even while the local
+      // Applicant is only an Observer emitting In. Model this as upgrading the Applicant's
+      // emission to a mandatory JoinIn (.sJ, which is never encoding-optional). This is purely
+      // an emission rule; Applicant state and MAP refcounting are untouched.
+      if registrar?.isAdministrativelyRegistered == true {
+        applicantAction = .sJ
+      }
+
       participant._logger
         .trace(
           "\(context.participant): applicant action for event \(context.event): \(applicantAction)"
