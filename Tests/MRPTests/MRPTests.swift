@@ -2989,6 +2989,38 @@ final class MRPTests: XCTestCase {
     _ = controller
   }
 
+  // Two streams whose StreamID/destination chain but whose AccumulatedLatency differs must not
+  // coalesce: the receiver rebuilds value[1] as FirstValue.makeValue(relativeTo: 1), which carries
+  // the FirstValue's latency (35.2.2.8.6). The coalescer compares serialized encodings (which
+  // include latency), so a differing-latency neighbour is kept in its own vector -- even though
+  // MSRPTalkerAdvertiseValue.== deliberately ignores latency.
+  func testTalkerCoalescingIsLatencySensitive() throws {
+    func talker(_ streamID: MSRPStreamID, dest: EUI48, latency: UInt32) -> MSRPTalkerAdvertiseValue {
+      MSRPTalkerAdvertiseValue(
+        streamID: streamID,
+        dataFrameParameters: MSRPDataFrameParameters(destinationAddress: dest, vlanIdentifier: 2),
+        tSpec: MSRPTSpec(maxFrameSize: 64, maxIntervalFrames: 1),
+        priorityAndRank: MSRPPriorityAndRank(dataFramePriority: .CA),
+        accumulatedLatency: latency
+      )
+    }
+    let first = talker(0x0001_0000_0000_0000, dest: [0x91, 0xE0, 0xF0, 0, 0, 1], latency: 1000)
+    let reconstructed = try first.makeValue(relativeTo: 1) // how the peer rebuilds value[1]
+    let sameLatency = talker(0x0001_0000_0000_0001, dest: [0x91, 0xE0, 0xF0, 0, 0, 2], latency: 1000)
+    let diffLatency = talker(0x0001_0000_0000_0001, dest: [0x91, 0xE0, 0xF0, 0, 0, 2], latency: 2000)
+
+    XCTAssertEqual(
+      try reconstructed.serialized(), try sameLatency.serialized(),
+      "a same-latency chained stream reconstructs exactly, so it may coalesce"
+    )
+    XCTAssertNotEqual(
+      try reconstructed.serialized(), try diffLatency.serialized(),
+      "a differing-latency stream does not reconstruct exactly, so it must not coalesce"
+    )
+    // the trap this guards: == treats the differing-latency stream as identical
+    XCTAssertEqual(reconstructed, diffLatency, "== is latency-insensitive by design")
+  }
+
   // The Domain attribute opts out of coalescing (some peers don't expand a multi-value Domain
   // vector): each SR class must be emitted as its own single-value vector, not coalesced B->A.
   func testDomainVectorsAreNotCoalesced() async throws {
