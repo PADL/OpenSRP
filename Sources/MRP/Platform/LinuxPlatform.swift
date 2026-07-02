@@ -795,22 +795,28 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     filterRegistration: FilterRegistration
   ) -> Task<(), Error> {
     Task {
+      // backoff between rebuilds, escalating so a *permanent* failure (the socket can't be
+      // re-created at all) can't spin the loop at ~1 kHz. A successful recv run resets it.
+      var backoffMs: UInt = 1
+      let backoffCapMs: UInt = 1024
       repeat {
         do {
           for try await packet in try await filterRegistration._rxPackets(port: port) {
             await _rxPacketsChannel.send((port.id, packet))
           }
+          backoffMs = 1 // the recv loop ran; a later failure is a fresh transient
         } catch Errno.interrupted {
           // restart on interrupted system call
         } catch {
           // a port link flap makes io_uring cancel the in-flight recv (ECANCELED); rebuild
-          // the socket rather than let reception die permanently. a short backoff only
-          // caps a pathological immediate re-throw (the normal rebuild blocks in recv).
+          // the socket rather than let reception die permanently. The backoff caps a
+          // pathological immediate re-throw (the normal rebuild blocks in recv).
           guard !Task.isCancelled else { break }
           _logger.debug(
-            "LinuxBridge: rebuilding link-local RX for \(port) \(filterRegistration) after \(error)"
+            "LinuxBridge: rebuilding link-local RX for \(port) \(filterRegistration) after \(error) (backoff \(backoffMs)ms)"
           )
-          try? await Task.sleep(for: .milliseconds(1), clock: .continuous)
+          try? await Task.sleep(for: .milliseconds(backoffMs), clock: .continuous)
+          backoffMs = min(backoffMs * 2, backoffCapMs)
         }
       } while !Task.isCancelled
     }
