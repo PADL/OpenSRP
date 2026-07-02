@@ -234,6 +234,16 @@ extension MVRPApplication {
       // Registration Fixed state is not yet (re-)established, e.g. around a port flap,
       // must not re-add the entry with the dynamic flag
       guard !_isStatic(vlan, port: port) else { return }
+      // 11.2.3.2.3: Restricted_VLAN_Registration (and any other admission policy) gates dynamic
+      // registration; if it disallows the VID, do not create the entry and do not propagate.
+      guard isRegistrationAllowed(
+        for: attributeType.rawValue,
+        attributeSubtype: attributeSubtype,
+        attributeValue: vlan,
+        on: port
+      ) else {
+        throw MRPError.doNotPropagateAttribute
+      }
       _logger
         .debug(
           "MVRP: join indication from port \(port) VID \(vlan.vid) isNew \(isNew) source \(eventSource)"
@@ -241,8 +251,18 @@ extension MVRPApplication {
       // No per-VID FDB flush on New: the kernel bridge/DSA already flushes the affected port's
       // FDB on an STP topology change, and mstpd doesn't signal tcDetected to us, so there is
       // nothing for MVRP to flush here.
+      //
+      // 11.2.3.2.2: if there is no room in the FDB the registration fails and is not propagated.
+      // Record the dynamic entry only after the kernel accepts it, so a failed add doesn't leave a
+      // phantom VID that a later Leave would try to delete.
+      do {
+        try await bridge.register(vlan: vlan, on: port, static: false)
+      } catch {
+        _logger
+          .warning("MVRP: VID \(vlan.vid) registration failed on port \(port): \(error)")
+        throw MRPError.doNotPropagateAttribute
+      }
       _dynamicVIDs[port.id, default: []].insert(vlan)
-      try await bridge.register(vlan: vlan, on: port, static: false)
     }
   }
 
