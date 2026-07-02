@@ -317,9 +317,12 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
     await _checkTopologyChange(port: port)
   }
 
-  // On a port event, poll the bridge's STP role. A transition into Designated is a topology
-  // change (802.1Q Flush!, 10.7.5.2): rapidly deregister this port's attributes across all
-  // applications so they re-register. Soft no-op when the bridge has no STP integration.
+  // On a port event, poll the bridge's STP role and act on a role transition. Soft no-op when the
+  // bridge has no STP integration.
+  //   - into Designated (10.7.5.2): a topology change -> Flush!, rapidly deregistering this port's
+  //     attributes across all applications so they re-register.
+  //   - Designated -> Root/Alternate (10.7.5.3): Re-declare!, rapidly re-declaring this port's
+  //     registered attributes rather than waiting for the next LeaveAll.
   private func _checkTopologyChange(port: P) async {
     guard let status = await bridge.getStpPortStatus(port: port) else { return }
     // the poll suspends: bail if the port was removed meanwhile (avoid resurrecting its
@@ -327,10 +330,17 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
     guard _ports[port.id] != nil else { return }
     let wasDesignated = _stpPortStatus[port.id]?.role == .designated
     _stpPortStatus[port.id] = status
-    guard status.role == .designated, !wasDesignated else { return }
-    logger.debug("MRP: port \(port.id) became STP Designated (state \(status.state)); flushing")
-    await _apply { application in
-      try? await application.flush(for: MAPBaseSpanningTreeContext, port: port)
+    if status.role == .designated, !wasDesignated {
+      logger.debug("MRP: port \(port.id) became STP Designated (state \(status.state)); flushing")
+      await _apply { application in
+        try? await application.flush(for: MAPBaseSpanningTreeContext, port: port)
+      }
+    } else if wasDesignated, status.role == .root || status.role == .alternate {
+      logger
+        .debug("MRP: port \(port.id) left STP Designated for \(status.role); redeclaring")
+      await _apply { application in
+        try? await application.redeclare(for: MAPBaseSpanningTreeContext, port: port)
+      }
     }
   }
 
