@@ -2528,6 +2528,56 @@ final class MRPTests: XCTestCase {
     _ = controller
   }
 
+  // Even if a peer Join/Leave indication fires for a static VID (e.g. in the window
+  // around a port flap before Registration Fixed is re-established), the dynamic path
+  // must neither re-add the entry as dynamic nor delete it.
+  func testMVRPStaticVLANNotDemotedByRacingIndication() async throws {
+    let (controller, mvrp, recorder) = try await _makeMVRP(portIDs: [0, 1])
+    // drive the indications directly, as though the registrar had fired before the
+    // static registration was in place
+    try await mvrp.onJoinIndication(
+      contextIdentifier: MAPBaseSpanningTreeContext,
+      port: MockPort(id: 0),
+      attributeType: MVRPAttributeType.vid.rawValue,
+      attributeSubtype: nil,
+      attributeValue: VLAN(vid: 2),
+      isNew: false,
+      eventSource: .peer
+    )
+    try await mvrp.onLeaveIndication(
+      contextIdentifier: MAPBaseSpanningTreeContext,
+      port: MockPort(id: 0),
+      attributeType: MVRPAttributeType.vid.rawValue,
+      attributeSubtype: nil,
+      attributeValue: VLAN(vid: 2),
+      eventSource: .peer
+    )
+    let registered = await recorder.vlanRegister.contains { $0.vlan.vid == 2 }
+    XCTAssertFalse(registered, "static VID 2 must not be re-added as dynamic")
+    let deregistered = await recorder.vlanDeregister.contains { $0.vlan.vid == 2 }
+    XCTAssertFalse(deregistered, "static VID 2 must not be deleted by a peer Leave")
+    _ = controller
+  }
+
+  // A peer Join for a statically-registered VID is absorbed by the Fixed registrar
+  // (10.7.2): no join indication fires, so no dynamic kernel entry is created.
+  func testMVRPStaticVLANNotOverriddenByPeerJoin() async throws {
+    let (controller, mvrp, recorder) = try await _makeMVRP(portIDs: [0, 1])
+    try await _driveMVRP(mvrp, port: 0, vid: 2, event: .JoinIn)
+    try await _driveMVRP(mvrp, port: 0, vid: 100, event: .JoinIn)
+
+    // VID 100 (dynamic) proves the rx path ran; VID 2 (static) must not re-register
+    let registered100 = await _waitFor {
+      await recorder.vlanRegister.contains { $0.vlan.vid == 100 }
+    }
+    XCTAssertTrue(registered100, "non-static VID 100 must register dynamically")
+    let registered2 = await recorder.vlanRegister.contains { $0.vlan.vid == 2 }
+    XCTAssertFalse(registered2, "a peer Join must not create a dynamic entry for a static VID")
+    let stillRegistered = await _isVLANRegistered(mvrp, vid: 2, port: 0)
+    XCTAssertTrue(stillRegistered, "the static registration must remain")
+    _ = controller
+  }
+
   // Registration Fixed ignores all MRP messages (10.7.2): a peer Leave neither clears the
   // registration nor withdraws the propagated declarations.
   func testMVRPStaticVLANSurvivesPeerLeave() async throws {

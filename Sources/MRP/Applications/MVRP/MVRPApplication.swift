@@ -230,6 +230,10 @@ extension MVRPApplication {
       guard !_isVlanExcluded(vlan, port: port) else {
         throw MRPError.doNotPropagateAttribute
       }
+      // never demote a static VLAN to dynamic: a peer Join processed while the VID's
+      // Registration Fixed state is not yet (re-)established, e.g. around a port flap,
+      // must not re-add the entry with the dynamic flag
+      guard !_isStatic(vlan, port: port) else { return }
       _logger
         .debug(
           "MVRP: join indication from port \(port) VID \(vlan.vid) isNew \(isNew) source \(eventSource)"
@@ -264,11 +268,18 @@ extension MVRPApplication {
       guard !_isVlanExcluded(vlan, port: port) else {
         throw MRPError.doNotPropagateAttribute
       }
+      // likewise, never delete a static VLAN on a peer Leave
+      guard !_isStatic(vlan, port: port) else { return }
       _logger
         .debug("MVRP: leave indication from port \(port) VID \(vlan.vid) source \(eventSource)")
       _dynamicVIDs[port.id]?.remove(vlan)
       try await bridge.deregister(vlan: vlan, from: port)
     }
+  }
+
+  // is the VID one we hold, or are configured to hold, as Registration Fixed on the port?
+  private func _isStatic(_ vlan: VLAN, port: P) -> Bool {
+    _configuredStaticVlans.contains(vlan) || _staticVIDs[port.id]?.contains(vlan) == true
   }
 }
 
