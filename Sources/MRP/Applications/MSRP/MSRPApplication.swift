@@ -1663,7 +1663,10 @@ extension MSRPApplication {
       var latency = boundTalker.1.accumulatedLatency
       let l = await participant.port
         .getPortTcMaxLatency(for: boundTalker.1.priorityAndRank.dataFramePriority)
-      latency += UInt32(clamping: l)
+      // saturate: accumulatedLatency is peer-supplied, so a value near UInt32.max plus this hop's
+      // latency would otherwise overflow the UInt32 sum and trap (a remotely triggerable DoS).
+      let (sum, overflow) = latency.addingReportingOverflow(UInt32(clamping: l))
+      latency = overflow ? .max : sum
 
       // 35.2.6: a type change (e.g. Advertise->Failed) behaves as if the old declaration was
       // withdrawn before the new one, so leave the opposite declared Talker type first.

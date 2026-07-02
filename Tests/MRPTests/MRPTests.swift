@@ -4190,14 +4190,15 @@ extension MRPTests {
 
   private func _talkerAdvertise(
     _ streamID: MSRPStreamID,
-    dest: EUI48 = [0x91, 0xE0, 0xF0, 0x00, 0x00, 0x01]
+    dest: EUI48 = [0x91, 0xE0, 0xF0, 0x00, 0x00, 0x01],
+    accumulatedLatency: UInt32 = 1000
   ) -> MSRPTalkerAdvertiseValue {
     MSRPTalkerAdvertiseValue(
       streamID: streamID,
       dataFrameParameters: MSRPDataFrameParameters(destinationAddress: dest, vlanIdentifier: 2),
       tSpec: MSRPTSpec(maxFrameSize: 64, maxIntervalFrames: 1),
       priorityAndRank: MSRPPriorityAndRank(dataFramePriority: .CA, rank: false),
-      accumulatedLatency: 1000
+      accumulatedLatency: accumulatedLatency
     )
   }
 
@@ -4767,6 +4768,34 @@ extension MRPTests {
       advertise?.accumulatedLatency,
       1000 + UInt32(perHop),
       "the relayed advertise must add the egress per-hop latency to the received latency"
+    )
+    _ = controller
+  }
+
+  // accumulatedLatency is peer-supplied, so a value near UInt32.max plus this hop's per-hop
+  // latency must saturate at UInt32.max rather than overflow the UInt32 sum (which would trap --
+  // a remotely triggerable DoS).
+  func testTalkerAdvertiseLatencySaturatesOnOverflow() async throws {
+    let perHop = 12_345
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(
+      portIDs: [0, 1],
+      portTcMaxLatency: [1: perHop]
+    )
+    let streamID = MSRPStreamID(0x0001_0000_0000_00AB)
+    try await _drive(
+      msrp,
+      port: 0,
+      attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID, accumulatedLatency: .max - 100),
+      event: .JoinIn
+    )
+    let relayed = await _waitFor { await _declaredTalkerAdvertise(msrp, streamID, port: 1) != nil }
+    XCTAssertTrue(relayed, "advertise must propagate to the egress")
+    let advertise = await _declaredTalkerAdvertise(msrp, streamID, port: 1)
+    XCTAssertEqual(
+      advertise?.accumulatedLatency,
+      .max,
+      "adding the per-hop latency to a near-max received latency must saturate, not wrap"
     )
     _ = controller
   }

@@ -433,8 +433,10 @@ func srpPortTcMaxLatency(
 ) -> Int {
   var latency = meanLinkDelayNs
   if linkSpeedKbps > 0 {
-    // one max-size frame time in ns: bytes * 8 bits / (kbps * 1000) s, scaled to ns
-    let frameTimeNs = Int(maxFrameSize * 8_000_000 / linkSpeedKbps)
+    // one max-size frame time in ns: bytes * 8 bits / (kbps * 1000) s, scaled to ns.
+    // Compute in UInt64: maxFrameSize * 8_000_000 (e.g. 2000 * 8e6 = 1.6e10) overflows a 32-bit
+    // UInt and traps on the armhf target before the divide.
+    let frameTimeNs = Int(UInt64(maxFrameSize) * 8_000_000 / UInt64(linkSpeedKbps))
     latency += 2 * frameTimeNs // c) store-and-forward + b) one interfering lower-priority frame
   }
   return latency
