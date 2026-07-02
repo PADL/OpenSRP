@@ -44,22 +44,29 @@ extension Logger.Level: @retroactive ExpressibleByArgument {
 
 // a CLASS:VID mapping, e.g. B:3
 struct SRClassVID: ExpressibleByArgument, Sendable {
-  let srClassID: SRclassID
+  // nil srClassID is the wildcard (*): the default SR_PVID for classes without an explicit VID
+  let srClassID: SRclassID?
   let vlan: VLAN
 
   init?(argument: String) {
     let fields = argument.split(separator: ":")
     guard fields.count == 2,
-          let srClassID = SRclassID.allCases
-          .first(where: { $0.description == fields[0].uppercased() }),
           let vid = UInt16(fields[1]), vid > 0, vid < 4095
     else { return nil }
-    self.srClassID = srClassID
+    if fields[0] == "*" {
+      srClassID = nil
+    } else if let srClassID = SRclassID.allCases
+      .first(where: { $0.description == fields[0].uppercased() })
+    {
+      self.srClassID = srClassID
+    } else {
+      return nil
+    }
     vlan = VLAN(id: vid)
   }
 
   var defaultValueDescription: String {
-    "\(srClassID):\(vlan.id)"
+    "\(srClassID.map(String.init(describing:)) ?? "*"):\(vlan.id)"
   }
 }
 
@@ -122,10 +129,10 @@ private final class MRPDaemon: AsyncParsableCommand {
   @Flag(inversion: .prefixedNo, help: "Flood multicast on bridge ports")
   var multicastFlooding: Bool = false
 
-  @Option(name: .long, help: "MSRP SR_PVID, the default srClassVID for SR classes without an explicit --sr-class-vid")
-  var srPVid: UInt16 = SR_PVID.id
-
-  @Option(name: .long, help: "MSRP SR class VID (CLASS:VID, e.g. B:3; may be specified multiple times)")
+  @Option(
+    name: .long,
+    help: "MSRP SR class VID (CLASS:VID, e.g. B:3; *:VID sets the default SR_PVID; may be specified multiple times)"
+  )
   var srClassVid: [SRClassVID] = []
 
   @Flag(name: .long, help: "Statically configure the SR class VLANs on bridge ports")
@@ -186,7 +193,6 @@ private final class MRPDaemon: AsyncParsableCommand {
     case enableTalkerPruning
     case leaveImmediate
     case maxFanInPorts
-    case srPVid
     case classADeltaBandwidth
     case classBDeltaBandwidth
     case classAQdiscHandle
@@ -267,14 +273,16 @@ private final class MRPDaemon: AsyncParsableCommand {
     if enableMMRP {
       _ = try await MMRPApplication(controller: controller)
     }
-    // per-class srClassVIDs; unset classes default to the SR_PVID (35.2.1.4)
+    // per-class srClassVIDs; unset classes default to the SR_PVID (35.2.1.4), which the
+    // wildcard (*:VID) entry overrides
+    let srPVid = srClassVid.last(where: { $0.srClassID == nil })?.vlan ?? SR_PVID
     let srClassVIDs = Dictionary(
-      srClassVid.map { ($0.srClassID, $0.vlan) },
+      srClassVid.compactMap { entry in entry.srClassID.map { ($0, entry.vlan) } },
       uniquingKeysWith: { _, last in last }
     )
     // the VLANs named by the MSRP Domain declarations, for SR classes A through maxSRClass
     let srClassVlans = Set((SRclassID.B.rawValue ... SRclassID.A.rawValue)
-      .map { srClassVIDs[SRclassID(rawValue: $0)!] ?? VLAN(id: srPVid) })
+      .map { srClassVIDs[SRclassID(rawValue: $0)!] ?? srPVid })
 
     if enableMVRP {
       _ = try await MVRPApplication(
@@ -303,7 +311,7 @@ private final class MRPDaemon: AsyncParsableCommand {
         controller: controller,
         flags: flags,
         maxFanInPorts: maxFanInPorts,
-        srPVid: VLAN(id: srPVid),
+        srPVid: srPVid,
         srClassVIDs: srClassVIDs,
         queues: queues,
         deltaBandwidths: deltaBandwidths.isEmpty ? nil : deltaBandwidths

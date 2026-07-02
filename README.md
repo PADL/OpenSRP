@@ -16,7 +16,7 @@ MMRP, MVRP, and MSRP are "applications" of the generalized MRP protocol and stat
 
 Note that whilst OpenSRP does have a platform abstraction layer, the initial platform is Linux, and we would prefer to push switch-specific functionality into the kernel rather than separate platform backends.
 
-Note: `mrpd` is the sole MVRP entity on the bridge. Each port's statically configured VLANs — its tagged VLANs and its PVID (802.1Q 11.2.1.3), minus any passed with `--exclude-vlan` — are held as *Registration Fixed* (802.1Q 8.8.2, 10.7.2): the registration ignores peer Leaves, and MAP propagation declares the VLAN out the other bridge ports, so peers learn the bridge's membership without waiting for an inbound declaration (this matters when ingress filtering is enabled, and for interoperability). Configure the desired VLANs with `bridge vlan add` (static VLANs added or removed at runtime are picked up automatically), or pass `--configure-sr-vlans` to have `mrpd` statically configure the SR class VLANs itself — the VIDs named by its MSRP Domain declarations (`--sr-pvid`, overridden per class with `--sr-class-vid`, e.g. `--sr-class-vid B:3`).
+Note: `mrpd` is the sole MVRP entity on the bridge. Each port's statically configured VLANs — its tagged VLANs and its PVID (802.1Q 11.2.1.3), minus any passed with `--exclude-vlan` — are held as *Registration Fixed* (802.1Q 8.8.2, 10.7.2): the registration ignores peer Leaves, and MAP propagation declares the VLAN out the other bridge ports, so peers learn the bridge's membership without waiting for an inbound declaration (this matters when ingress filtering is enabled, and for interoperability). Configure the desired VLANs with `bridge vlan add` (static VLANs added or removed at runtime are picked up automatically), or pass `--configure-sr-vlans` to have `mrpd` statically configure the SR class VLANs itself — the VIDs named by its MSRP Domain declarations (`--sr-class-vid`, e.g. `--sr-class-vid B:3`; `--sr-class-vid '*:3'` sets the default SR_PVID for classes without an explicit VID).
 
 To distinguish an administrator's static VLAN from one `mrpd` itself added for a peer's dynamic registration, `mrpd` marks its own entries with the `BRIDGE_VLAN_INFO_DYNAMIC` flag (a small kernel patch; `bridge vlan` shows such entries as `dynamic`). Kernels **without** this flag silently ignore it; `mrpd` still tracks its own additions in-process, so behaviour is identical with one exception: after an `mrpd` restart, dynamic entries left in the kernel by the previous run cannot be told apart from static configuration and will be promoted to Registration Fixed (and thus survive the peer's Leave) until they are removed manually or the bridge is reconfigured. On patched kernels leftover dynamic entries are recognised and remain dynamic across restarts.
 
@@ -81,7 +81,9 @@ OPTIONS:
   --configure-queues      Automatically configure both ingress and egress queues
   --multicast-flooding/--no-multicast-flooding
                           Flood multicast on bridge ports (default: --no-multicast-flooding)
-  --sr-p-vid <sr-p-vid>   Default MSRP SR PVID (default: 2)
+  --sr-class-vid <sr-class-vid>
+                          MSRP SR class VID (CLASS:VID, e.g. B:3; *:VID sets
+                          the default SR_PVID; may be specified multiple times)
   --exclude-iface <exclude-iface>
                           Exclude physical interface (may be specified multiple times)
   --exclude-vlan <exclude-vlan>
