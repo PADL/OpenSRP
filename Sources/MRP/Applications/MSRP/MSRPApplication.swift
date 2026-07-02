@@ -1094,6 +1094,10 @@ extension MSRPApplication {
         throw MSRPFailure(systemID: port.systemID, failureCode: .fanInPortLimitReached)
       }
 
+      // A zero MaxIntervalFrames is a degenerate (zero-bandwidth) TSpec; reject it rather than
+      // enter a pointless reservation. Table 35-6 defines no code for an invalid MaxIntervalFrames
+      // (unlike MaxFrameSize, code 14), so .insufficientBridgeResources is the least-bad generic;
+      // it still propagates as a Talker Failed toward the Listener.
       guard talker.tSpec.maxIntervalFrames != 0 else {
         _logger.error("MSRP: MaxIntervalFrames cannot be zero")
         throw MSRPFailure(systemID: port.systemID, failureCode: .insufficientBridgeResources)
