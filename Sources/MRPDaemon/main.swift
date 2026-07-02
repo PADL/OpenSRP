@@ -281,7 +281,7 @@ private final class MRPDaemon: AsyncParsableCommand {
       uniquingKeysWith: { _, last in last }
     )
     // the VLANs named by the MSRP Domain declarations, for SR classes A through maxSRClass
-    let srClassVlans = Set((SRclassID.B.rawValue ... SRclassID.A.rawValue)
+    let srClassVlans = Set((SRclassID.B.rawValue...SRclassID.A.rawValue)
       .map { srClassVIDs[SRclassID(rawValue: $0)!] ?? srPVid })
 
     if enableMVRP {

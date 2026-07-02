@@ -298,7 +298,8 @@ extension MVRPApplication {
           do {
             try await bridge.register(vlan: vlan, on: port, static: true)
           } catch {
-            _logger.error("MVRP: failed to configure static VLAN \(vlan.vid) on port \(port): \(error)")
+            _logger
+              .error("MVRP: failed to configure static VLAN \(vlan.vid) on port \(port): \(error)")
           }
         }
       }
