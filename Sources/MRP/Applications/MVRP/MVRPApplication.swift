@@ -139,7 +139,7 @@ public actor MVRPApplication<P: Port>: BaseApplication, BaseApplicationEventObse
   public nonisolated func administrativeControl(for attributeType: AttributeType) throws
     -> AdministrativeControl
   {
-    .normalParticipant
+    AdministrativeControl()
   }
 
   public nonisolated func isRegistrationAllowed(

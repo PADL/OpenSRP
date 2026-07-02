@@ -716,14 +716,22 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
     guard let application else { throw MRPError.internalError }
     var flags: StateMachineHandlerFlags = []
     if _type == .pointToPoint { flags.insert(.operPointToPointMAC) }
+    // Registrar (10.7.8) and Applicant (10.7.7) admin controls are orthogonal: derive the
+    // Registrar's fixed/forbidden flags and the Applicant's New-Only flag independently.
     let administrativeControl = try application.administrativeControl(for: attributeType)
-    switch administrativeControl {
+    switch administrativeControl.registrar {
+    case .normalRegistration:
+      break
+    case .registrationFixed:
+      flags.insert(.registrationFixedNewPropagated)
+    case .registrationForbidden:
+      flags.insert(.registrationForbidden)
+    }
+    switch administrativeControl.applicant {
     case .normalParticipant:
       break
     case .newOnlyParticipant:
-      flags.insert(.registrationFixedNewPropagated)
-    case .nonParticipant:
-      flags.insert(.registrationFixedNewIgnored)
+      flags.insert(.applicantOnlyParticipant)
     }
     if application.registrarLeaveImmediate { flags.insert(.leaveImmediate) }
     // TODO: add flags for when attribute is empty, so Applicant State Machine can
