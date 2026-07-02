@@ -205,6 +205,36 @@ private func _transmittedDomainVectors(
   return result
 }
 
+// every AttributeEvent transmitted for a given VID out a given port in the captured
+// transmissions. Free function for use in _waitFor's @Sendable closure.
+private func _transmittedVLANEvents(
+  _ recorder: MRPTestRecorder,
+  _ mvrp: MVRPApplication<MockPort>,
+  port: Int,
+  vid: UInt16
+) async -> [AttributeEvent] {
+  var events = [AttributeEvent]()
+  for packet in await recorder.txPackets where packet.port == port {
+    guard let pdu = try? packet.payload.withParserSpan({ input in
+      try MRPDU(parsing: &input, application: mvrp)
+    }) else { continue }
+    for message in pdu.messages
+      where message.attributeType == MVRPAttributeType.vid.rawValue
+    {
+      guard let vectorEvents = try? message.attributeList.map({ try $0.attributeEvents })
+      else { continue }
+      for (vector, attributeEvents) in zip(message.attributeList, vectorEvents) {
+        for i in 0..<Int(vector.numberOfValues) where i < attributeEvents.count {
+          guard let value = try? vector.firstValue.value.makeValue(relativeTo: UInt64(i)),
+                (value as? VLAN)?.vid == vid else { continue }
+          events.append(attributeEvents[i])
+        }
+      }
+    }
+  }
+  return events
+}
+
 // is a VID declared (Applicant) by MVRP on a port?
 private func _isVLANDeclared(
   _ mvrp: MVRPApplication<MockPort>, vid: UInt16, port: Int
@@ -2494,14 +2524,49 @@ final class MRPTests: XCTestCase {
     _ = controller
   }
 
-  // A single-port static VLAN is registered but not echoed back out its own port:
-  // MAP propagates registrations to the *other* ports only.
-  func testMVRPStaticVLANSinglePortNotEchoed() async throws {
+  // A single-port static VLAN holds its Registrar Fixed but leaves its Applicant an Observer:
+  // MAP propagates registrations to the *other* ports only (10.3 a), so the local Applicant is
+  // not driven into a declaring state. The 10.7.2 "In *and* JoinIn" emission is layered on at
+  // transmit time (see testMVRPStaticVLANEmitsJoinInOnOwnPort), not by moving the Applicant.
+  func testMVRPStaticVLANSinglePortObserverState() async throws {
     let (controller, mvrp, _) = try await _makeMVRP(portIDs: [0])
     let registered = await _isVLANRegistered(mvrp, vid: 2, port: 0)
     XCTAssertTrue(registered, "static VID 2 must be Registration Fixed on its member port")
     let declared = await _isVLANDeclared(mvrp, vid: 2, port: 0)
-    XCTAssertFalse(declared, "single-port static VLAN must not be echoed to its own port")
+    XCTAssertFalse(declared, "the Applicant stays an Observer; JoinIn is an emission rule, not a state")
+    _ = controller
+  }
+
+  // 10.7.2: a Registration Fixed Registrar sends In *and* JoinIn on its own port, so a peer
+  // attached there receives a registerable Join. VID 100 is static on port 0 only, so its
+  // Applicant there is an Observer with no MAP backing; it must still be *emitted* as a JoinIn,
+  // never a bare In. (VID 2, static on both ports, is MAP-declared on port 0 and thus supplies
+  // the transmission opportunity that carries VID 100 -- mirroring the real bridge, where a
+  // static VLAN rides out alongside the PVID/SR declarations.)
+  func testMVRPStaticVLANEmitsJoinInOnOwnPort() async throws {
+    let recorder = MRPTestRecorder()
+    let ports: Set<MockPort> = [
+      MockPort(id: 0, vlans: [2, 100]),
+      MockPort(id: 1, vlans: [2]),
+    ]
+    let bridge = MockBridge(ports: ports, recorder: recorder)
+    let controller = try await MRPController(
+      bridge: bridge,
+      logger: Logger(label: "com.padl.MRPTests.mvrp"),
+      timerConfiguration: MRPTimerConfiguration(leaveTime: .seconds(1))
+    )
+    let mvrp = try await MVRPApplication(controller: controller)
+    try await mvrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
+
+    let emittedJoinIn = await _waitFor {
+      await _transmittedVLANEvents(recorder, mvrp, port: 0, vid: 100).contains(.JoinIn)
+    }
+    XCTAssertTrue(emittedJoinIn, "VID 100 (static on port 0 only) must be emitted as JoinIn on port 0")
+    let events = await _transmittedVLANEvents(recorder, mvrp, port: 0, vid: 100)
+    XCTAssertFalse(
+      events.contains(.In),
+      "a Registration Fixed port must not emit a bare In (10.7.2 requires JoinIn)"
+    )
     _ = controller
   }
 
