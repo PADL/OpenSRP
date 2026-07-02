@@ -444,6 +444,9 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
   }
 
   public var isAvbCapable: Bool {
+    // an MTU above the AVB max frame size can't bound stream latency, so such a port is not AVB
+    // capable (IEEE 802.1BA / 802.1Q 35.2.2.8.4)
+    guard _rtnl.mtu <= AVBMaxFrameSize else { return false }
     guard let _channels else { return false }
     return _channels.current.tx > 2 || _channels.current.combined > 2
   }

@@ -409,3 +409,8 @@ public typealias SRclassPriority = IEEE802Packet.TCI.PCP
 public typealias SRclassVID = VLAN.ID
 
 public let SR_PVID = VLAN(vid: 2)
+
+// The AVB maximum frame size (octets, excluding media framing): the reference
+// size for stream latency (35.2.2.8.4). A port whose MTU exceeds this can't
+// bound stream latency and is treated as not AVB capable.
+public let AVBMaxFrameSize: UInt = 2000

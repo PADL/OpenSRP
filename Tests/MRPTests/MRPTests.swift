@@ -59,11 +59,13 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
 
   var macAddress: EUI48 { [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF] }
 
-  var mtu: UInt { 1500 }
+  let _mtu: UInt
+  var mtu: UInt { _mtu }
 
   var linkSpeed: UInt { 1_000_000 }
 
-  var isAvbCapable: Bool { true }
+  // mirror LinuxPort: an MTU above the AVB max frame size is not AVB capable
+  var isAvbCapable: Bool { _mtu <= AVBMaxFrameSize }
 
   var isAsCapable: Bool { true }
 
@@ -81,12 +83,14 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
     pvid: UInt16? = nil,
     vlans: Set<UInt16> = [2],
     dynamicVlans: Set<UInt16> = [],
-    pfcEnabledPriorities: Set<SRclassPriority> = []
+    pfcEnabledPriorities: Set<SRclassPriority> = [],
+    mtu: UInt = 1500
   ) {
     self.id = id
     _pvid = pvid
     _vlans = vlans
     _dynamicVlans = dynamicVlans
+    _mtu = mtu
     _pfcEnabledPriorities = pfcEnabledPriorities
   }
 
@@ -2961,6 +2965,27 @@ final class MRPTests: XCTestCase {
     let boundaryB = try await msrp.withPortState(port: port) { $0.srpDomainBoundaryPort[.B] }
     XCTAssertEqual(boundaryA, true, "PFC on Class A priority must mark the port a boundary port for A")
     XCTAssertEqual(boundaryB, false, "Class B (no PFC on its priority) must remain a core port")
+    _ = controller
+  }
+
+  // A port whose MTU exceeds the AVB max frame size is not AVB capable, so MSRP disables it and
+  // treats it as an SRP domain boundary port for every class (35.2.2.8.4 / 802.1BA).
+  func testHighMTUPortIsNotAVBCapable() async throws {
+    XCTAssertFalse(MockPort(id: 0, mtu: 9000).isAvbCapable, "MTU > 2000 must be non-AVB-capable")
+    XCTAssertTrue(MockPort(id: 0, mtu: 2000).isAvbCapable, "MTU == 2000 must remain AVB-capable")
+    let recorder = MRPTestRecorder()
+    let ports: Set<MockPort> = [MockPort(id: 0, mtu: 9000)]
+    let bridge = MockBridge(ports: ports, recorder: recorder)
+    let controller = try await MRPController(
+      bridge: bridge,
+      logger: Logger(label: "com.padl.MRPTests.recompute")
+    )
+    let msrp = try await MSRPApplication(controller: controller)
+    try await msrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
+    let enabled = try await msrp.withPortState(port: MockPort(id: 0)) { $0.msrpPortEnabledStatus }
+    XCTAssertFalse(enabled, "a high-MTU port must have MSRP disabled (not AVB capable)")
+    let boundary = try await msrp.withPortState(port: MockPort(id: 0)) { $0.srpDomainBoundaryPort[.A] }
+    XCTAssertEqual(boundary, true, "a non-AVB port must be an SRP domain boundary port")
     _ = controller
   }
 
