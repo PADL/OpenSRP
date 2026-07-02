@@ -515,12 +515,12 @@ private extension LinuxPort {
     (_rtnl as? RTNLLinkBridge)?.bridgePVID
   }
 
-  func _add(vlan: VLAN) async throws {
+  // dynamic marks a Dynamic VLAN Registration Entry (a peer MVRP registration); older
+  // kernels silently ignore the flag
+  func _add(vlan: VLAN, dynamic: Bool) async throws {
     guard let rtnl = _rtnl as? RTNLLinkBridge else { throw Errno.noSuchAddressOrDevice }
 
-    // this path is only used for dynamic (peer) MVRP registrations, so mark the entry
-    // as a Dynamic VLAN Registration Entry; older kernels silently ignore the flag
-    var flags: BridgeVLANFlags = .dynamic
+    var flags: BridgeVLANFlags = dynamic ? .dynamic : []
 
     if _untaggedVlans?.contains(vlan.vid) ?? false {
       // preserve untagging status, this may not be on spec but saves blowing away management
@@ -934,16 +934,6 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     try _shutdown()
   }
 
-  private func _add(vlan: VLAN) async throws {
-    guard let _bridgePort else { throw MRPError.internalError }
-    try await _bridgePort._add(vlan: vlan)
-  }
-
-  private func _remove(vlan: VLAN) async throws {
-    guard let _bridgePort else { throw MRPError.internalError }
-    try await _bridgePort._remove(vlan: vlan)
-  }
-
   public func tx(
     _ packet: IEEE802Packet,
     on port: P,
@@ -1103,11 +1093,23 @@ extension LinuxBridge: MVRPAwareBridge {
   }
 
   func register(vlan: VLAN, on port: P) async throws {
-    try await port._add(vlan: vlan)
+    try await port._add(vlan: vlan, dynamic: true)
   }
 
   func deregister(vlan: VLAN, from port: P) async throws {
     try await port._remove(vlan: vlan)
+  }
+
+  // fail-open per VLAN: an entry that already exists (or cannot be added) must not
+  // prevent the remaining VLANs from being configured
+  func add(staticVlans: Set<VLAN>, on port: P) async throws {
+    for vlan in staticVlans.sorted(by: { $0.vid < $1.vid }) {
+      do {
+        try await port._add(vlan: vlan, dynamic: false)
+      } catch {
+        _logger.info("LinuxBridge: failed to add static VLAN \(vlan.vid) on \(port): \(error)")
+      }
+    }
   }
 }
 

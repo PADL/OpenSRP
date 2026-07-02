@@ -96,6 +96,7 @@ actor MRPTestRecorder {
   private(set) var fdbDeregister = [(mac: EUI48, vlan: VLAN?, ports: Set<Int>)]()
   private(set) var vlanRegister = [(vlan: VLAN, port: Int)]()
   private(set) var vlanDeregister = [(vlan: VLAN, port: Int)]()
+  private(set) var staticVlanAdd = [(vlan: VLAN, port: Int)]()
   private(set) var txPackets = [(port: Int, payload: [UInt8])]()
   private(set) var stpStatusQueries = [Int]()
 
@@ -126,6 +127,10 @@ actor MRPTestRecorder {
   func recordVLANDeregister(vlan: VLAN, port: Int) {
     vlanDeregister.append((vlan, port))
   }
+
+  func recordStaticVlanAdd(vlan: VLAN, port: Int) {
+    staticVlanAdd.append((vlan, port))
+  }
 }
 
 // every destination MAC a receiver would reconstruct from the talkerAdvertise vectors
@@ -152,6 +157,29 @@ private func _transmittedTalkerDestinations(
     }
   }
   return dests
+}
+
+// the srClassVID of each SR class Domain in the captured transmissions
+private func _transmittedDomainVIDs(
+  _ recorder: MRPTestRecorder,
+  _ msrp: MSRPApplication<MockPort>
+) async -> [SRclassID: UInt16] {
+  var result = [SRclassID: UInt16]()
+  for packet in await recorder.txPackets {
+    guard let pdu = try? packet.payload.withParserSpan({ input in
+      try MRPDU(parsing: &input, application: msrp)
+    }) else { continue }
+    for message in pdu.messages
+      where message.attributeType == MSRPAttributeType.domain.rawValue
+    {
+      for vector in message.attributeList {
+        if let domain = vector.firstValue.value as? MSRPDomainValue {
+          result[domain.srClassID] = domain.srClassVID
+        }
+      }
+    }
+  }
+  return result
 }
 
 // the (srClassID, value-count) of every Domain vector in the captured transmissions
@@ -395,6 +423,12 @@ extension MockBridge: MVRPAwareBridge {
 
   func deregister(vlan: VLAN, from port: P) async throws {
     await recorder.recordVLANDeregister(vlan: vlan, port: port.id)
+  }
+
+  func add(staticVlans: Set<VLAN>, on port: P) async throws {
+    for vlan in staticVlans {
+      await recorder.recordStaticVlanAdd(vlan: vlan, port: port.id)
+    }
   }
 }
 
@@ -2371,7 +2405,8 @@ final class MRPTests: XCTestCase {
     exclusions: Set<VLAN> = [],
     pvid: UInt16? = nil,
     vlans: Set<UInt16> = [2],
-    dynamicVlans: Set<UInt16> = []
+    dynamicVlans: Set<UInt16> = [],
+    staticVlans: Set<VLAN> = []
   )
     async throws -> (MRPController<MockPort>, MVRPApplication<MockPort>, MRPTestRecorder)
   {
@@ -2385,7 +2420,11 @@ final class MRPTests: XCTestCase {
       logger: Logger(label: "com.padl.MRPTests.mvrp"),
       timerConfiguration: MRPTimerConfiguration(leaveTime: .seconds(1))
     )
-    let mvrp = try await MVRPApplication(controller: controller, vlanExclusions: exclusions)
+    let mvrp = try await MVRPApplication(
+      controller: controller,
+      vlanExclusions: exclusions,
+      staticVlans: staticVlans
+    )
     try await mvrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
     return (controller, mvrp, recorder)
   }
@@ -2568,6 +2607,41 @@ final class MRPTests: XCTestCase {
     _ = controller
   }
 
+  // Configured static VLANs (e.g. the SR class VLANs) are added to the bridge on every
+  // port at setup and held as Registration Fixed.
+  func testMVRPConfiguredStaticVlansAddedAndFixed() async throws {
+    let (controller, mvrp, recorder) = try await _makeMVRP(
+      portIDs: [0, 1],
+      staticVlans: [VLAN(vid: 2), VLAN(vid: 3)]
+    )
+    for port in [0, 1] {
+      for vid in [UInt16(2), 3] {
+        let added = await recorder.staticVlanAdd
+          .contains { $0.vlan.vid == vid && $0.port == port }
+        XCTAssertTrue(added, "VID \(vid) must be added to the bridge on port \(port)")
+      }
+    }
+    let registered = await _isVLANRegistered(mvrp, vid: 3, port: 0)
+    XCTAssertTrue(registered, "configured static VID 3 must be Registration Fixed")
+    let declared = await _isVLANDeclared(mvrp, vid: 3, port: 1)
+    XCTAssertTrue(declared, "configured static VID 3 must be declared on the other port")
+    _ = controller
+  }
+
+  // --exclude-vlan wins over configured static VLANs.
+  func testMVRPConfiguredStaticVlansRespectExclusions() async throws {
+    let (controller, mvrp, recorder) = try await _makeMVRP(
+      portIDs: [0, 1],
+      exclusions: [VLAN(vid: 3)],
+      staticVlans: [VLAN(vid: 2), VLAN(vid: 3)]
+    )
+    let added3 = await recorder.staticVlanAdd.contains { $0.vlan.vid == 3 }
+    XCTAssertFalse(added3, "excluded VID 3 must not be added to the bridge")
+    let registered3 = await _isVLANRegistered(mvrp, vid: 3, port: 0)
+    XCTAssertFalse(registered3, "excluded VID 3 must not be registered")
+    _ = controller
+  }
+
   // MARK: - Multi-value vector coalescing correctness
 
   // Coalescing attributes that don't form an exact increment chain corrupts them on the
@@ -2637,6 +2711,21 @@ final class MRPTests: XCTestCase {
       domains.contains(where: { $0.count > 1 }),
       "Domain vectors must not be coalesced into a multi-value vector"
     )
+    _ = controller
+  }
+
+  // Per-class srClassVIDs override the SR_PVID in transmitted Domain declarations
+  // (35.2.1.4); unset classes fall back to the SR_PVID.
+  func testDomainUsesConfiguredSRClassVID() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(
+      portIDs: [0],
+      srClassVIDs: [.B: VLAN(vid: 3)]
+    )
+    let ok = await _waitFor {
+      let vids = await _transmittedDomainVIDs(recorder, msrp)
+      return vids[.A] == SR_PVID.vid && vids[.B] == 3
+    }
+    XCTAssertTrue(ok, "Domain must declare srClassVID 2 for class A and 3 for class B")
     _ = controller
   }
 
@@ -3616,7 +3705,8 @@ private typealias MSRPEnqueuedEvent = EnqueuedEvent<MSRPApplication<MockPort>>
 extension MRPTests {
   private func _makeRecomputeMSRP(
     portIDs: [Int],
-    flags: MSRPApplicationFlags = .defaultFlags
+    flags: MSRPApplicationFlags = .defaultFlags,
+    srClassVIDs: [SRclassID: VLAN] = [:]
   ) async throws
     -> (MRPController<MockPort>, MSRPApplication<MockPort>, MRPTestRecorder)
   {
@@ -3627,7 +3717,11 @@ extension MRPTests {
       bridge: bridge,
       logger: Logger(label: "com.padl.MRPTests.recompute")
     )
-    let msrp = try await MSRPApplication(controller: controller, flags: flags)
+    let msrp = try await MSRPApplication(
+      controller: controller,
+      flags: flags,
+      srClassVIDs: srClassVIDs
+    )
     try await msrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
     return (controller, msrp, recorder)
   }

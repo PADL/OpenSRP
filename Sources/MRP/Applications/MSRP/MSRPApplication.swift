@@ -165,7 +165,7 @@ struct MSRPPortState<P: AVBPort>: Sendable {
     ) })
     srpClassVID = .init(uniqueKeysWithValues: msrp._allSRClassIDs.map { (
       $0,
-      msrp._srPVid
+      msrp._srClassVIDs[$0] ?? msrp._srPVid
     ) })
   }
 }
@@ -200,6 +200,7 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
   let _queues: [SRclassID: UInt]
 
   let _srPVid: VLAN
+  let _srClassVIDs: [SRclassID: VLAN]
   let _deltaBandwidths: [SRclassID: Int]
   let _maxTalkerAttributes: Int
   let _flags: MSRPApplicationFlags
@@ -263,6 +264,7 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     maxFanInPorts: Int = 0,
     latencyMaxFrameSize: UInt16 = 2000,
     srPVid: VLAN = SR_PVID,
+    srClassVIDs: [SRclassID: VLAN] = [:],
     maxSRClass: SRclassID = .B,
     queues: [SRclassID: UInt] = [.A: 4, .B: 3],
     deltaBandwidths: [SRclassID: Int]? = nil,
@@ -274,6 +276,7 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     _maxFanInPorts = maxFanInPorts
     _latencyMaxFrameSize = latencyMaxFrameSize
     _srPVid = srPVid
+    _srClassVIDs = srClassVIDs
     _maxSRClass = maxSRClass
     _queues = queues
     _deltaBandwidths = deltaBandwidths ?? DefaultDeltaBandwidths
