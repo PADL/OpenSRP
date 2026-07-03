@@ -812,6 +812,11 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     _bridgePort!
   }
 
+  // bridge's own System ID (priority + base MAC) for a Talker Failed FailedInfo (35.2.2.8.7)
+  var systemID: MSRPSystemID {
+    MSRPSystemID(id: 0x8000_0000_0000_0000 | UInt64(eui48: bridgePort.macAddress))
+  }
+
   private struct LinkLocalRXTaskKey: Hashable {
     let portID: P.ID
     let filterRegistration: FilterRegistration
@@ -1219,7 +1224,7 @@ extension LinuxBridge: MSRPAwareBridge {
     let numTXQueues = port.numTXQueues ?? 0
     guard numTXQueues > highestAvb + 1 else {
       guard forceAvbCapable else {
-        throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
+        throw MSRPFailure(systemID: systemID, failureCode: .egressPortIsNotAvbCapable)
       }
       return (nil, nil)
     }
@@ -1233,7 +1238,7 @@ extension LinuxBridge: MSRPAwareBridge {
     forceAvbCapable: Bool
   ) async throws {
     guard let _nlQDiscHandle else {
-      throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
+      throw MSRPFailure(systemID: systemID, failureCode: .egressPortIsNotAvbCapable)
     }
 
     let (legacyQueueCount, legacyQueueOffset) = try _legacyQueueParams(
@@ -1259,7 +1264,7 @@ extension LinuxBridge: MSRPAwareBridge {
     port: P
   ) async throws {
     guard let _nlQDiscHandle else {
-      throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
+      throw MSRPFailure(systemID: systemID, failureCode: .egressPortIsNotAvbCapable)
     }
 
     try await port._rtnl.remove(
@@ -1380,7 +1385,7 @@ extension LinuxBridge: MSRPAwareBridge {
     loCredit: Int
   ) async throws {
     guard let _nlQDiscHandle else {
-      throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
+      throw MSRPFailure(systemID: systemID, failureCode: .egressPortIsNotAvbCapable)
     }
 
     let removeShaper = hiCredit == 0 && loCredit == 0 && idleSlope == 0
