@@ -23,6 +23,7 @@ import AsyncExtensions
 import BinaryParsing
 import IEEE802
 import Logging
+import Synchronization
 import SystemPackage
 
 struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomStringConvertible,
@@ -75,7 +76,16 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
   var isAsCapable: Bool { true }
 
   let _portTcMaxLatency: Int
-  func getPortTcMaxLatency(for: SRclassPriority) async -> Int { _portTcMaxLatency }
+  // A real LinuxPort re-reads gPTP on every sample, so its per-hop latency can rise without the
+  // port object changing. Model that with a live per-id override the test can raise; absent one the
+  // port returns its construction-time value. A port id in _ptpNotReady throws instead, modelling
+  // gPTP without a meanLinkDelay yet (LinuxPort.getPortTcMaxLatency throws in that case).
+  static let _latencyOverrides = Mutex([Int: Int]())
+  static let _ptpNotReady = Mutex(Set<Int>())
+  func getPortTcMaxLatency(for _: SRclassPriority) async throws -> Int {
+    if MockPort._ptpNotReady.withLock({ $0.contains(id) }) { throw MRPError.ptpNotReady }
+    return MockPort._latencyOverrides.withLock { $0[id] } ?? _portTcMaxLatency
+  }
 
   let _pfcEnabledPriorities: Set<SRclassPriority>
   var pfcEnabledPriorities: Set<SRclassPriority> { get async throws { _pfcEnabledPriorities } }
@@ -1751,7 +1761,8 @@ final class MRPTests: XCTestCase {
       sourceMacAddress: [0x02, 0x00, 0x00, 0x00, 0x00, 0x0A]
     )
 
-    // the LeaveAll must trigger re-emission of the Registration Fixed VID 100 JoinIn within LeaveTime
+    // the LeaveAll must trigger re-emission of the Registration Fixed VID 100 JoinIn within
+    // LeaveTime
     let reasserted = await _waitFor(timeoutMs: 1500) {
       await _vlanJoinCount(recorder, mvrp, port: 0, vid: 100) > joinsBefore
     }
@@ -1764,8 +1775,10 @@ final class MRPTests: XCTestCase {
 
   // Field regression (periodic TX off + Extreme LeaveTime 1s): a talker-side peer LeaveAll must
   // not tear down our relayed Listener Ready toward the talker. leaveImmediate is on (MSRP default,
-  // Avnu 9.2) and the port is point-to-point, matching the field smFlags. If the Listener declaration
-  // toward the talker lapses to askingFailed/withdrawn across the LeaveAll+rejoin, the Extreme drops
+  // Avnu 9.2) and the port is point-to-point, matching the field smFlags. If the Listener
+  // declaration
+  // toward the talker lapses to askingFailed/withdrawn across the LeaveAll+rejoin, the Extreme
+  // drops
   // the reservation -> audio dropout.
   func testMSRPListenerSurvivesTalkerLeaveAllWithPeriodicDisabled() async throws {
     let recorder = MRPTestRecorder()
@@ -1790,7 +1803,8 @@ final class MRPTests: XCTestCase {
       msrp, port: 1, attributeType: .listener,
       value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready
     )
-    // we declare Listener Ready toward the talker on port 0 -- the declaration the Extreme registers
+    // we declare Listener Ready toward the talker on port 0 -- the declaration the Extreme
+    // registers
     let ready = await _waitFor { await _declaredListenerSubtype(msrp, streamID, port: 0) == .ready }
     XCTAssertTrue(ready, "Listener Ready must be declared toward the talker (port 0)")
 
@@ -1881,7 +1895,10 @@ final class MRPTests: XCTestCase {
     let recovered = await _waitFor(timeoutMs: 2500) {
       await _declaredListenerSubtype(msrp, streamID, port: 0) == .ready
     }
-    XCTAssertTrue(recovered, "Listener toward the talker must recover to Ready after the talker re-Joins")
+    XCTAssertTrue(
+      recovered,
+      "Listener toward the talker must recover to Ready after the talker re-Joins"
+    )
     _ = controller
   }
 
@@ -1905,7 +1922,8 @@ final class MRPTests: XCTestCase {
   }
 
   // MVRP uses PeriodicTransmission: a periodic tick re-asserts an active declaration
-  // (QA -> AA -> tx -> Join), keeping a VLAN registered on a short-LeaveTime peer between LeaveAlls.
+  // (QA -> AA -> tx -> Join), keeping a VLAN registered on a short-LeaveTime peer between
+  // LeaveAlls.
   func testMVRPPeriodicReassertsActiveDeclaration() async throws {
     let (controller, mvrp, recorder) = try await _makeMVRP(portIDs: [0, 1])
     // a peer registration on port 0 propagates to an active declaration on port 1
@@ -3501,7 +3519,7 @@ final class MRPTests: XCTestCase {
       MockPort(id: 0, isFullDuplex: false).isAvbCapable, "a half-duplex link is non-AVB-capable"
     )
     XCTAssertFalse(
-      MockPort(id: 0, linkSpeed: 10_000).isAvbCapable, "a 10 Mb/s link is non-AVB-capable"
+      MockPort(id: 0, linkSpeed: 10000).isAvbCapable, "a 10 Mb/s link is non-AVB-capable"
     )
     XCTAssertTrue(
       MockPort(id: 0, linkSpeed: 100_000).isAvbCapable, "a 100 Mb/s full-duplex link is AVB-capable"
@@ -3538,7 +3556,7 @@ final class MRPTests: XCTestCase {
   func testLateLinkPortFetchesPriorityMapAndDeclaresDomains() async throws {
     let recorder = MRPTestRecorder()
     // start sub-100 Mb/s (an effectively down link): not AVB capable
-    let ports: Set<MockPort> = [MockPort(id: 0, linkSpeed: 10_000)]
+    let ports: Set<MockPort> = [MockPort(id: 0, linkSpeed: 10000)]
     let bridge = MockBridge(ports: ports, recorder: recorder)
     let controller = try await MRPController(
       bridge: bridge,
@@ -4648,13 +4666,15 @@ extension MRPTests {
   private func _talkerAdvertise(
     _ streamID: MSRPStreamID,
     dest: EUI48 = [0x91, 0xE0, 0xF0, 0x00, 0x00, 0x01],
+    priority: SRclassPriority =
+      .CA, // .CA = SR class A, .EE = SR class B (DefaultSRClassPriorityMap)
     accumulatedLatency: UInt32 = 1000
   ) -> MSRPTalkerAdvertiseValue {
     MSRPTalkerAdvertiseValue(
       streamID: streamID,
       dataFrameParameters: MSRPDataFrameParameters(destinationAddress: dest, vlanIdentifier: 2),
       tSpec: MSRPTSpec(maxFrameSize: 64, maxIntervalFrames: 1),
-      priorityAndRank: MSRPPriorityAndRank(dataFramePriority: .CA, rank: false),
+      priorityAndRank: MSRPPriorityAndRank(dataFramePriority: priority, rank: false),
       accumulatedLatency: accumulatedLatency
     )
   }
@@ -5383,7 +5403,9 @@ extension MRPTests {
       )
     }
     // port 2 must still be reserved despite port 1's failure (no whole-plan abort)
-    let port2Programmed = await _waitFor { await recorder.fdbRegister.contains { $0.ports.contains(2) } }
+    let port2Programmed = await _waitFor {
+      await recorder.fdbRegister.contains { $0.ports.contains(2) }
+    }
     XCTAssertTrue(port2Programmed, "a failure on port 1 must not prevent port 2's reservation")
     // port 1 was not recorded as reserved, so a later recompute retries it
     let port1Programmed = await recorder.fdbRegister.contains { $0.ports.contains(1) }
@@ -5411,10 +5433,11 @@ extension MRPTests {
     _ = controller
   }
 
-  // 35.2.2.8.6: a bridge relaying a Talker Advertise increases its accumulatedLatency by the
-  // egress port's per-hop latency (the value getPortTcMaxLatency yields).
+  // 35.2.2.8.6: a bridge relaying a Talker Advertise adds the egress per-hop latency -- the
+  // class-independent terms (getPortTcMaxLatency) plus the SR-class measurement interval (term a).
   func testTalkerAdvertiseAccumulatesEgressPerHopLatency() async throws {
     let perHop = 12345
+    let classAMeasurementIntervalNs = 125_000 // SR class A, 35.2.2.8.6 a)
     // the talker arrives on port 0 and is relayed out port 1, which carries the per-hop latency
     let (controller, msrp, _) = try await _makeRecomputeMSRP(
       portIDs: [0, 1],
@@ -5433,8 +5456,194 @@ extension MRPTests {
     let advertise = await _declaredTalkerAdvertise(msrp, streamID, port: 1)
     XCTAssertEqual(
       advertise?.accumulatedLatency,
-      1000 + UInt32(perHop),
-      "the relayed advertise must add the egress per-hop latency to the received latency"
+      1000 + UInt32(perHop) + UInt32(classAMeasurementIntervalNs),
+      "the relayed advertise must add the egress per-hop latency (class-independent + class interval)"
+    )
+    _ = controller
+  }
+
+  // 35.2.2.8.6 term a): the per-hop latency is SR-class dependent -- a class B stream adds one
+  // class
+  // B measurement interval (250 us), twice the class A interval, on top of the same b/c/d terms.
+  func testTalkerAdvertisePerHopLatencyIsClassDependent() async throws {
+    let perHop = 12345
+    let classBMeasurementIntervalNs = 250_000 // SR class B, 35.2.2.8.6 a)
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(
+      portIDs: [0, 1],
+      portTcMaxLatency: [1: perHop]
+    )
+    let streamID = MSRPStreamID(0x0002_0000_0000_00AB)
+    try await _drive(
+      msrp,
+      port: 0,
+      attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID, priority: .EE), // .EE = SR class B
+      event: .JoinIn
+    )
+    let relayed = await _waitFor { await _declaredTalkerAdvertise(msrp, streamID, port: 1) != nil }
+    XCTAssertTrue(relayed, "class B advertise must propagate to the egress")
+    let advertise = await _declaredTalkerAdvertise(msrp, streamID, port: 1)
+    XCTAssertEqual(
+      advertise?.accumulatedLatency,
+      1000 + UInt32(perHop) + UInt32(classBMeasurementIntervalNs),
+      "a class B stream must add the 250 us class B measurement interval, not class A's 125 us"
+    )
+    _ = controller
+  }
+
+  // 35.2.2.8.6: the reported latency must not increase during the reservation's life. If a later
+  // event raises the egress per-hop latency above the value first declared (the initial
+  // guarantee), the Talker Advertise is converted to a Talker Failed with reportedLatencyHasChanged
+  // (code 7) rather than re-advertised with the higher value.
+  func testTalkerLatencyIncreaseConvertsToFailedCode7() async throws {
+    MockPort._latencyOverrides.withLock { $0.removeAll() }
+    defer { MockPort._latencyOverrides.withLock { $0.removeAll() } }
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(
+      portIDs: [0, 1, 2],
+      portTcMaxLatency: [1: 12345]
+    )
+    let streamID = MSRPStreamID(0x0001_0000_0000_00AC)
+    try await _drive(
+      msrp,
+      port: 0,
+      attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID),
+      event: .JoinIn
+    )
+    let relayed = await _waitFor { await _declaredTalkerAdvertise(msrp, streamID, port: 1) != nil }
+    XCTAssertTrue(relayed, "advertise must propagate to the egress and set the initial guarantee")
+
+    // gPTP re-measures a higher meanLinkDelay on port 1 (no port object change, no flap), then a
+    // topology change on an unrelated port triggers a recompute that re-samples the fresh latency
+    MockPort._latencyOverrides.withLock { $0[1] = 99999 }
+    var flapped = MockPort(id: 2, portTcMaxLatency: 0)
+    flapped.stpPortState = .blocking
+    let raised: Set<MockPort> = [
+      MockPort(id: 0, portTcMaxLatency: 0),
+      MockPort(id: 1, portTcMaxLatency: 12345),
+      flapped,
+    ]
+    try await msrp.didUpdate(contextIdentifier: MAPBaseSpanningTreeContext, with: raised)
+
+    let failed = await _waitFor {
+      await _declaredTalkerFailureCode(msrp, streamID, port: 1) == .reportedLatencyHasChanged
+    }
+    XCTAssertTrue(failed, "a latency increase must declare Talker Failed with code 7")
+    let advertise = await _declaredTalkerAdvertise(msrp, streamID, port: 1)
+    XCTAssertNil(advertise, "the Talker Advertise must no longer be declared once failed")
+    _ = controller
+  }
+
+  // 35.2.2.8.6: before gPTP supplies a meanLinkDelay the per-hop latency is provisional and must
+  // NOT become the reported-latency guarantee -- otherwise the stream fails the moment the real
+  // (larger) value arrives, even though nothing degraded.
+  func testProvisionalLatencyBeforePtpReadyDoesNotFailStream() async throws {
+    MockPort._latencyOverrides.withLock { $0.removeAll() }
+    MockPort._ptpNotReady.withLock { $0.removeAll() }
+    defer {
+      MockPort._latencyOverrides.withLock { $0.removeAll() }
+      MockPort._ptpNotReady.withLock { $0.removeAll() }
+    }
+    // gPTP has no meanLinkDelay on the egress (port 1) yet
+    MockPort._ptpNotReady.withLock { _ = $0.insert(1) }
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1, 2])
+    let streamID = MSRPStreamID(0x0001_0000_0000_00AD)
+    try await _drive(
+      msrp,
+      port: 0,
+      attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID),
+      event: .JoinIn
+    )
+    let relayed = await _waitFor { await _declaredTalkerAdvertise(msrp, streamID, port: 1) != nil }
+    XCTAssertTrue(
+      relayed,
+      "advertise must propagate even before gPTP is ready (provisional latency)"
+    )
+
+    // gPTP converges on a much larger real meanLinkDelay; a topology change on port 2 triggers a
+    // recompute that re-samples the real (larger) value. The provisional latency must not have been
+    // pinned as the guarantee, so the real value must not fail the stream.
+    MockPort._ptpNotReady.withLock { _ = $0.remove(1) }
+    MockPort._latencyOverrides.withLock { $0[1] = 500_000 }
+    var flapped = MockPort(id: 2, portTcMaxLatency: 0)
+    flapped.stpPortState = .blocking
+    try await msrp.didUpdate(
+      contextIdentifier: MAPBaseSpanningTreeContext,
+      with: [MockPort(id: 0), MockPort(id: 1), flapped]
+    )
+
+    // the recompute withdraws the now-blocked port 2 in the same pass, so its withdrawal signals
+    // that port 1 has been re-evaluated against the real latency
+    let recomputed = await _waitFor {
+      await _declaredTalkerAdvertise(msrp, streamID, port: 2) == nil
+    }
+    XCTAssertTrue(recomputed, "the flap recompute must run (blocked port 2 withdrawn)")
+    let code = await _declaredTalkerFailureCode(msrp, streamID, port: 1)
+    XCTAssertNil(
+      code,
+      "a provisional latency must not be pinned as the guarantee and fail the real value"
+    )
+    let advertise = await _declaredTalkerAdvertise(msrp, streamID, port: 1)
+    XCTAssertNotNil(advertise, "the stream must stay advertised, not convert to Talker Failed")
+    _ = controller
+  }
+
+  // 35.2.2.8.6: the reported-latency guarantee is dropped when the egress port is removed, so a
+  // stream that returns on the re-added port re-baselines rather than failing against a stale
+  // value.
+  func testPortRemovalClearsLatencyGuarantee() async throws {
+    MockPort._latencyOverrides.withLock { $0.removeAll() }
+    defer { MockPort._latencyOverrides.withLock { $0.removeAll() } }
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(
+      portIDs: [0, 1, 2],
+      portTcMaxLatency: [1: 12345]
+    )
+    let streamID = MSRPStreamID(0x0001_0000_0000_00AE)
+    try await _drive(
+      msrp,
+      port: 0,
+      attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID),
+      event: .JoinIn
+    )
+    let relayed = await _waitFor { await _declaredTalkerAdvertise(msrp, streamID, port: 1) != nil }
+    XCTAssertTrue(relayed, "advertise must set the initial guarantee on port 1")
+
+    // remove the egress, then re-add it at a much higher per-hop latency: the guarantee must be
+    // dropped with the port state so the returning stream re-baselines instead of failing
+    try await msrp.didRemove(
+      contextIdentifier: MAPBaseSpanningTreeContext,
+      with: Set([MockPort(id: 1)])
+    )
+    MockPort._latencyOverrides.withLock { $0[1] = 500_000 }
+    try await msrp.didAdd(
+      contextIdentifier: MAPBaseSpanningTreeContext,
+      with: Set([MockPort(id: 1)])
+    )
+
+    // flap port 2 to force a stream recompute; its withdrawal signals the re-added port 1 has been
+    // re-evaluated against the higher latency
+    var flapped = MockPort(id: 2, portTcMaxLatency: 0)
+    flapped.stpPortState = .blocking
+    try await msrp.didUpdate(
+      contextIdentifier: MAPBaseSpanningTreeContext,
+      with: [MockPort(id: 0), MockPort(id: 1), flapped]
+    )
+    let recomputed = await _waitFor {
+      await _declaredTalkerAdvertise(msrp, streamID, port: 2) == nil
+    }
+    XCTAssertTrue(recomputed, "the flap recompute must run (blocked port 2 withdrawn)")
+
+    let code = await _declaredTalkerFailureCode(msrp, streamID, port: 1)
+    XCTAssertNil(
+      code,
+      "a stale guarantee must not survive port removal and fail the returning stream"
+    )
+    let advertise = await _declaredTalkerAdvertise(msrp, streamID, port: 1)
+    XCTAssertNotNil(
+      advertise,
+      "the returning stream must stay advertised, not convert to Talker Failed"
     )
     _ = controller
   }
