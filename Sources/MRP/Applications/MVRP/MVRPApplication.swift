@@ -294,6 +294,9 @@ extension MVRPApplication {
       }
       // likewise, never delete a static VLAN on a peer Leave
       guard !_isStatic(vlan, port: port) else { return }
+      // 11.2.3.1: if no dynamic entry exists (e.g. the earlier FDB add failed), ignore the leave
+      // rather than deregister a VID that was never added.
+      guard _dynamicVIDs[port.id]?.contains(vlan) == true else { return }
       _logger
         .debug("MVRP: leave indication from port \(port) VID \(vlan.vid) source \(eventSource)")
       _dynamicVIDs[port.id]?.remove(vlan)
