@@ -313,6 +313,14 @@ private func _vlanRegistrarState(
   ).first { ($0.attributeValue as? VLAN)?.vid == vid }?.registrarState
 }
 
+// count of Join/New events transmitted for a VID on a port (re-declaration signal).
+private func _vlanJoinCount(
+  _ recorder: MRPTestRecorder, _ mvrp: MVRPApplication<MockPort>, port: Int, vid: UInt16
+) async -> Int {
+  await _transmittedVLANEvents(recorder, mvrp, port: port, vid: vid)
+    .filter { $0 == .JoinIn || $0 == .JoinMt || $0 == .New }.count
+}
+
 // is a group MAC declared (Applicant) by MMRP on a port?
 private func _isMMRPMacDeclared(
   _ mmrp: MMRPApplication<MockPort>, mac: EUI48, port: Int
@@ -1682,6 +1690,67 @@ final class MRPTests: XCTestCase {
     XCTAssertNil(txLAFAction)
     XCTAssertTrue(txLAFTxOpp) // Entered VP state
     XCTAssertEqual(applicant.description, "VP")
+  }
+
+  // Regression (commit 3d860bb disabled Periodic Transmission by default): with periodic TX off,
+  // a received LeaveAll must still re-assert an actively-declared attribute. Otherwise the peer's
+  // registrar leavetimer expires between LeaveAlls (the Extreme's is 1s) and it deregisters us,
+  // tearing down the stream reservation -> audio dropout. 10.7.2 makes LeaveAll the sole periodic
+  // refresh once periodic TX is disabled; Table 10-3 rLA! moves the Applicant QA->VP and the next
+  // tx! emits a Join. This test asserts that Join actually reaches the wire.
+  func testLeaveAllReassertsDeclarationWithPeriodicTransmissionDisabled() async throws {
+    let recorder = MRPTestRecorder()
+    // VID 100 is static on port 0 only -> Registration Fixed, emitting JoinIn as an emission rule
+    // (see testMVRPStaticVLANEmitsJoinInOnOwnPort). This is the SR_PVID shape that the Extreme
+    // registers and then flushes with its LeaveAll.
+    let ports: Set<MockPort> = [MockPort(id: 0, vlans: [2, 100]), MockPort(id: 1, vlans: [2])]
+    let bridge = MockBridge(ports: ports, recorder: recorder)
+    let controller = try await MRPController(
+      bridge: bridge,
+      logger: Logger(label: "com.padl.MRPTests.leaveall"),
+      // periodic TX DISABLED (Avnu ProAV default, commit 3d860bb); leaveTime 1s like the Extreme
+      timerConfiguration: MRPTimerConfiguration(leaveTime: .seconds(1), periodicTime: .zero)
+    )
+    let mvrp = try await MVRPApplication(controller: controller)
+    try await mvrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
+
+    // the Registration Fixed VLAN is emitted as JoinIn on its member port
+    let emitted = await _waitFor {
+      await _transmittedVLANEvents(recorder, mvrp, port: 0, vid: 100).contains(.JoinIn)
+    }
+    XCTAssertTrue(emitted, "VID 100 must be emitted as JoinIn initially")
+
+    // with periodic off the port goes quiet after the initial emission -- snapshot the Join count
+    try await Task.sleep(for: .seconds(1))
+    let joinsBefore = await _vlanJoinCount(recorder, mvrp, port: 0, vid: 100)
+
+    // a peer LeaveAll on port 0 flushes its registrars to LV; every registered attribute must be
+    // re-asserted within the peer's LeaveTime or it is dropped. Emulate the Extreme's LeaveAll.
+    let leaveAll = Message(
+      attributeType: MVRPAttributeType.vid.rawValue,
+      attributeList: [VectorAttribute(
+        leaveAllEvent: .LeaveAll,
+        firstValue: AnyValue(VLAN(vid: 100)),
+        attributeEvents: [], // numberOfValues == 0: a pure LeaveAll, no accompanying Join
+        applicationEvents: nil
+      )]
+    )
+    try await mvrp.rx(
+      pdu: MRPDU(protocolVersion: 0, messages: [leaveAll]),
+      for: MAPBaseSpanningTreeContext,
+      from: MockPort(id: 0),
+      sourceMacAddress: [0x02, 0x00, 0x00, 0x00, 0x00, 0x0A]
+    )
+
+    // the LeaveAll must trigger re-emission of the Registration Fixed VID 100 JoinIn within LeaveTime
+    let reasserted = await _waitFor(timeoutMs: 1500) {
+      await _vlanJoinCount(recorder, mvrp, port: 0, vid: 100) > joinsBefore
+    }
+    XCTAssertTrue(
+      reasserted,
+      "with periodic TX disabled, a LeaveAll must re-emit the Registration Fixed VID 100 JoinIn within LeaveTime"
+    )
+    _ = controller
   }
 
   func testCalculateBandwidthUsed8000PacketsPerSecond() throws {
