@@ -457,10 +457,11 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
     }
     // TX/combined queue count gates the credit-based shaper: AVB needs queues for SR class A,
     // class B and best effort, so require more than two. A DSA switch port doesn't implement
-    // ETHTOOL_GCHANNELS (no _channels), so fall back to IFLA_NUM_TX_QUEUES. mv88e6xxx reports 4
-    // (or 8); it may under-report the true count (e.g. 88E6352), but that only mis-sizes the exact
-    // legacy block in _legacyQueueParams -- for this boolean, 4 and 8 are both AVB capable.
-    guard let _channels else { return _rtnl.numTXQueues > 2 }
+    // ETHTOOL_GCHANNELS (no _channels) and its libnl num_tx_queues reads 0 in-process (the kernel
+    // reports the real count only to a full RTM_GETLINK, not the link objects here), so neither
+    // source is usable -- assume such a port is AVB capable. Its hardware egress queues are always
+    // present, and the duplex/speed gate above still makes a half-duplex/slow link a boundary.
+    guard let _channels else { return true }
     return _channels.current.tx > 2 || _channels.current.combined > 2
   }
 
