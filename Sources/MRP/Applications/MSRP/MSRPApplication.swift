@@ -472,6 +472,24 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     }
     if stpChanged { _forceUpdateActiveStreams() }
 
+    // A port whose link was down at startup was skipped for the priority-map fetch (it was not yet
+    // AVB capable). Now that it may have come up, fetch the map so it can declare SR domains: the
+    // mqprio qdisc exists independent of link state, but no TC notification fires on link-up, so
+    // without this a late-linking port would keep an empty map and never declare its domains.
+    if let bridge = (controller?.bridge as? any MSRPAwareBridge<P>) {
+      var fetchedMaps = [P.ID: SRClassPriorityMap]()
+      for port in context where port.isAvbCapable || _forceAvbCapable {
+        guard let index = _portStates.index(forKey: port.id),
+              _portStates.values[index].srClassPriorityMap.isEmpty,
+              let map = try? await bridge.getSRClassPriorityMap(port: port) else { continue }
+        fetchedMaps[port.id] = map
+      }
+      for (portID, map) in fetchedMaps {
+        guard let index = _portStates.index(forKey: portID) else { continue }
+        _portStates.values[index].srClassPriorityMap = map
+      }
+    }
+
     for port in context {
       _logger.debug("MSRP: re-declaring domains for port \(port)")
       try _declareDomains(port: port)

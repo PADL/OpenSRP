@@ -3531,6 +3531,39 @@ final class MRPTests: XCTestCase {
     _ = controller
   }
 
+  // A port whose link is down at startup is not AVB capable, so MSRP skips fetching its priority
+  // map and cannot declare SR domains. When the link later comes up, onContextUpdated must fetch
+  // the map (no TC notification fires on link-up) so the port can finally declare its domains --
+  // otherwise a late-linking port stays domain-less until mrpd restarts.
+  func testLateLinkPortFetchesPriorityMapAndDeclaresDomains() async throws {
+    let recorder = MRPTestRecorder()
+    // start sub-100 Mb/s (an effectively down link): not AVB capable
+    let ports: Set<MockPort> = [MockPort(id: 0, linkSpeed: 10_000)]
+    let bridge = MockBridge(ports: ports, recorder: recorder)
+    let controller = try await MRPController(
+      bridge: bridge,
+      logger: Logger(label: "com.padl.MRPTests.lateLink")
+    )
+    let msrp = try await MSRPApplication(controller: controller)
+    try await msrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
+
+    let mapBefore = try await msrp.withPortState(port: MockPort(id: 0)) { $0.srClassPriorityMap }
+    XCTAssertTrue(mapBefore.isEmpty, "a non-AVB port must not have a priority map at startup")
+    let domainsBefore = try await msrp.withPortState(port: MockPort(id: 0)) { $0.declaredDomains }
+    XCTAssertTrue(domainsBefore.isEmpty, "a non-AVB port must not declare SR domains")
+
+    // link comes up full-duplex gigabit: now AVB capable (MockPort equality is by id)
+    let up: Set<MockPort> = [MockPort(id: 0)]
+    try await msrp.didUpdate(contextIdentifier: MAPBaseSpanningTreeContext, with: up)
+
+    let mapAfter = try await msrp.withPortState(port: MockPort(id: 0)) { $0.srClassPriorityMap }
+    XCTAssertEqual(mapAfter, [.A: .CA, .B: .EE], "a late-linking port must fetch its priority map")
+    let domainsAfter = try await msrp.withPortState(port: MockPort(id: 0)) { $0.declaredDomains }
+    XCTAssertNotNil(domainsAfter[.A], "the port must declare its Class A domain once up")
+    XCTAssertNotNil(domainsAfter[.B], "the port must declare its Class B domain once up")
+    _ = controller
+  }
+
   // Two streams whose StreamID/destination chain but whose AccumulatedLatency differs must not
   // coalesce: the receiver rebuilds value[1] as FirstValue.makeValue(relativeTo: 1), which carries
   // the FirstValue's latency (35.2.2.8.6). The coalescer compares serialized encodings (which
