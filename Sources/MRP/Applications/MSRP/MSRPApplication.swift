@@ -1672,6 +1672,10 @@ extension MSRPApplication {
       let (sum, overflow) = latency.addingReportingOverflow(UInt32(clamping: l))
       latency = overflow ? .max : sum
 
+      // re-check after the awaits above: a concurrent withdraw may have re-queued the stream, in
+      // which case emitting from this stale plan would advertise a since-withdrawn declaration
+      if _pendingStreams.contains(streamID) { return }
+
       // 35.2.6: a type change (e.g. Advertise->Failed) behaves as if the old declaration was
       // withdrawn before the new one, so leave the opposite declared Talker type first.
       let declarationType: MSRPDeclarationType = failure == nil ? .talkerAdvertise : .talkerFailed
@@ -1736,10 +1740,20 @@ extension MSRPApplication {
 
       // idempotency: only touch the kernel when the reservation actually changed
       if _reservations[participant.port.id]?[streamID] != desired {
-        try await _updatePortParameters(
-          port: participant.port, streamID: streamID,
-          mergedDeclarationType: declarationType, talkerRegistration: boundTalker
-        )
+        do {
+          try await _updatePortParameters(
+            port: participant.port, streamID: streamID,
+            mergedDeclarationType: declarationType, talkerRegistration: boundTalker
+          )
+        } catch {
+          // don't abort the whole plan (nor record the reservation) on one port's failure:
+          // the other ports and the withdraw sweep still run, and the unrecorded reservation is
+          // retried on the next recompute via the idempotency check above
+          _logger.error(
+            "MSRP: failed to program reservation for stream \(streamID) on port \(participant.port): \(error)"
+          )
+          continue
+        }
       }
       _reservations[participant.port.id, default: [:]][streamID] = desired
     }

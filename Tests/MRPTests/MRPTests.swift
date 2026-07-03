@@ -140,6 +140,17 @@ actor MRPTestRecorder {
     failVlanRegistrationVids.contains(vid)
   }
 
+  // ports whose credit-based-shaper program MockBridge should reject (simulate a transient error)
+  private var failCbsPorts = Set<Int>()
+
+  func setFailCbs(ports: Set<Int>) {
+    failCbsPorts = ports
+  }
+
+  func shouldFailCbs(port: Int) -> Bool {
+    failCbsPorts.contains(port)
+  }
+
   func recordCBS(port: Int, queue: UInt, idleSlope: Int) {
     cbs.append((port, queue, idleSlope))
   }
@@ -448,6 +459,9 @@ extension MockBridge: MSRPAwareBridge {
     hiCredit: Int,
     loCredit: Int
   ) async throws {
+    if await recorder.shouldFailCbs(port: port.id) {
+      throw MRPError.internalError // simulate a transient shaper-programming error
+    }
     await recorder.recordCBS(port: port.id, queue: queue, idleSlope: idleSlope)
   }
 
@@ -4836,6 +4850,31 @@ extension MRPTests {
       fdb.contains { $0.ports.contains(1) },
       "a blocked listener port must not get an FDB reservation"
     )
+    _ = controller
+  }
+
+  // A per-port reservation-programming failure must not abort the whole recompute: another
+  // listener port is still programmed (the failed one is retried later via the idempotency check).
+  func testRecomputeReservationFailureOnOnePortStillProgramsOthers() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0, 1, 2])
+    await recorder.setFailCbs(ports: [1]) // port 1's shaper program throws
+    let streamID = MSRPStreamID(0x0001_0000_0000_00C0)
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .JoinIn
+    )
+    for listenerPort in [1, 2] {
+      try await _drive(
+        msrp, port: listenerPort, attributeType: .listener,
+        value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready
+      )
+    }
+    // port 2 must still be reserved despite port 1's failure (no whole-plan abort)
+    let port2Programmed = await _waitFor { await recorder.fdbRegister.contains { $0.ports.contains(2) } }
+    XCTAssertTrue(port2Programmed, "a failure on port 1 must not prevent port 2's reservation")
+    // port 1 was not recorded as reserved, so a later recompute retries it
+    let port1Programmed = await recorder.fdbRegister.contains { $0.ports.contains(1) }
+    XCTAssertFalse(port1Programmed, "the failed port must not be recorded as reserved")
     _ = controller
   }
 
