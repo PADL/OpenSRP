@@ -1290,23 +1290,21 @@ final class MRPTests: XCTestCase {
     XCTAssertEqual(deserializedHeader1.leaveAllEvent, .NullLeaveAllEvent)
     XCTAssertEqual(deserializedHeader1.numberOfValues, 0x1234)
 
-    // Test with LeaveAll (1) and value 0x0234
+    // Test with LeaveAll (1) and value 0x0234: the LeaveAll bit is bit 13, so
+    // (1 << 13) | 0x0234 = 0x2234
     let header2 = VectorHeader(leaveAllEvent: .LeaveAll, numberOfValues: 0x0234)
 
     serializationContext = SerializationContext()
     try header2.serialize(into: &serializationContext)
 
-    let expectedBytes2: [UInt8] = [0x02, 0x34] // Actual result from test is [2, 52]
+    let expectedBytes2: [UInt8] = [0x22, 0x34]
     XCTAssertEqual(serializationContext.bytes, expectedBytes2)
 
     let deserializedHeader2 = try expectedBytes2.withParserSpan { input in
       try VectorHeader(parsing: &input)
     }
 
-    XCTAssertEqual(
-      deserializedHeader2.leaveAllEvent,
-      .NullLeaveAllEvent
-    ) // [0x02, 0x34] decodes to NullLeaveAllEvent
+    XCTAssertEqual(deserializedHeader2.leaveAllEvent, .LeaveAll)
     XCTAssertEqual(deserializedHeader2.numberOfValues, 0x0234)
   }
 

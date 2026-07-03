@@ -118,7 +118,9 @@ struct VectorHeader: Sendable, Equatable, Hashable, SerDes {
   }
 
   func serialize(into serializationContext: inout SerializationContext) throws {
-    let value = UInt16(leaveAllEvent.rawValue << 13) | UInt16(numberOfValues & 0x1FFF)
+    // widen before the shift: leaveAllEvent.rawValue is UInt8, so `rawValue << 13` in UInt8
+    // arithmetic overshifts its 8-bit width and drops the LeaveAll bit (10.8.2.6)
+    let value = (UInt16(leaveAllEvent.rawValue) << 13) | (numberOfValues & 0x1FFF)
     serializationContext.serialize(uint16: value)
   }
 }
