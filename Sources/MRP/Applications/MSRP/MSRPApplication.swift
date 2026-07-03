@@ -94,12 +94,9 @@ protocol MSRPAwareBridge<P>: Bridge where P: AVBPort {
   func getSRClassPriorityMap(port: P) async throws -> SRClassPriorityMap?
 
   var srClassPriorityMapNotifications: AnyAsyncSequence<SRClassPriorityMapNotification<P>> { get }
-}
 
-public extension AVBPort {
-  var systemID: MSRPSystemID {
-    MSRPSystemID(id: 0x8000_0000_0000_0000 | UInt64(eui48: macAddress))
-  }
+  // bridge's own System ID (priority + base MAC) for a Talker Failed FailedInfo (35.2.2.8.7)
+  var systemID: MSRPSystemID { get async }
 }
 
 private let DefaultSRClassPriorityMap: SRClassPriorityMap = [.A: .CA, .B: .EE]
@@ -215,6 +212,8 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
   fileprivate var _portStates: [P.ID: MSRPPortState<P>] = [:]
   fileprivate let _mmrp: MMRPApplication<P>?
   fileprivate var _priorityMapNotificationTask: Task<(), Error>?
+  // bridge System ID cached from the (async) bridge base MAC for the synchronous recompute path
+  fileprivate var _bridgeSystemID: MSRPSystemID?
 
   // Desired declarations + reservations for one stream
   private struct StreamPlan {
@@ -363,6 +362,7 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
       _logger.error("MSRP: bridge is not MSRP-aware, cannot declare domains")
       return
     }
+    _bridgeSystemID = await bridge.systemID
 
     for port in context {
       await _setupFlowControl(port: port)
@@ -477,6 +477,7 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     // mqprio qdisc exists independent of link state, but no TC notification fires on link-up, so
     // without this a late-linking port would keep an empty map and never declare its domains.
     if let bridge = (controller?.bridge as? any MSRPAwareBridge<P>) {
+      _bridgeSystemID = await bridge.systemID
       var fetchedMaps = [P.ID: SRClassPriorityMap]()
       for port in context where port.isAvbCapable || _forceAvbCapable {
         guard let index = _portStates.index(forKey: port.id),
@@ -994,6 +995,12 @@ extension MSRPApplication {
       .union([provisional])
   }
 
+  // FailedInfo BridgeID (35.2.2.8.7): the bridge's own System ID, or the zero sentinel when it is
+  // not yet cached (before onContextAdded, or on a non-MSRP-aware bridge). Zero is deliberate: a
+  // port-MAC-derived guess would be a plausible-but-wrong BridgeID that could mislead a Listener,
+  // whereas zero reads unambiguously as "System ID unknown".
+  private var _systemID: MSRPSystemID { _bridgeSystemID ?? MSRPSystemID(id: 0) }
+
   // Admission control with preemption (Avnu §9.1): nil if the talker is admitted on the port,
   // otherwise the failure to declare — streamPreemptedByHigherRank when a more important stream
   // displaced it, insufficientBandwidth when it simply does not fit.
@@ -1015,7 +1022,7 @@ extension MSRPApplication {
         _compareStreamImportance(port: port, portState: portState, other, provisional)
     }
     return MSRPFailure(
-      systemID: port.systemID,
+      systemID: _systemID,
       failureCode: lostToHigher ? .streamPreemptedByHigherRank : .insufficientBandwidth
     )
   }
@@ -1045,12 +1052,12 @@ extension MSRPApplication {
     let port = participant.port
     do {
       guard let portState = try? withPortState(port: port, { $0 }) else {
-        throw MSRPFailure(systemID: port.systemID, failureCode: .insufficientBridgeResources)
+        throw MSRPFailure(systemID: _systemID, failureCode: .insufficientBridgeResources)
       }
 
       guard portState.msrpPortEnabledStatus else {
         _logger.error("MSRP: port \(port) is not enabled")
-        throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
+        throw MSRPFailure(systemID: _systemID, failureCode: .egressPortIsNotAvbCapable)
       }
 
       if let existingTalkerRegistration = _findTalkerRegistration(
@@ -1062,7 +1069,7 @@ extension MSRPApplication {
             "MSRP: stream \(talker.streamID) is already registered on port \(port) with a different FirstValue"
           )
         throw MSRPFailure(
-          systemID: port.systemID,
+          systemID: _systemID,
           failureCode: .changeInFirstValueForRegisteredStreamID
         )
       }
@@ -1075,7 +1082,7 @@ extension MSRPApplication {
         _logger.error(
           "MSRP: stream \(talker.streamID) destination address is not multicast/local"
         )
-        throw MSRPFailure(systemID: port.systemID, failureCode: .useDifferentDestinationAddress)
+        throw MSRPFailure(systemID: _systemID, failureCode: .useDifferentDestinationAddress)
       }
 
       // 35.2.2.8.3: only one Stream is allowed per destination_address
@@ -1087,7 +1094,7 @@ extension MSRPApplication {
           "MSRP: stream \(talker.streamID) destination address already in use by another stream"
         )
         throw MSRPFailure(
-          systemID: port.systemID, failureCode: .streamDestinationAddressAlreadyInUse
+          systemID: _systemID, failureCode: .streamDestinationAddressAlreadyInUse
         )
       }
 
@@ -1100,19 +1107,19 @@ extension MSRPApplication {
           "MSRP: priority \(talker.priorityAndRank) is not an SR class priority on port \(port)"
         )
         throw MSRPFailure(
-          systemID: port.systemID, failureCode: .requestedPriorityIsNotAnSRClassPriority
+          systemID: _systemID, failureCode: .requestedPriorityIsNotAnSRClassPriority
         )
       }
 
       guard portState.srpDomainBoundaryPort[srClassID] != true else {
         _logger
           .error("MSRP: port \(port) is a SRP domain boundary port for \(talker.priorityAndRank)")
-        throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
+        throw MSRPFailure(systemID: _systemID, failureCode: .egressPortIsNotAvbCapable)
       }
 
       guard !_isFanInPortLimitReached() else {
         _logger.error("MSRP: fan in port limit reached")
-        throw MSRPFailure(systemID: port.systemID, failureCode: .fanInPortLimitReached)
+        throw MSRPFailure(systemID: _systemID, failureCode: .fanInPortLimitReached)
       }
 
       // A zero MaxIntervalFrames is a degenerate (zero-bandwidth) TSpec; reject it rather than
@@ -1121,14 +1128,14 @@ extension MSRPApplication {
       // it still propagates as a Talker Failed toward the Listener.
       guard talker.tSpec.maxIntervalFrames != 0 else {
         _logger.error("MSRP: MaxIntervalFrames cannot be zero")
-        throw MSRPFailure(systemID: port.systemID, failureCode: .insufficientBridgeResources)
+        throw MSRPFailure(systemID: _systemID, failureCode: .insufficientBridgeResources)
       }
 
       // MaxFrameSize (35.2.2.8.4) and port.mtu both exclude media framing overhead, so compare
       // directly; calcFrameSize()'s overhead is only for bandwidth, not this media-fit test
       guard UInt(talker.tSpec.maxFrameSize) <= port.mtu else {
         _logger.error("MSRP: MaxFrameSize \(talker.tSpec.maxFrameSize) is too large for media")
-        throw MSRPFailure(systemID: port.systemID, failureCode: .maxFrameSizeTooLargeForMedia)
+        throw MSRPFailure(systemID: _systemID, failureCode: .maxFrameSizeTooLargeForMedia)
       }
 
       if let failure = _admissionFailure(
@@ -1143,7 +1150,7 @@ extension MSRPApplication {
       throw error
     } catch {
       _logger.error("MSRP: cannot bridge talker: generic error \(error)")
-      throw MSRPFailure(systemID: port.systemID, failureCode: .outOfMSRPResources)
+      throw MSRPFailure(systemID: _systemID, failureCode: .outOfMSRPResources)
     }
   }
 

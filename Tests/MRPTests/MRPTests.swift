@@ -489,6 +489,8 @@ extension MockBridge: MSRPAwareBridge {
   var srClassPriorityMapNotifications: AnyAsyncSequence<SRClassPriorityMapNotification<P>> {
     AsyncEmptySequence<SRClassPriorityMapNotification<P>>().eraseToAnyAsyncSequence()
   }
+
+  var systemID: MSRPSystemID { MSRPSystemID(id: 0x8000_FFFF_FFFF_FFFF) }
 }
 
 extension MockBridge: MMRPAwareBridge {
