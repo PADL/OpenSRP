@@ -4086,39 +4086,31 @@ final class MRPTests: XCTestCase {
     )
   }
 
-  func testApplicantLA_txLA_TransitionDependsOnRegistrarState() {
-    // Test that LA state on txLA! transitions based on registrar state
-    let unregisteredFlags: StateMachineHandlerFlags = []
-    let registeredState = Registrar.State.IN
-
-    // Test LA with txLA! when unregistered - should stay in LA
+  // Table 10-3: LA/txLA! -> LO unconditionally (fn 2 excludes Applicant-Only from txLA!, so fn 1
+  // never applies) -- independent of Registrar state, matching txLAF!.
+  func testApplicantLA_txLA_GoesToLeavingObserverRegardlessOfRegistrar() {
+    // unregistered (Registrar MT): LA -> LO
     let applicant1 = Applicant()
-    _ = applicant1.action(for: .New, flags: unregisteredFlags) // VO -> VN
-    _ = applicant1.action(for: .tx, flags: unregisteredFlags) // VN -> AN
-    // AN -> AA (not QA): the Registrar is MT here, Table 10-3 fn 8
-    _ = applicant1.action(for: .tx, flags: unregisteredFlags) // AN -> AA
-    _ = applicant1.action(for: .Lv, flags: unregisteredFlags) // AA -> LA
+    _ = applicant1.action(for: .New, flags: []) // VO -> VN
+    _ = applicant1.action(for: .tx, flags: []) // VN -> AN
+    _ = applicant1.action(for: .tx, flags: []) // AN -> AA (Registrar MT, fn 8)
+    _ = applicant1.action(for: .Lv, flags: []) // AA -> LA
     XCTAssertEqual(applicant1.description, "LA")
-
-    let (action1, _) = applicant1.action(for: .txLA, flags: unregisteredFlags)
+    let (action1, _) = applicant1.action(for: .txLA, flags: [])
     XCTAssertEqual(action1, .s_)
-    XCTAssertEqual(applicant1.description, "LA", "LA should stay in LA on txLA! when unregistered")
+    XCTAssertEqual(applicant1.description, "LO", "LA/txLA! -> LO even when unregistered")
 
-    // Test LA with txLA! when registered - should transition to LO
+    // registered (Registrar IN): LA -> LO
     let applicant2 = Applicant()
-    _ = applicant2.action(for: .New, registrarState: registeredState, flags: []) // VO -> VN
-    _ = applicant2.action(for: .tx, registrarState: registeredState, flags: []) // VN -> AN
-    _ = applicant2.action(for: .tx, registrarState: registeredState, flags: []) // AN -> QA
-    _ = applicant2.action(for: .Lv, registrarState: registeredState, flags: []) // QA -> LA
+    let registered = Registrar.State.IN
+    _ = applicant2.action(for: .New, registrarState: registered, flags: []) // VO -> VN
+    _ = applicant2.action(for: .tx, registrarState: registered, flags: []) // VN -> AN
+    _ = applicant2.action(for: .tx, registrarState: registered, flags: []) // AN -> QA
+    _ = applicant2.action(for: .Lv, registrarState: registered, flags: []) // QA -> LA
     XCTAssertEqual(applicant2.description, "LA")
-
-    let (action2, _) = applicant2.action(for: .txLA, registrarState: registeredState, flags: [])
+    let (action2, _) = applicant2.action(for: .txLA, registrarState: registered, flags: [])
     XCTAssertEqual(action2, .s_)
-    XCTAssertEqual(
-      applicant2.description,
-      "LO",
-      "LA should transition to LO on txLA! when registered"
-    )
+    XCTAssertEqual(applicant2.description, "LO", "LA/txLA! -> LO when registered")
   }
 }
 

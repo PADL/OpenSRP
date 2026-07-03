@@ -275,8 +275,9 @@ private extension Applicant.State {
         action = event == .txLA ? .sJ : .sJ_
       case .LA:
         if event == .txLA {
+          // Table 10-3: LA/txLA! -> LO unconditionally (matches txLAF!), not gated on registration
           action = .s_
-          if registrarState.isRegistered { self = .LO }
+          self = .LO
         } else {
           action = .sL
           self = .VO
