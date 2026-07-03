@@ -42,7 +42,8 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
 
   var isEnabled: Bool { true }
 
-  var isPointToPoint: Bool { true }
+  // full duplex is a point-to-point MAC (mirrors LinuxPort._operPointToPointMAC)
+  var isPointToPoint: Bool { _isFullDuplex }
 
   var name: String { "eth\(id)" }
 
@@ -62,10 +63,14 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
   let _mtu: UInt
   var mtu: UInt { _mtu }
 
-  var linkSpeed: UInt { 1_000_000 }
+  let _linkSpeed: UInt
+  var linkSpeed: UInt { _linkSpeed }
 
-  // mirror LinuxPort: an MTU above the AVB max frame size is not AVB capable
-  var isAvbCapable: Bool { _mtu <= AVBMaxFrameSize }
+  let _isFullDuplex: Bool
+
+  // mirror LinuxPort: a port is AVB capable only with an MTU at or below the AVB max frame size,
+  // a full-duplex link and a link speed of at least 100 Mb/s (IEEE 802.1BA-2011 §6.4 / Table 6.1)
+  var isAvbCapable: Bool { _mtu <= AVBMaxFrameSize && _isFullDuplex && _linkSpeed >= 100_000 }
 
   var isAsCapable: Bool { true }
 
@@ -86,6 +91,8 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
     dynamicVlans: Set<UInt16> = [],
     pfcEnabledPriorities: Set<SRclassPriority> = [],
     mtu: UInt = 1500,
+    linkSpeed: UInt = 1_000_000,
+    isFullDuplex: Bool = true,
     portTcMaxLatency: Int = 0
   ) {
     self.id = id
@@ -93,6 +100,8 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
     _vlans = vlans
     _dynamicVlans = dynamicVlans
     _mtu = mtu
+    _linkSpeed = linkSpeed
+    _isFullDuplex = isFullDuplex
     _pfcEnabledPriorities = pfcEnabledPriorities
     _portTcMaxLatency = portTcMaxLatency
   }
@@ -3481,6 +3490,44 @@ final class MRPTests: XCTestCase {
     let boundary = try await msrp
       .withPortState(port: MockPort(id: 0)) { $0.srpDomainBoundaryPort[.A] }
     XCTAssertEqual(boundary, true, "a non-AVB port must be an SRP domain boundary port")
+    _ = controller
+  }
+
+  // A half-duplex or sub-100 Mb/s link does not support AVB traffic, so the port is an SRP domain
+  // boundary port (IEEE 802.1BA-2011 §6.4 / Table 6.1). This is what makes the bridge convert a
+  // registered Talker Advertise to a Talker Failed (egressPortIsNotAvbCapable) out that port.
+  func testHalfDuplexOrSlowPortIsNotAVBCapable() async throws {
+    XCTAssertFalse(
+      MockPort(id: 0, isFullDuplex: false).isAvbCapable, "a half-duplex link is non-AVB-capable"
+    )
+    XCTAssertFalse(
+      MockPort(id: 0, linkSpeed: 10_000).isAvbCapable, "a 10 Mb/s link is non-AVB-capable"
+    )
+    XCTAssertTrue(
+      MockPort(id: 0, linkSpeed: 100_000).isAvbCapable, "a 100 Mb/s full-duplex link is AVB-capable"
+    )
+
+    // start full-duplex/AVB-capable, then renegotiate to half-duplex mid-run: onContextUpdated
+    // must disable MSRP on the port so a talker registered on another port fails out of it
+    let recorder = MRPTestRecorder()
+    let ports: Set<MockPort> = [MockPort(id: 0)]
+    let bridge = MockBridge(ports: ports, recorder: recorder)
+    let controller = try await MRPController(
+      bridge: bridge,
+      logger: Logger(label: "com.padl.MRPTests.halfDuplex")
+    )
+    let msrp = try await MSRPApplication(controller: controller)
+    try await msrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
+    let enabledBefore = try await msrp
+      .withPortState(port: MockPort(id: 0)) { $0.msrpPortEnabledStatus }
+    XCTAssertTrue(enabledBefore, "a full-duplex gigabit port must start AVB capable")
+
+    // MockPort equality is by id, so this replaces the port state for id 0
+    let halfDuplex: Set<MockPort> = [MockPort(id: 0, linkSpeed: 100_000, isFullDuplex: false)]
+    try await msrp.didUpdate(contextIdentifier: MAPBaseSpanningTreeContext, with: halfDuplex)
+    let enabledAfter = try await msrp
+      .withPortState(port: MockPort(id: 0)) { $0.msrpPortEnabledStatus }
+    XCTAssertFalse(enabledAfter, "a renegotiated half-duplex port must have MSRP disabled")
     _ = controller
   }
 
