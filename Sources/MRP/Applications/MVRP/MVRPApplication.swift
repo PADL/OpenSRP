@@ -44,6 +44,8 @@ public actor MVRPApplication<P: Port>: BaseApplication, BaseApplicationEventObse
   // MVRP uses the base 802.1Q leavetimer (Avnu §9.2 immediate leave is MSRP-only)
   public nonisolated var registrarLeaveImmediate: Bool { false }
 
+  public nonisolated var usePeriodicTransmission: Bool { true }
+
   public nonisolated var validAttributeTypes: ClosedRange<AttributeType> {
     MVRPAttributeType.validAttributeTypes
   }
@@ -192,8 +194,6 @@ public actor MVRPApplication<P: Port>: BaseApplication, BaseApplicationEventObse
   }
 
   public func periodic(for contextIdentifier: MAPContextIdentifier?) async throws {
-    // 5.4.4 the Periodic Transmission state machine (10.7.10) is specifically
-    // excluded from MSRP
     try apply(for: contextIdentifier) { participant in
       try participant.periodic()
     }

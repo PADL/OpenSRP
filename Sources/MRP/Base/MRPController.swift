@@ -516,6 +516,8 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
     _periodicTimer = Timer(label: "periodictimer") { [weak self] in
       guard let self else { return }
       try await _apply { @Sendable application in
+        // Avnu ProAV Bridge §9.1 disables PeriodicTransmission for MSRP only (10.7.10)
+        guard application.usePeriodicTransmission else { return }
         try await application.periodic(for: nil)
       }
       await _restartPeriodicTimer()

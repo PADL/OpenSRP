@@ -70,6 +70,8 @@ public actor MMRPApplication<P: Port>: BaseApplication, BaseApplicationEventObse
   // MMRP uses the base 802.1Q leavetimer (Avnu §9.2 immediate leave is MSRP-only)
   public nonisolated var registrarLeaveImmediate: Bool { false }
 
+  public nonisolated var usePeriodicTransmission: Bool { true }
+
   public nonisolated var validAttributeTypes: ClosedRange<AttributeType> {
     MMRPAttributeType.validAttributeTypes
   }

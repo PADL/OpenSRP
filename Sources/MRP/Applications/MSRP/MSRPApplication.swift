@@ -261,6 +261,10 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
 
   nonisolated var _ignoreAsCapable: Bool { _flags.contains(.ignoreAsCapable) }
   public nonisolated var registrarLeaveImmediate: Bool { _flags.contains(.leaveImmediate) }
+
+  // 5.4.4 the Periodic Transmission state machine (10.7.10) is specifically
+  // excluded from MSRP (Avnu ProAV Bridge §9.1)
+  public nonisolated var usePeriodicTransmission: Bool { false }
   fileprivate nonisolated var _talkerPruning: Bool { _flags.contains(.talkerPruning) }
 
   public init(
@@ -745,8 +749,7 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
   }
 
   public func periodic(for contextIdentifier: MAPContextIdentifier? = nil) async throws {
-    // 5.4.4 the Periodic Transmission state machine (10.7.10) is specifically
-    // excluded from MSRP
+    // not invoked: usePeriodicTransmission is false (5.4.4 excludes MSRP)
   }
 }
 
