@@ -1753,6 +1753,129 @@ final class MRPTests: XCTestCase {
     _ = controller
   }
 
+  // Field regression (periodic TX off + Extreme LeaveTime 1s): a talker-side peer LeaveAll must
+  // not tear down our relayed Listener Ready toward the talker. leaveImmediate is on (MSRP default,
+  // Avnu 9.2) and the port is point-to-point, matching the field smFlags. If the Listener declaration
+  // toward the talker lapses to askingFailed/withdrawn across the LeaveAll+rejoin, the Extreme drops
+  // the reservation -> audio dropout.
+  func testMSRPListenerSurvivesTalkerLeaveAllWithPeriodicDisabled() async throws {
+    let recorder = MRPTestRecorder()
+    let ports = Set([0, 1].map { MockPort(id: $0) })
+    let bridge = MockBridge(ports: ports, recorder: recorder)
+    let controller = try await MRPController(
+      bridge: bridge,
+      logger: Logger(label: "com.padl.MRPTests.leaveall.msrp"),
+      timerConfiguration: MRPTimerConfiguration(leaveTime: .seconds(1), periodicTime: .zero)
+    )
+    let msrp = try await MSRPApplication(controller: controller, flags: .defaultFlags)
+    XCTAssertTrue(msrp.registrarLeaveImmediate, "MSRP leaveImmediate must be on (Avnu 9.2)")
+    try await msrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
+    let streamID = MSRPStreamID(0x0001_0000_0000_0001)
+
+    // peer Talker on port 0 (the Extreme), peer Listener Ready on port 1 (the endpoint downstream)
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .JoinIn
+    )
+    try await _drive(
+      msrp, port: 1, attributeType: .listener,
+      value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready
+    )
+    // we declare Listener Ready toward the talker on port 0 -- the declaration the Extreme registers
+    let ready = await _waitFor { await _declaredListenerSubtype(msrp, streamID, port: 0) == .ready }
+    XCTAssertTrue(ready, "Listener Ready must be declared toward the talker (port 0)")
+
+    // the talker-side peer sends a LeaveAll (flushing its registrars to LV), then promptly re-Joins
+    // the Talker (its periodic/re-declaration) -- exactly the Extreme's every-LeaveAllTime cycle
+    let leaveAll = Message(
+      attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
+      attributeList: [VectorAttribute(
+        leaveAllEvent: .LeaveAll,
+        firstValue: AnyValue(_talkerAdvertise(streamID)),
+        attributeEvents: [], applicationEvents: nil
+      )]
+    )
+    try await msrp.rx(
+      pdu: MRPDU(protocolVersion: 0, messages: [leaveAll]),
+      for: MAPBaseSpanningTreeContext, from: MockPort(id: 0),
+      sourceMacAddress: [0x02, 0x00, 0x00, 0x00, 0x00, 0x0A]
+    )
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .JoinIn
+    )
+
+    // across the LeaveAll+rejoin window the Listener declaration toward the talker must stay Ready
+    for _ in 0..<6 {
+      try await Task.sleep(for: .milliseconds(250))
+      let s = await _declaredListenerSubtype(msrp, streamID, port: 0)
+      XCTAssertEqual(
+        s, .ready,
+        "Listener toward the talker must remain Ready across a talker LeaveAll+rejoin (periodic off)"
+      )
+    }
+    _ = controller
+  }
+
+  // The talker leavetimer wins the race: after a LeaveAll the talker reaches MT (Listener is torn
+  // down, correctly), then the talker re-Joins. The Listener toward the talker MUST recover to
+  // Ready. A stuck-withdrawn/askingFailed here is the field dropout that never re-arms.
+  func testMSRPListenerRecoversAfterTalkerLeaveAllTimeout() async throws {
+    let recorder = MRPTestRecorder()
+    let ports = Set([0, 1].map { MockPort(id: $0) })
+    let bridge = MockBridge(ports: ports, recorder: recorder)
+    let controller = try await MRPController(
+      bridge: bridge,
+      logger: Logger(label: "com.padl.MRPTests.leaveall.recover"),
+      timerConfiguration: MRPTimerConfiguration(leaveTime: .seconds(1), periodicTime: .zero)
+    )
+    let msrp = try await MSRPApplication(controller: controller, flags: .defaultFlags)
+    try await msrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
+    let streamID = MSRPStreamID(0x0001_0000_0000_0001)
+
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .JoinIn
+    )
+    try await _drive(
+      msrp, port: 1, attributeType: .listener,
+      value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready
+    )
+    let ready = await _waitFor { await _declaredListenerSubtype(msrp, streamID, port: 0) == .ready }
+    XCTAssertTrue(ready, "Listener Ready must be declared toward the talker (port 0)")
+
+    // LeaveAll with NO prompt re-Join: the talker leavetimer (1s) expires -> talker MT -> Listener
+    // withdrawn (this part is correct: the talker is genuinely gone for >LeaveTime)
+    let leaveAll = Message(
+      attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
+      attributeList: [VectorAttribute(
+        leaveAllEvent: .LeaveAll,
+        firstValue: AnyValue(_talkerAdvertise(streamID)),
+        attributeEvents: [], applicationEvents: nil
+      )]
+    )
+    try await msrp.rx(
+      pdu: MRPDU(protocolVersion: 0, messages: [leaveAll]),
+      for: MAPBaseSpanningTreeContext, from: MockPort(id: 0),
+      sourceMacAddress: [0x02, 0x00, 0x00, 0x00, 0x00, 0x0A]
+    )
+    let withdrew = await _waitFor(timeoutMs: 2500) {
+      await _declaredListenerSubtype(msrp, streamID, port: 0) != .ready
+    }
+    XCTAssertTrue(withdrew, "Listener must withdraw once the talker times out to MT")
+
+    // the talker re-Joins -> the Listener toward it MUST recover to Ready
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .JoinIn
+    )
+    let recovered = await _waitFor(timeoutMs: 2500) {
+      await _declaredListenerSubtype(msrp, streamID, port: 0) == .ready
+    }
+    XCTAssertTrue(recovered, "Listener toward the talker must recover to Ready after the talker re-Joins")
+    _ = controller
+  }
+
   func testCalculateBandwidthUsed8000PacketsPerSecond() throws {
     // Test for a stream with 8000 packets per second and frame size of 224 bytes
     let srClassID = SRclassID.A // Class A has 125 microsecond intervals (8000 Hz)
