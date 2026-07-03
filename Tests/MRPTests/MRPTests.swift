@@ -492,6 +492,12 @@ extension MockBridge: MVRPAwareBridge {
   }
 }
 
+// records whether a Timer's expiry callback fired, for the leavetimer tests
+private actor TimerExpiryFlag {
+  private(set) var fired = false
+  func fire() { fired = true }
+}
+
 final class MRPTests: XCTestCase {
   func testEUI48() throws {
     let eui48: EUI48 = [0, 0, 0, 0, 0x1, 0xFF]
@@ -2286,6 +2292,19 @@ final class MRPTests: XCTestCase {
       try await controller.deregister(application: mvrp)
       XCTFail("deregistering an absent application must throw unknownApplication")
     } catch MRPError.unknownApplication {}
+  }
+
+  // Flush forces the Registrar LV -> MT; it must also stop the leavetimer so it can't later fire
+  // a spurious Lv for the already-flushed attribute.
+  func testFlushStopsRegistrarLeaveTimer() async throws {
+    let flag = TimerExpiryFlag()
+    let registrar = Registrar(leaveTime: .milliseconds(50)) { await flag.fire() }
+    _ = registrar.action(for: .rJoinIn, flags: []) // MT -> IN
+    _ = registrar.action(for: .rLA, flags: []) // IN -> LV, arms the leavetimer
+    _ = registrar.action(for: .Flush, flags: []) // LV -> MT, must stop the timer
+    try await Task.sleep(for: .milliseconds(250))
+    let fired = await flag.fired
+    XCTAssertFalse(fired, "Flush must stop the leavetimer so it does not later fire")
   }
 
   // attributeLength shorter than the fixed firstValue over-reads into the packed

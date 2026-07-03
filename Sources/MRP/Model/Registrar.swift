@@ -76,6 +76,10 @@ final class Registrar: Sendable, CustomStringConvertible {
       {
         // leaveImmediate skips the leavetimer: rLv goes straight to MT (see state.action)
         leaveTimerAction = .start
+      } else if event == .Flush, state != .MT {
+        // Flush forces the Registrar to MT; stop a running leavetimer so it can't later fire a
+        // spurious Lv for the already-flushed attribute.
+        leaveTimerAction = .stop
       }
 
       return (leaveTimerAction, state.action(for: event, flags: flags))
