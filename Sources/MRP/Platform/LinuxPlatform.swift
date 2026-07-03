@@ -447,7 +447,15 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
     // an MTU above the AVB max frame size can't bound stream latency, so such a port is not AVB
     // capable (IEEE 802.1BA / 802.1Q 35.2.2.8.4)
     guard _rtnl.mtu <= AVBMaxFrameSize else { return false }
-    guard let _channels else { return false }
+    // a half-duplex or sub-100 Mb/s link cannot carry AVB traffic, so it is an SRP domain
+    // boundary port (IEEE 802.1BA-2011 §6.4 / Table 6.1). A downed link reports DUPLEX_UNKNOWN
+    // and SPEED_UNKNOWN, both of which fail these guards.
+    guard _linkSettings.0.duplex == DUPLEX_FULL else { return false }
+    guard (100...1_000_000).contains(_linkSettings.0.speed) else { return false }
+    // TX/combined queue count gates the credit-based shaper. A DSA switch port that doesn't
+    // implement ETHTOOL_GCHANNELS reports no channels; assume it is capable (its hardware egress
+    // queues are always present and aren't surfaced this way) rather than force AVB capability.
+    guard let _channels else { return true }
     return _channels.current.tx > 2 || _channels.current.combined > 2
   }
 
