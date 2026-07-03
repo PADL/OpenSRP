@@ -129,6 +129,17 @@ actor MRPTestRecorder {
     stpStatuses[port]
   }
 
+  // VIDs whose dynamic FDB registration MockBridge should reject (simulate FDB full, 11.2.3.2.2)
+  private var failVlanRegistrationVids = Set<UInt16>()
+
+  func setFailVlanRegistration(_ vids: Set<UInt16>) {
+    failVlanRegistrationVids = vids
+  }
+
+  func shouldFailVlanRegistration(_ vid: UInt16) -> Bool {
+    failVlanRegistrationVids.contains(vid)
+  }
+
   func recordCBS(port: Int, queue: UInt, idleSlope: Int) {
     cbs.append((port, queue, idleSlope))
   }
@@ -483,6 +494,9 @@ extension MockBridge: MVRPAwareBridge {
     if isStatic {
       await recorder.recordStaticVlanAdd(vlan: vlan, port: port.id)
     } else {
+      if await recorder.shouldFailVlanRegistration(vlan.vid) {
+        throw MRPError.internalError // simulate a kernel FDB-full rejection
+      }
       await recorder.recordVLANRegister(vlan: vlan, port: port.id)
     }
   }
@@ -2628,6 +2642,29 @@ final class MRPTests: XCTestCase {
       from: MockPort(id: port),
       sourceMacAddress: source
     )
+  }
+
+  // 11.2.3.2.2: a dynamic registration the kernel rejects (FDB full) leaves no entry, so a later
+  // Leave must be ignored, not turned into a spurious FDB delete of a VID that was never added.
+  func testMVRPRejectedRegistrationIsNotDeregisteredOnLeave() async throws {
+    let (controller, mvrp, recorder) = try await _makeMVRP(portIDs: [0, 1])
+    await recorder.setFailVlanRegistration([100]) // VID 100 add fails; 101 succeeds
+
+    try await _driveMVRP(mvrp, port: 0, vid: 100, event: .JoinIn)
+    try await _driveMVRP(mvrp, port: 0, vid: 101, event: .JoinIn)
+    let ok101 = await _waitFor { await recorder.vlanRegister.contains { $0.vlan.vid == 101 } }
+    XCTAssertTrue(ok101, "an accepted VID must register")
+    let reg100 = await recorder.vlanRegister.contains { $0.vlan.vid == 100 }
+    XCTAssertFalse(reg100, "a kernel-rejected VID must not be recorded as registered")
+
+    // leave both; the leavetimer (~1s) drives the Leave indications
+    try await _driveMVRP(mvrp, port: 0, vid: 100, event: .Lv)
+    try await _driveMVRP(mvrp, port: 0, vid: 101, event: .Lv)
+    let dereg101 = await _waitFor { await recorder.vlanDeregister.contains { $0.vlan.vid == 101 } }
+    XCTAssertTrue(dereg101, "the accepted VID must be deregistered on Leave")
+    let dereg100 = await recorder.vlanDeregister.contains { $0.vlan.vid == 100 }
+    XCTAssertFalse(dereg100, "a VID that was never added must not be deregistered on Leave")
+    _ = controller
   }
 
   // 10.3 d): a port added after a peer registration already exists on another port must be
