@@ -98,6 +98,9 @@ private final class MRPDaemon: AsyncParsableCommand {
   @Flag(name: .long, help: "Automatically configure both ingress and egress queues")
   var configureQueues: Bool = false
 
+  @Flag(name: .long, help: "Install an MDB entry on the Talker's ingress port (secure switch mode)")
+  var configureIngressMdb: Bool = false
+
   @Flag(inversion: .prefixedNo, help: "Flood multicast on bridge ports")
   var multicastFlooding: Bool = false
 
@@ -167,6 +170,7 @@ private final class MRPDaemon: AsyncParsableCommand {
     case configureEgressQueues
     case configureIngressQueues
     case configureQueues
+    case configureIngressMdb
     case excludeIface
     case excludeVlan
     case srPVid
@@ -265,6 +269,7 @@ private final class MRPDaemon: AsyncParsableCommand {
       if forceAvbCapable { flags.insert(.forceAvbCapable) }
       if configureEgressQueues || configureQueues { flags.insert(.configureEgressQueues) }
       if configureIngressQueues || configureQueues { flags.insert(.configureIngressQueues) }
+      if configureIngressMdb { flags.insert(.configureIngressMdb) }
 
       _ = try await MSRPApplication(
         controller: controller,
