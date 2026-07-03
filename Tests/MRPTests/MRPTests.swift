@@ -1688,10 +1688,10 @@ final class MRPTests: XCTestCase {
   func testSrpPortTcMaxLatencyAddsFrameTermsAtLinkRate() {
     // 2000-byte max frame at 1 Gbps = 16 us per frame time; two of them plus 500 ns propagation
     let oneGbps = srpPortTcMaxLatency(meanLinkDelayNs: 500, linkSpeedKbps: 1_000_000)
-    XCTAssertEqual(oneGbps, 500 + 2 * 16_000)
+    XCTAssertEqual(oneGbps, 500 + 2 * 16000)
     // a ten-times-faster link makes the frame terms ten times smaller
     let tenGbps = srpPortTcMaxLatency(meanLinkDelayNs: 500, linkSpeedKbps: 10_000_000)
-    XCTAssertEqual(tenGbps, 500 + 2 * 1_600)
+    XCTAssertEqual(tenGbps, 500 + 2 * 1600)
     XCTAssertLessThan(tenGbps, oneGbps)
     // an unknown link speed contributes only the propagation term (no divide by zero)
     XCTAssertEqual(srpPortTcMaxLatency(meanLinkDelayNs: 500, linkSpeedKbps: 0), 500)
@@ -2703,7 +2703,10 @@ final class MRPTests: XCTestCase {
     let registered = await _isVLANRegistered(mvrp, vid: 2, port: 0)
     XCTAssertTrue(registered, "static VID 2 must be Registration Fixed on its member port")
     let declared = await _isVLANDeclared(mvrp, vid: 2, port: 0)
-    XCTAssertFalse(declared, "the Applicant stays an Observer; JoinIn is an emission rule, not a state")
+    XCTAssertFalse(
+      declared,
+      "the Applicant stays an Observer; JoinIn is an emission rule, not a state"
+    )
     _ = controller
   }
 
@@ -2731,7 +2734,10 @@ final class MRPTests: XCTestCase {
     let emittedJoinIn = await _waitFor {
       await _transmittedVLANEvents(recorder, mvrp, port: 0, vid: 100).contains(.JoinIn)
     }
-    XCTAssertTrue(emittedJoinIn, "VID 100 (static on port 0 only) must be emitted as JoinIn on port 0")
+    XCTAssertTrue(
+      emittedJoinIn,
+      "VID 100 (static on port 0 only) must be emitted as JoinIn on port 0"
+    )
     let events = await _transmittedVLANEvents(recorder, mvrp, port: 0, vid: 100)
     XCTAssertFalse(
       events.contains(.In),
@@ -3135,7 +3141,11 @@ final class MRPTests: XCTestCase {
     let port = MockPort(id: 0)
     let boundaryA = try await msrp.withPortState(port: port) { $0.srpDomainBoundaryPort[.A] }
     let boundaryB = try await msrp.withPortState(port: port) { $0.srpDomainBoundaryPort[.B] }
-    XCTAssertEqual(boundaryA, true, "PFC on Class A priority must mark the port a boundary port for A")
+    XCTAssertEqual(
+      boundaryA,
+      true,
+      "PFC on Class A priority must mark the port a boundary port for A"
+    )
     XCTAssertEqual(boundaryB, false, "Class B (no PFC on its priority) must remain a core port")
     _ = controller
   }
@@ -3156,7 +3166,8 @@ final class MRPTests: XCTestCase {
     try await msrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
     let enabled = try await msrp.withPortState(port: MockPort(id: 0)) { $0.msrpPortEnabledStatus }
     XCTAssertFalse(enabled, "a high-MTU port must have MSRP disabled (not AVB capable)")
-    let boundary = try await msrp.withPortState(port: MockPort(id: 0)) { $0.srpDomainBoundaryPort[.A] }
+    let boundary = try await msrp
+      .withPortState(port: MockPort(id: 0)) { $0.srpDomainBoundaryPort[.A] }
     XCTAssertEqual(boundary, true, "a non-AVB port must be an SRP domain boundary port")
     _ = controller
   }
@@ -3167,7 +3178,11 @@ final class MRPTests: XCTestCase {
   // include latency), so a differing-latency neighbour is kept in its own vector -- even though
   // MSRPTalkerAdvertiseValue.== deliberately ignores latency.
   func testTalkerCoalescingIsLatencySensitive() throws {
-    func talker(_ streamID: MSRPStreamID, dest: EUI48, latency: UInt32) -> MSRPTalkerAdvertiseValue {
+    func talker(
+      _ streamID: MSRPStreamID,
+      dest: EUI48,
+      latency: UInt32
+    ) -> MSRPTalkerAdvertiseValue {
       MSRPTalkerAdvertiseValue(
         streamID: streamID,
         dataFrameParameters: MSRPDataFrameParameters(destinationAddress: dest, vlanIdentifier: 2),
@@ -3178,8 +3193,16 @@ final class MRPTests: XCTestCase {
     }
     let first = talker(0x0001_0000_0000_0000, dest: [0x91, 0xE0, 0xF0, 0, 0, 1], latency: 1000)
     let reconstructed = try first.makeValue(relativeTo: 1) // how the peer rebuilds value[1]
-    let sameLatency = talker(0x0001_0000_0000_0001, dest: [0x91, 0xE0, 0xF0, 0, 0, 2], latency: 1000)
-    let diffLatency = talker(0x0001_0000_0000_0001, dest: [0x91, 0xE0, 0xF0, 0, 0, 2], latency: 2000)
+    let sameLatency = talker(
+      0x0001_0000_0000_0001,
+      dest: [0x91, 0xE0, 0xF0, 0, 0, 2],
+      latency: 1000
+    )
+    let diffLatency = talker(
+      0x0001_0000_0000_0001,
+      dest: [0x91, 0xE0, 0xF0, 0, 0, 2],
+      latency: 2000
+    )
 
     XCTAssertEqual(
       try reconstructed.serialized(), try sameLatency.serialized(),
@@ -4232,7 +4255,9 @@ extension MRPTests {
       logger: Logger(label: "com.padl.MRPTests.bridge")
     )
     let msrp = try await MSRPApplication(controller: controller)
-    for port in ports { try await controller._didAdd(port: port) }
+    for port in ports {
+      try await controller._didAdd(port: port)
+    }
     return (controller, msrp, recorder)
   }
 
@@ -4795,7 +4820,7 @@ extension MRPTests {
   // 35.2.2.8.6: a bridge relaying a Talker Advertise increases its accumulatedLatency by the
   // egress port's per-hop latency (the value getPortTcMaxLatency yields).
   func testTalkerAdvertiseAccumulatesEgressPerHopLatency() async throws {
-    let perHop = 12_345
+    let perHop = 12345
     // the talker arrives on port 0 and is relayed out port 1, which carries the per-hop latency
     let (controller, msrp, _) = try await _makeRecomputeMSRP(
       portIDs: [0, 1],
@@ -4824,7 +4849,7 @@ extension MRPTests {
   // latency must saturate at UInt32.max rather than overflow the UInt32 sum (which would trap --
   // a remotely triggerable DoS).
   func testTalkerAdvertiseLatencySaturatesOnOverflow() async throws {
-    let perHop = 12_345
+    let perHop = 12345
     let (controller, msrp, _) = try await _makeRecomputeMSRP(
       portIDs: [0, 1],
       portTcMaxLatency: [1: perHop]
