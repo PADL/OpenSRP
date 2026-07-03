@@ -47,6 +47,10 @@ public struct MSRPApplicationFlags: OptionSet, Sendable {
   // as comparable AVB switches do. On by default; clear it to leave the port's
   // autonegotiated flow control untouched.
   public static let disableFlowControl = Self(rawValue: 1 << 6)
+  // Install an MDB entry on the bound Talker's ingress port (in addition to the egress
+  // Listener ports), so a "secure" switch (e.g. Marvell) admits the stream's destination
+  // address + PCP only from the Talker's port and drops it on a boundary/non-Talker port.
+  public static let configureIngressMdb = Self(rawValue: 1 << 7)
 
   public static let defaultFlags =
     Self([.ignoreAsCapable, .leaveImmediate, .disableFlowControl])
@@ -240,9 +244,19 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     }
   }
 
+  // the ingress-port FDB entry installed for a stream when .configureIngressMdb is set. Keyed by
+  // stream so it is installed once for the bound Talker and torn down only when the Talker leaves
+  // (not on Listener churn); records the port + frame parameters so a Talker that moves ports
+  // relocates the entry.
+  private struct FDBEntry: Equatable {
+    let portID: P.ID
+    let dataFrameParameters: MSRPDataFrameParameters
+  }
+
   private var _pendingStreams = OrderedSet<MSRPStreamID>()
   private var _streamUpdateTask: Task<(), Never>?
   private var _reservations: [P.ID: [MSRPStreamID: Reservation]] = [:]
+  private var _ingressFdbEntries: [MSRPStreamID: FDBEntry] = [:]
 
   // Convenience accessors for flags
   fileprivate nonisolated var _forceAvbCapable: Bool { _flags.contains(.forceAvbCapable) }
@@ -256,6 +270,10 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
 
   fileprivate nonisolated var _disableFlowControl: Bool {
     _flags.contains(.disableFlowControl)
+  }
+
+  fileprivate nonisolated var _configureIngressMdb: Bool {
+    _flags.contains(.configureIngressMdb)
   }
 
   nonisolated var _ignoreAsCapable: Bool { _flags.contains(.ignoreAsCapable) }
@@ -551,11 +569,17 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
       }
     }
 
+    let vanishedPortIDs = Set(context.map(\.id))
     for port in context {
       _logger.debug("MSRP: port \(port) disappeared, removing")
       _portStates.removeValue(forKey: port.id)
       // drop cached reservations so a later re-add reprograms the hardware
       _reservations[port.id] = nil
+    }
+    // the kernel drops FDB entries on a vanished port; forget any ingress entry we tracked for a
+    // Talker on one so the cache does not go stale
+    if !vanishedPortIDs.isEmpty {
+      _ingressFdbEntries = _ingressFdbEntries.filter { !vanishedPortIDs.contains($0.value.portID) }
     }
   }
 
@@ -1313,6 +1337,83 @@ extension MSRPApplication {
     }
   }
 
+  // Install (or relocate) the ingress-port FDB entry for a stream on the bound Talker's port, so a
+  // "secure" switch admits the stream's destination address + PCP from the Talker port. Idempotent:
+  // it only touches the kernel when the port or frame parameters change, and the entry is removed
+  // by
+  // _removeIngressFdbEntry when the Talker leaves -- not on Listener churn.
+  private func _updateIngressFdbEntry(
+    streamID: MSRPStreamID,
+    boundTalker: TalkerRegistration
+  ) async throws {
+    guard _configureIngressMdb else { return }
+    guard let controller, let bridge = controller.bridge as? any MMRPAwareBridge<P> else { return }
+
+    // Only manage the entry for a Talker Advertise on a point-to-point source link. A Talker Failed
+    // has no reservation to admit; and on a shared source link a co-located Listener's egress
+    // reservation shares this exact (port, MAC, VLAN) kernel entry (non-refcounted), so managing
+    // our
+    // own there would fight its teardown -- per-port secure admission is a point-to-point concept
+    // anyway. Drop any entry left over from a Talker that has since moved to such a port.
+    guard boundTalker.1 is MSRPTalkerAdvertiseValue, boundTalker.0.port.isPointToPoint else {
+      await _removeIngressFdbEntry(streamID: streamID)
+      return
+    }
+
+    let desired = FDBEntry(
+      portID: boundTalker.0.port.id,
+      dataFrameParameters: boundTalker.1.dataFrameParameters
+    )
+    guard _ingressFdbEntries[streamID] != desired else { return }
+
+    // the Talker moved ports or changed its frame parameters: remove the stale entry first
+    await _removeIngressFdbEntry(streamID: streamID)
+
+    _logger
+      .debug(
+        "MSRP: adding dynamic reservation ingress MDB entry for \(desired.dataFrameParameters) on \(boundTalker.0.port)"
+      )
+    do {
+      try await bridge.register(
+        macAddress: desired.dataFrameParameters.destinationAddress,
+        vlan: desired.dataFrameParameters.vlanIdentifier,
+        flags: .dynamicReservation,
+        on: [boundTalker.0.port]
+      )
+    } catch {
+      // leave the cache empty so the next recompute retries (idempotency re-adds it)
+      _ingressFdbEntries[streamID] = nil
+      _logger
+        .error(
+          "MSRP: failed to add dynamic reservation ingress MDB entry for \(desired.dataFrameParameters) on \(boundTalker.0.port): \(error)"
+        )
+      throw error
+    }
+    _ingressFdbEntries[streamID] = desired
+  }
+
+  private func _removeIngressFdbEntry(streamID: MSRPStreamID) async {
+    guard let entry = _ingressFdbEntries[streamID] else { return }
+    // deregister before dropping the cache record, so a failed lookup/deregister does not silently
+    // orphan a live kernel entry (the port-disappeared cleanup drops the cache separately, where
+    // the
+    // kernel has already removed the entry)
+    if let controller, let bridge = controller.bridge as? any MMRPAwareBridge<P>,
+       let port = _participant(for: entry.portID)?.port
+    {
+      _logger
+        .debug(
+          "MSRP: removing dynamic reservation ingress MDB entry for \(entry.dataFrameParameters) on \(port)"
+        )
+      try? await bridge.deregister(
+        macAddress: entry.dataFrameParameters.destinationAddress,
+        vlan: entry.dataFrameParameters.vlanIdentifier,
+        from: [port]
+      )
+    }
+    _ingressFdbEntries[streamID] = nil
+  }
+
   // 35.2.2.8.3: a destination_address may be used by at most one Stream. Returns true if any
   // registered Talker for a *different* StreamID already uses this destination address.
   private func _destinationAddressInUse(
@@ -1679,6 +1780,10 @@ extension MSRPApplication {
       return
     }
 
+    // admit the stream on the Talker's ingress port for a "secure" switch (no-op unless
+    // .configureIngressMdb); kept until the Talker leaves, so Listener churn does not touch it
+    try? await _updateIngressFdbEntry(streamID: streamID, boundTalker: boundTalker)
+
     var declaredTalkerPorts = Set<P.ID>()
 
     for (participant, failure) in plan.talkerDeclarations {
@@ -1801,6 +1906,9 @@ extension MSRPApplication {
 
   // No talker registered: withdraw every reservation and our own declarations for the stream.
   private func _withdrawStream(_ streamID: MSRPStreamID) async throws {
+    // the Talker is gone: drop the secure-switch ingress admission entry (no-op if none)
+    await _removeIngressFdbEntry(streamID: streamID)
+
     for (portID, talker) in _reservationsToWithdraw(streamID, keeping: []) {
       if let participant = _participant(for: portID) {
         try? await _updatePortParameters(

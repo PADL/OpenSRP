@@ -4849,6 +4849,191 @@ extension MRPTests {
   }
 }
 
+// MARK: - MSRP recompute: ingress MDB (--configure-ingress-mdb, secure switch)
+
+extension MRPTests {
+  private static let _ingressGroup: EUI48 = [0x91, 0xE0, 0xF0, 0x00, 0x00, 0x01]
+
+  private func _ingressMdbFlags() -> MSRPApplicationFlags {
+    var flags = MSRPApplicationFlags.defaultFlags
+    flags.insert(.configureIngressMdb)
+    return flags
+  }
+
+  // with .configureIngressMdb, the bound Talker's ingress port gets its own admission (MDB) entry
+  // for the stream's group, in addition to the egress Listener-port reservation.
+  func testRecomputeIngressMdbEntryOnTalkerPort() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(
+      portIDs: [0, 1],
+      flags: _ingressMdbFlags()
+    )
+    let streamID = MSRPStreamID(0x0001_0000_0000_00A0)
+
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .JoinIn
+    )
+    try await _drive(
+      msrp, port: 1, attributeType: .listener,
+      value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready
+    )
+
+    let group = Self._ingressGroup
+    let installed = await _waitFor {
+      await recorder.fdbRegister
+        .contains { $0.ports.contains(0) && _isEqualMacAddress($0.mac, group) }
+    }
+    XCTAssertTrue(installed, "talker ingress port (0) should get an admission MDB entry")
+
+    let fdb = await recorder.fdbRegister
+    XCTAssertTrue(
+      fdb.contains { $0.ports.contains(1) && _isEqualMacAddress($0.mac, group) },
+      "listener egress port (1) should still get its reservation entry"
+    )
+    _ = controller
+  }
+
+  // the ingress entry is tied to the Talker, not the Listeners: it is installed as soon as the
+  // Talker is bound, even before any Listener declares.
+  func testRecomputeIngressMdbInstalledWithoutListener() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(
+      portIDs: [0, 1],
+      flags: _ingressMdbFlags()
+    )
+    let streamID = MSRPStreamID(0x0001_0000_0000_00A1)
+
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .JoinIn
+    )
+
+    let group = Self._ingressGroup
+    let installed = await _waitFor {
+      await recorder.fdbRegister
+        .contains { $0.ports.contains(0) && _isEqualMacAddress($0.mac, group) }
+    }
+    XCTAssertTrue(installed, "ingress entry should be installed for the Talker with no Listener")
+    _ = controller
+  }
+
+  // without the flag (default), the Talker's ingress port must never receive an admission entry --
+  // only the egress Listener port does.
+  func testRecomputeNoIngressMdbEntryWhenDisabled() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_00A2)
+
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .JoinIn
+    )
+    try await _drive(
+      msrp, port: 1, attributeType: .listener,
+      value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready
+    )
+
+    // once the egress reservation lands the recompute has run; the ingress port must be untouched
+    _ = await _waitFor { await recorder.fdbRegister.contains { $0.ports.contains(1) } }
+    let fdb = await recorder.fdbRegister
+    XCTAssertFalse(
+      fdb.contains { $0.ports.contains(0) },
+      "no ingress MDB entry may be installed on the talker port when the flag is off"
+    )
+    _ = controller
+  }
+
+  // the ingress entry survives Listener churn (avoiding thrash) and is removed only when the Talker
+  // itself leaves.
+  func testRecomputeIngressMdbSurvivesListenerLeaveRemovedOnTalkerLeave() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(
+      portIDs: [0, 1],
+      flags: _ingressMdbFlags()
+    )
+    let streamID = MSRPStreamID(0x0001_0000_0000_00A3)
+    let group = Self._ingressGroup
+
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .JoinIn
+    )
+    try await _drive(
+      msrp, port: 1, attributeType: .listener,
+      value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready
+    )
+    let installed = await _waitFor {
+      await recorder.fdbRegister
+        .contains { $0.ports.contains(0) && _isEqualMacAddress($0.mac, group) }
+    }
+    XCTAssertTrue(installed, "precondition: ingress entry installed on the talker port")
+
+    // Listener leaves: the egress reservation on port 1 is withdrawn, but the ingress entry on the
+    // talker port must NOT be (no churn while the Talker persists).
+    try await _drive(
+      msrp, port: 1, attributeType: .listener,
+      value: MSRPListenerValue(streamID: streamID), event: .Lv, subtype: .ready
+    )
+    let egressWithdrawn = await _waitFor {
+      await recorder.fdbDeregister.contains { $0.ports.contains(1) }
+    }
+    XCTAssertTrue(egressWithdrawn, "listener leave should withdraw the egress reservation (port 1)")
+    let deregAfterListenerLeave = await recorder.fdbDeregister
+    XCTAssertFalse(
+      deregAfterListenerLeave.contains { $0.ports.contains(0) },
+      "the ingress entry must survive a listener leave (removed only on talker leave)"
+    )
+
+    // Talker leaves: now the ingress entry is torn down.
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .Lv
+    )
+    let ingressRemoved = await _waitFor {
+      await recorder.fdbDeregister
+        .contains { $0.ports.contains(0) && _isEqualMacAddress($0.mac, group) }
+    }
+    XCTAssertTrue(ingressRemoved, "talker leave should remove the ingress MDB entry (port 0)")
+    _ = controller
+  }
+
+  // secure per-port admission is a point-to-point concept: on a shared (non-p2p) source link the
+  // ingress entry is deliberately not managed (a co-located Listener's egress reservation would
+  // share the same non-refcounted kernel entry). No ingress entry may land on the non-p2p talker
+  // port; the egress Listener reservation elsewhere is unaffected.
+  func testRecomputeNoIngressMdbOnSharedTalkerPort() async throws {
+    let recorder = MRPTestRecorder()
+    // port 0 is the shared (non-p2p) talker source link; forceAvbCapable lets a half-duplex port
+    // still participate. port 1 is a normal point-to-point listener egress.
+    let ports: Set<MockPort> = [MockPort(id: 0, isFullDuplex: false), MockPort(id: 1)]
+    let bridge = MockBridge(ports: ports, recorder: recorder)
+    let controller = try await MRPController(
+      bridge: bridge,
+      logger: Logger(label: "com.padl.MRPTests.recompute")
+    )
+    var flags = _ingressMdbFlags()
+    flags.insert(.forceAvbCapable)
+    let msrp = try await MSRPApplication(controller: controller, flags: flags)
+    try await msrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
+
+    let streamID = MSRPStreamID(0x0001_0000_0000_00A4)
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .JoinIn
+    )
+    try await _drive(
+      msrp, port: 1, attributeType: .listener,
+      value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready
+    )
+
+    // the egress reservation on the p2p listener port confirms the recompute ran
+    _ = await _waitFor { await recorder.fdbRegister.contains { $0.ports.contains(1) } }
+    let fdb = await recorder.fdbRegister
+    XCTAssertFalse(
+      fdb.contains { $0.ports.contains(0) },
+      "no ingress MDB entry may be installed on a non-point-to-point talker port"
+    )
+    _ = controller
+  }
+}
+
 // MARK: - MSRP recompute: review-driven regression tests
 
 extension MRPTests {
