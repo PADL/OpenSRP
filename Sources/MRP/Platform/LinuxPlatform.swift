@@ -324,6 +324,15 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
   fileprivate let _txSocket: Socket
   private let _linkSettings: (ethtool_link_settings, [UInt32])
   private let _channels: EthernetChannelParameters?
+
+  // real_num_tx_queues: prefer the bridge's AF_UNSPEC-seeded map (the _rtnl snapshot came from an
+  // AF_BRIDGE dump, which omits IFLA_NUM_TX_QUEUES and so reads 0), falling back to _rtnl for a
+  // link built from a full-attribute notification. nil if neither source has a usable count.
+  var numTXQueues: Int? {
+    if let n = _bridge?._portNumTXQueues.withLock({ $0[id] }), n > 0 { return n }
+    let n = Int(_rtnl.numTXQueues)
+    return n > 0 ? n : nil
+  }
   fileprivate weak var _bridge: LinuxBridge?
 
   init(rtnl: RTNLLink, bridge: LinuxBridge) throws {
@@ -447,21 +456,19 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
     // an MTU above the AVB max frame size can't bound stream latency, so such a port is not AVB
     // capable (IEEE 802.1BA / 802.1Q 35.2.2.8.4)
     guard _rtnl.mtu <= AVBMaxFrameSize else { return false }
-    // A KNOWN half-duplex or sub-100 Mb/s link cannot carry AVB traffic, so it is an SRP domain
-    // boundary port (IEEE 802.1BA-2011 §6.4 / Table 6.1). Only judge the medium when the link
-    // settings actually read back: an unreadable link (ethtool GLINKSETTINGS unsupported, or the
-    // link down) reports speed 0 or SPEED_UNKNOWN and must not be inferred half-duplex from the
-    // zeroed fallback, whose duplex reads as DUPLEX_HALF.
-    if (1...1_000_000).contains(_linkSettings.0.speed) {
-      guard _linkSettings.0.speed >= 100, _linkSettings.0.duplex == DUPLEX_FULL else { return false }
-    }
+    // The link must be up: a down or unreadable link carries no AVB traffic. It also reports
+    // DUPLEX_UNKNOWN / SPEED_UNKNOWN (the legacy ethtool path truncates the latter to 0xFFFF, so a
+    // speed range check alone would misread a dead port as a real link), so gate on it first.
+    guard isOperational else { return false }
+    // A half-duplex or sub-100 Mb/s link cannot carry AVB traffic, so it is an SRP domain boundary
+    // port (IEEE 802.1BA-2011 §6.4 / Table 6.1).
+    guard _linkSettings.0.duplex == DUPLEX_FULL, _linkSettings.0.speed >= 100 else { return false }
     // TX/combined queue count gates the credit-based shaper: AVB needs queues for SR class A,
     // class B and best effort, so require more than two. A DSA switch port doesn't implement
-    // ETHTOOL_GCHANNELS (no _channels) and its libnl num_tx_queues reads 0 in-process (the kernel
-    // reports the real count only to a full RTM_GETLINK, not the link objects here), so neither
-    // source is usable -- assume such a port is AVB capable. Its hardware egress queues are always
-    // present, and the duplex/speed gate above still makes a half-duplex/slow link a boundary.
-    guard let _channels else { return true }
+    // ETHTOOL_GCHANNELS (no _channels), so use the netlink TX queue count; if even that is unknown,
+    // assume capable rather than exclude the port. The duplex/speed gate above still makes a
+    // half-duplex/slow link a boundary.
+    guard let _channels else { return numTXQueues.map { $0 > 2 } ?? true }
     return _channels.current.tx > 2 || _channels.current.combined > 2
   }
 
@@ -600,6 +607,11 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   let _portVLANs = Mutex<[Int: [UInt16: Bool]]>([:])
   // Per-port PVID by ifindex; seeded from the AF_BRIDGE dump, kept live by VLAN DB.
   let _portPVID = Mutex<[Int: UInt16]>([:])
+  // real_num_tx_queues by ifindex. Member ports are enumerated via an AF_BRIDGE RTM_GETLINK dump
+  // (for bridge port state), whose reduced attribute set omits IFLA_NUM_TX_QUEUES, so those link
+  // objects report 0. Seeded from a full AF_UNSPEC dump (like `ip -d link`) and kept live by link
+  // notifications; a Mutex so LinuxPort.numTXQueues reads it synchronously.
+  let _portNumTXQueues = Mutex<[Int: Int]>([:])
   private let _portNotificationChannel = AsyncChannel<PortNotification<P>>()
   private let _rxPacketsChannel = AsyncThrowingChannel<(P.ID, IEEE802Packet), Error>()
   private var _linkLocalRegistrations = Set<FilterRegistration>()
@@ -953,6 +965,14 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
       }
     }
 
+    // Seed real_num_tx_queues per ifindex from a full AF_UNSPEC dump: the AF_BRIDGE enumeration
+    // below omits IFLA_NUM_TX_QUEUES. The count is fixed silicon, so a one-time seed suffices.
+    let unspecLinks = try await _nlLinkSocket.getLinks(family: sa_family_t(AF_UNSPEC))
+    for try await link in unspecLinks {
+      let numTXQueues = Int(link.numTXQueues)
+      if numTXQueues > 0 { _portNumTXQueues.withLock { $0[link.index] = numTXQueues } }
+    }
+
     let ports = try await _getMemberPorts()
     for port in ports {
       if let pvid = port._pvid { _portPVID.withLock { $0[port.id] = pvid } }
@@ -1196,7 +1216,7 @@ extension LinuxBridge: MSRPAwareBridge {
 
     // Inverted (i210) layout: AVB classes occupy the bottom queues, legacy is
     // [highestAvb + 1, numTXQueues), so we need the real queue count here.
-    let numTXQueues = Int(port._rtnl.numTXQueues)
+    let numTXQueues = port.numTXQueues ?? 0
     guard numTXQueues > highestAvb + 1 else {
       guard forceAvbCapable else {
         throw MSRPFailure(systemID: port.systemID, failureCode: .egressPortIsNotAvbCapable)
