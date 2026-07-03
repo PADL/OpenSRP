@@ -129,6 +129,20 @@ struct MSRPPortState<P: AVBPort>: Sendable {
   var talkerPruning: Bool { false }
   var talkerVlanPruning: Bool { false }
   var srClassPriorityMap = SRClassPriorityMap()
+  // class-independent per-hop latency (35.2.2.8.6 b/c/d) cached per port; nil until a real PTP
+  // reading (the provisional 800 ns over-estimate is never stored). Cleared on flap/STP so it
+  // re-samples.
+  var portTcMaxLatency: Int?
+  // per-stream reported-latency guarantee first declared on this port (35.2.2.8.6); lives here so
+  // it is dropped with the port state on removal.
+  var configuredLatency = [MSRPStreamID: UInt32]()
+
+  // drop the cached per-hop latency on a link change (flap/STP) so the next recompute re-samples
+  // gPTP meanLinkDelay. Per-stream guarantees survive for the reservation's life (35.2.2.8.6):
+  // a topology-driven latency increase must trip code 7, not silently re-baseline.
+  mutating func invalidate() {
+    portTcMaxLatency = nil
+  }
 
   func reverseMapSrClassPriority(priority: SRclassPriority) -> SRclassID? {
     srClassPriorityMap.first(where: { $0.value == priority })?.key
@@ -472,23 +486,31 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
         guard let index = _portStates.index(forKey: port.id) else { continue }
         if _portStates.values[index].msrpPortEnabledStatus != port.isAvbCapable {
           _logger.info("MSRP: port \(port) changed isAvbCapable, now \(port.isAvbCapable)")
+          _portStates.values[index].invalidate() // link flapped: re-sample PTP latency
         }
         _portStates.values[index].msrpPortEnabledStatus = port.isAvbCapable
       }
     }
 
-    // refresh spanning-tree state from the fresh port (a synchronous read, no actor hop); a
-    // change is a topology change, so re-derive the active streams
+    // refresh spanning-tree state from the fresh port (a synchronous read, no actor hop); a change
+    // is a topology change, so invalidate the port's latency state here (the single place STP
+    // clears it) and re-derive the active streams
     var stpChanged = false
     for port in context {
       guard let index = _portStates.index(forKey: port.id) else { continue }
       if _portStates.values[index].stpPortState != port.stpPortState {
         _logger.info("MSRP: port \(port) spanning-tree state now \(port.stpPortState)")
         _portStates.values[index].stpPortState = port.stpPortState
+        _portStates.values[index].invalidate()
         stpChanged = true
       }
     }
-    if stpChanged { _forceUpdateActiveStreams() }
+    if stpChanged {
+      // a topology change can move a port's worst-case path latency (35.2.2.8.6): the recompute
+      // below re-samples per-hop latency fresh and fails a stream whose reported latency rose above
+      // its guarantee.
+      _forceUpdateActiveStreams()
+    }
 
     // A port whose link was down at startup was skipped for the priority-map fetch (it was not yet
     // AVB capable). Now that it may have come up, fetch the map so it can declare SR domains: the
@@ -1786,6 +1808,13 @@ extension MSRPApplication {
 
     var declaredTalkerPorts = Set<P.ID>()
 
+    // re-sample per-hop latency this recompute so a since-changed gPTP meanLinkDelay is reflected;
+    // only the cache (not the per-stream guarantee) resets, and the loop below re-fills it so every
+    // talker on a port still reports a uniform value within this pass (35.2.2.8.6)
+    for (participant, _) in plan.talkerDeclarations {
+      _portStates[participant.port.id]?.portTcMaxLatency = nil
+    }
+
     for (participant, failure) in plan.talkerDeclarations {
       // a newer event re-marked this stream while we awaited: abandon the now-stale plan
       // rather than emitting declarations from it; the pending recompute will reapply (10.3)
@@ -1794,20 +1823,75 @@ extension MSRPApplication {
         continue // pruned: the sweep below withdraws any existing declaration
       }
 
-      // getPortTcMaxLatency always yields a non-negative per-hop latency, substituting the spec's
-      // 500 ns propagation default itself when gPTP can't supply meanLinkDelay (35.2.2.8.6 d), so
-      // there is no fallback to apply here.
+      // per-hop latency (35.2.2.8.6) terms b/c/d (frame time + gPTP meanLinkDelay) cached per port,
+      // so every stream adds the identical increment. When gPTP has no meanLinkDelay yet the value
+      // is provisional: an over-estimate (802.1AS neighborPropDelayThresh, 800 ns -- an asCapable
+      // link's delay cannot exceed it), so a downstream bridge that baselines our warm-up
+      // advertisement only ever sees the converged latency *decrease* (code 7 trips on increases).
+      // It is neither cached nor used to set our own guarantee below.
+      let priority = boundTalker.1.priorityAndRank.dataFramePriority
       var latency = boundTalker.1.accumulatedLatency
-      let l = await participant.port
-        .getPortTcMaxLatency(for: boundTalker.1.priorityAndRank.dataFramePriority)
+      let tcLatency: Int
+      let latencyIsProvisional: Bool
+      if let cached = _portStates[participant.port.id]?.portTcMaxLatency {
+        tcLatency = cached
+        latencyIsProvisional = false
+      } else {
+        var sampled: Int?
+        do {
+          sampled = try await participant.port.getPortTcMaxLatency(for: priority)
+        } catch MRPError.ptpNotReady {
+          // expected while gPTP converges; fall through to the provisional over-estimate
+        } catch {
+          // a real failure (gPTP daemon unreachable, netlink error) must be visible, not
+          // silently indistinguishable from warm-up
+          _logger.error("MSRP: failed to sample per-hop latency on \(participant.port): \(error)")
+        }
+        if let sampled {
+          _portStates[participant.port.id]?.portTcMaxLatency = sampled
+          tcLatency = sampled
+          latencyIsProvisional = false
+        } else {
+          tcLatency = srpPortTcMaxLatency(
+            meanLinkDelayNs: 800, linkSpeedKbps: participant.port.linkSpeed
+          )
+          latencyIsProvisional = true
+        }
+      }
+      // term a): the SR-class worst-case queuing delay -- a CBS frame can wait up to one class
+      // measurement interval per hop (125 us class A / 250 us class B), the only class-dependent
+      // term.
+      var cmiLatency = 0
+      if let srClassID = _portStates[participant.port.id]?
+        .reverseMapSrClassPriority(priority: priority),
+        let cmi = try? srClassID.classMeasurementInterval
+      {
+        cmiLatency = cmi * 1000 // class measurement interval is in microseconds
+      }
       // saturate: accumulatedLatency is peer-supplied, so a value near UInt32.max plus this hop's
       // latency would otherwise overflow the UInt32 sum and trap (a remotely triggerable DoS).
-      let (sum, overflow) = latency.addingReportingOverflow(UInt32(clamping: l))
+      let (sum, overflow) = latency
+        .addingReportingOverflow(UInt32(clamping: tcLatency + cmiLatency))
       latency = overflow ? .max : sum
 
       // re-check after the awaits above: a concurrent withdraw may have re-queued the stream, in
       // which case emitting from this stale plan would advertise a since-withdrawn declaration
       if _pendingStreams.contains(streamID) { return }
+
+      // 35.2.2.8.6: the reported latency must not increase during the reservation's life. Compare
+      // against the value first declared (the initial guarantee); an increase fails the stream
+      // with reportedLatencyHasChanged (code 7). The first successful declaration sets the
+      // guarantee.
+      var failure = failure
+      if failure == nil, !latencyIsProvisional {
+        if let baseline = _portStates[participant.port.id]?.configuredLatency[streamID] {
+          if latency > baseline {
+            failure = MSRPFailure(systemID: _systemID, failureCode: .reportedLatencyHasChanged)
+          }
+        } else {
+          _portStates[participant.port.id]?.configuredLatency[streamID] = latency
+        }
+      }
 
       // 35.2.6: a type change (e.g. Advertise->Failed) behaves as if the old declaration was
       // withdrawn before the new one, so leave the opposite declared Talker type first.
@@ -1836,6 +1920,8 @@ extension MSRPApplication {
     // withdraw talker declarations no longer desired
     apply(for: MAPBaseSpanningTreeContext) { participant in
       guard !declaredTalkerPorts.contains(participant.port.id) else { return }
+      // the reservation ended on this port: drop its latency guarantee (35.2.2.8.6)
+      _portStates[participant.port.id]?.configuredLatency[streamID] = nil
       _leaveDeclaredAttributes(
         participant,
         streamID: streamID,
@@ -1924,6 +2010,7 @@ extension MSRPApplication {
     // toward the Talker on the Listener's behalf, rather than waiting for the downstream Listener
     // to react to the Talker withdrawal.
     apply(for: MAPBaseSpanningTreeContext) { participant in
+      _portStates[participant.port.id]?.configuredLatency[streamID] = nil
       _leaveDeclaredAttributes(
         participant, streamID: streamID, types: [.talkerAdvertise, .talkerFailed, .listener]
       )
