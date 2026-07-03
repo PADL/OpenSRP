@@ -1876,6 +1876,62 @@ final class MRPTests: XCTestCase {
     _ = controller
   }
 
+  // Avnu ProAV Bridge §9.1 (per 802.1Q 5.4.4) disables PeriodicTransmission for MSRP only; MVRP and
+  // MMRP keep it. Guards against a value flip that would starve VLAN/group registrations
+  // (MVRP/MMRP -> false) or violate Avnu (MSRP -> true).
+  func testPeriodicTransmissionScopedToMVRPandMMRPNotMSRP() async throws {
+    let recorder = MRPTestRecorder()
+    let ports = Set([MockPort(id: 0)])
+    let bridge = MockBridge(ports: ports, recorder: recorder)
+    let controller = try await MRPController(
+      bridge: bridge, logger: Logger(label: "com.padl.MRPTests.periodic.scope")
+    )
+    let mvrp = try await MVRPApplication(controller: controller)
+    let mmrp = try await MMRPApplication(controller: controller)
+    let msrp = try await MSRPApplication(controller: controller)
+    XCTAssertTrue(mvrp.usePeriodicTransmission, "MVRP uses PeriodicTransmission")
+    XCTAssertTrue(mmrp.usePeriodicTransmission, "MMRP uses PeriodicTransmission")
+    XCTAssertFalse(msrp.usePeriodicTransmission, "MSRP disables PeriodicTransmission (Avnu §9.1)")
+    _ = controller
+  }
+
+  // MVRP uses PeriodicTransmission: a periodic tick re-asserts an active declaration
+  // (QA -> AA -> tx -> Join), keeping a VLAN registered on a short-LeaveTime peer between LeaveAlls.
+  func testMVRPPeriodicReassertsActiveDeclaration() async throws {
+    let (controller, mvrp, recorder) = try await _makeMVRP(portIDs: [0, 1])
+    // a peer registration on port 0 propagates to an active declaration on port 1
+    try await _driveMVRP(mvrp, port: 0, vid: 200, event: .JoinIn)
+    let declared = await _waitFor { await _isVLANDeclared(mvrp, vid: 200, port: 1) }
+    XCTAssertTrue(declared, "VID 200 must be actively declared on port 1")
+    _ = await _waitFor { await _vlanJoinCount(recorder, mvrp, port: 1, vid: 200) >= 1 }
+    try await Task.sleep(for: .milliseconds(400)) // settle to QA (quiet)
+    let before = await _vlanJoinCount(recorder, mvrp, port: 1, vid: 200)
+    // a periodic tick re-asserts: QA -> AA, then the joinTimer emits a Join
+    try await mvrp.periodic(for: nil)
+    let grew = await _waitFor(timeoutMs: 1500) {
+      await _vlanJoinCount(recorder, mvrp, port: 1, vid: 200) > before
+    }
+    XCTAssertTrue(grew, "MVRP periodic() must re-assert the declaration")
+    _ = controller
+  }
+
+  // MSRP has PeriodicTransmission disabled (Avnu §9.1): a periodic tick must be inert -- no
+  // re-transmission -- so the controller's per-application gate can safely drive it every interval.
+  func testMSRPPeriodicTransmissionIsNoOp() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0])
+    // MSRP auto-declares SR Class A/B Domains; let them settle to quiet
+    let declared = await _waitFor { await recorder.txPackets.contains { $0.port == 0 } }
+    XCTAssertTrue(declared, "MSRP must declare its domains on the port")
+    try await Task.sleep(for: .milliseconds(500))
+    let before = await (recorder.txPackets).filter { $0.port == 0 }.count
+    // a periodic tick must do nothing for MSRP
+    try await msrp.periodic(for: nil)
+    try await Task.sleep(for: .milliseconds(500))
+    let after = await (recorder.txPackets).filter { $0.port == 0 }.count
+    XCTAssertEqual(after, before, "MSRP periodic() must not re-transmit (Avnu §9.1)")
+    _ = controller
+  }
+
   func testCalculateBandwidthUsed8000PacketsPerSecond() throws {
     // Test for a stream with 8000 packets per second and frame size of 224 bytes
     let srClassID = SRclassID.A // Class A has 125 microsecond intervals (8000 Hz)
