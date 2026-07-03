@@ -61,6 +61,17 @@ final class Registrar: Sendable, CustomStringConvertible {
     // remains IN (10.7.2), so no action and no leavetimer changes.
     guard !isAdministrativelyRegistered else { return nil }
 
+    // Registration Forbidden (10.7.8): force MT, emitting Lv if it was registered (so the
+    // reservation is torn down, like Flush) and stopping any running leavetimer.
+    if flags.contains(.registrationForbidden) {
+      let action: Action? = _state.withLock { state in
+        defer { state = .MT }
+        return state != .MT ? .Lv : nil
+      }
+      stopLeaveTimer()
+      return action
+    }
+
     enum LeaveTimerAction { case none; case start; case stop }
 
     let (leaveTimerAction, stateAction) = _state.withLock { state in
@@ -128,10 +139,7 @@ private extension Registrar.State {
     for event: ProtocolEvent,
     flags: StateMachineHandlerFlags
   ) -> Registrar.Action? {
-    if flags.contains(.registrationForbidden) {
-      self = .MT
-      return nil
-    }
+    // .registrationForbidden is handled in Registrar.action (forces MT + Lv) before this runs.
     if (flags.contains(.registrationFixedNewPropagated) && event != .rNew) ||
       (flags.contains(.registrationFixedNewIgnored) && event == .rNew)
     {

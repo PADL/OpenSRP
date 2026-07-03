@@ -2294,6 +2294,19 @@ final class MRPTests: XCTestCase {
     } catch MRPError.unknownApplication {}
   }
 
+  // Registration Forbidden must deregister an already-registered attribute: force MT AND emit Lv
+  // (like Flush) so the application tears down its reservation, not silently drop it.
+  func testRegistrationForbiddenEmitsLeaveWhenRegistered() {
+    let registrar = Registrar(onLeaveTimerExpired: {})
+    _ = registrar.action(for: .rJoinIn, flags: []) // MT -> IN
+    XCTAssertEqual(String(describing: registrar.state), "IN")
+    let action = registrar.action(for: .ReDeclare, flags: [.registrationForbidden])
+    guard case .Lv? = action else { return XCTFail("registrationForbidden while IN must emit Lv") }
+    XCTAssertEqual(String(describing: registrar.state), "MT")
+    // a subsequent forbidden event, now MT, emits nothing
+    XCTAssertNil(registrar.action(for: .ReDeclare, flags: [.registrationForbidden]))
+  }
+
   // Flush forces the Registrar LV -> MT; it must also stop the leavetimer so it can't later fire
   // a spurious Lv for the already-flushed attribute.
   func testFlushStopsRegistrarLeaveTimer() async throws {
