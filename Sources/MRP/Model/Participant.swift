@@ -467,19 +467,9 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
     func chains(after previous: _AttributeValue<A>, to candidate: _AttributeValue<A>) -> Bool {
       guard coalesce else { return false }
       guard let expected = try? previous.value.makeValue(relativeTo: 1) else { return false }
-      // Cheap reject first: `==` is weaker than byte-equality (it may ignore wire fields), but it
-      // is still necessary for it -- unequal values can't have equal encodings -- so a `==` miss
-      // rules out coalescing without serializing. This keeps the common non-chaining case (most
-      // adjacent attributes) off the allocation path.
-      guard expected == candidate.value else { return false }
-      // The receiver reconstructs value[i] as FirstValue.makeValue(relativeTo: i), so two values
-      // may only coalesce if that reconstruction is byte-identical to the real one -- not merely
-      // `==`, whose per-type definition can ignore fields that still ride on the wire (e.g. a
-      // talker's AccumulatedLatency, 35.2.2.8.6), which would otherwise be silently rewritten to
-      // the FirstValue's on the peer. Confirm with the serialized encodings.
-      guard let expectedBytes = try? expected.serialized(),
-            let candidateBytes = try? candidate.value.serialized() else { return false }
-      return expectedBytes == candidateBytes
+      // Coalescing needs the receiver's reconstruction to encode to identical octets, so use the
+      // wire-exact `==` (which compares every serialized field, including AccumulatedLatency).
+      return expected == candidate.value
     }
 
     var chunks: [[EnqueuedEvent<A>.AttributeEvent]] = []
@@ -685,6 +675,27 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
           attribute.attributeSubtype = attributeSubtype
         }
 
+        // 35.2.2.8: index matching keeps the existing (immutable) value, so
+        // surface the changed value the peer sent to the application (which
+        // compares it against the registered value) as .peerChanged,
+        // distinct from the registrar's re-indication of the retained value
+        // below, which stays .peer.
+        if attributeEvent.protocolEvent.indicatesRegistration, let application,
+           let received = try? vectorAttribute.firstValue.value.makeValue(relativeTo: UInt64(i)),
+           attribute.value != received.eraseToAny()
+        {
+          let contextIdentifier = contextIdentifier
+          let port = port
+          let attributeType = message.attributeType
+          Task(on: _queue) { @Sendable _ in
+            try await application.joinIndicated(
+              contextIdentifier: contextIdentifier, port: port, attributeType: attributeType,
+              attributeSubtype: attributeSubtype, attributeValue: received, isNew: false,
+              eventSource: .peerChanged
+            )
+          }
+        }
+
         try _handleAttributeValue(
           attribute,
           protocolEvent: attributeEvent.protocolEvent,
@@ -821,6 +832,23 @@ public extension Participant {
     ) }
   }
 
+  // Find the registered attribute(s) matching the filter in a single lookup and pass each current
+  // value to `transform`; if it returns a replacement (necessarily the same index), apply it in
+  // place -- the registrar is untouched. No-op if none match or the closure returns nil. Lets the
+  // caller inspect and update the value without a separate findAttribute pass.
+  func updateRegisteredValue(
+    attributeType: AttributeType,
+    matching filter: AttributeValueFilter,
+    _ transform: (_ current: any Value) -> (any Value)?
+  ) {
+    _assertIsolatedToApplication()
+    for attribute in _findRegisteredAttributes(attributeType: attributeType, matching: filter) {
+      if let replacement = transform(attribute.unwrappedValue) {
+        attribute.updateValue(replacement)
+      }
+    }
+  }
+
   // A Flush! event signals to the Registrar state machine that there is a
   // need to rapidly deregister information on the Port associated with the
   // state machine as a result of a topology change that has occurred in the
@@ -858,9 +886,15 @@ public extension Participant {
     let attribute = try _findOrCreateAttribute(
       attributeType: attributeType,
       attributeSubtype: attributeSubtype,
-      matching: .matchEqual(attributeValue), // don't match on subtype, we want to replace it
+      matching: .matchIndex(attributeValue), // don't match on subtype, we want to replace it
       createIfMissing: true
     )
+
+    if attribute.value != attributeValue.eraseToAny() {
+      attribute.updateValue(attributeValue)
+      // re-arm a quiet applicant with periodic!
+      try _handleAttributeValue(attribute, protocolEvent: .periodic, eventSource: eventSource)
+    }
 
     if !isNew, let attributeSubtype, attribute.attributeSubtype != attributeSubtype { _logger
       .debug(
@@ -887,7 +921,7 @@ public extension Participant {
     let attribute = try _findOrCreateAttribute(
       attributeType: attributeType,
       attributeSubtype: attributeSubtype,
-      matching: .matchEqual(attributeValue),
+      matching: .matchIndex(attributeValue),
       createIfMissing: false
     )
 
@@ -906,7 +940,7 @@ public extension Participant {
     let attribute = try _findOrCreateAttribute(
       attributeType: attributeType,
       attributeSubtype: nil,
-      matching: .matchEqual(attributeValue),
+      matching: .matchIndex(attributeValue),
       createIfMissing: false
     )
 
@@ -934,7 +968,7 @@ public extension Participant {
     _ = try _findOrCreateAttribute(
       attributeType: attributeType,
       attributeSubtype: nil,
-      matching: .matchEqual(attributeValue),
+      matching: .matchIndex(attributeValue),
       createIfMissing: true,
       administrativelyRegistered: true
     )
@@ -951,7 +985,7 @@ public extension Participant {
     let attribute = try _findOrCreateAttribute(
       attributeType: attributeType,
       attributeSubtype: nil,
-      matching: .matchEqual(attributeValue),
+      matching: .matchIndex(attributeValue),
       createIfMissing: false
     )
     guard attribute.isAdministrativelyRegistered else { return }
@@ -1057,13 +1091,24 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
   // (10.7.8)
 
   let attributeType: AttributeType
-  let value: AnyValue
+  // 35.2.2.8: the FirstValue is immutable, but a peer may re-declare an existing index with a
+  // changed non-FirstValue payload (e.g. AccumulatedLatency). Such updates are applied in place,
+  // only under the application actor's isolation (like registrar), and never change the index, so
+  // no lock is needed on the isolated read paths and Set/hash stays valid.
+  nonisolated(unsafe) var value: AnyValue
 
   let counters = Mutex(EventCounters<A>())
 
   var index: UInt64 { value.index }
   var participant: P? { _participant.object }
   var unwrappedValue: any Value { value.value }
+
+  // Update the non-FirstValue payload in place (the index must be unchanged, so hash/equality and
+  // the enclosing Set are unaffected); used e.g. to track a peer's changed AccumulatedLatency.
+  func updateValue(_ newValue: some Value) {
+    precondition(newValue.index == index)
+    value = AnyValue(newValue)
+  }
 
   var attributeSubtype: AttributeSubtype? {
     get {
@@ -1143,8 +1188,7 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
     _attributeSubtype = .init(subtype)
     self.value = AnyValue(value)
     if participant._type != .applicantOnly {
-      // hold a strong ref so the weak controller can't be released mid-init (teardown race)
-      let controller = participant.controller!
+      guard let controller = participant.controller else { return }
       registrar = Registrar(
         leaveTime: controller.timerConfiguration.leaveTime,
         administrativelyRegistered: administrativelyRegistered
@@ -1152,7 +1196,6 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
         guard let self, let application = self.participant?.application else { return }
         try await _onLeaveTimerExpired(isolation: application)
       }
-      _ = controller
     }
   }
 
@@ -1191,7 +1234,7 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
       case let .matchEqual(value):
         return self.value == value.eraseToAny()
       case .matchRelative(let (value, offset)):
-        return try self.value == value.makeValue(relativeTo: offset).eraseToAny()
+        return try index == value.makeValue(relativeTo: offset).index
       }
     } catch {
       return false

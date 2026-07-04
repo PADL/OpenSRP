@@ -261,6 +261,33 @@ private func _transmittedDomainVIDs(
   return result
 }
 
+// every AccumulatedLatency transmitted in a Talker Advertise for a stream out a given port
+private func _transmittedAdvertiseLatencies(
+  _ recorder: MRPTestRecorder,
+  _ msrp: MSRPApplication<MockPort>,
+  port: Int,
+  streamID: MSRPStreamID
+) async -> [UInt32] {
+  var result = [UInt32]()
+  for packet in await recorder.txPackets where packet.port == port {
+    guard let pdu = try? packet.payload.withParserSpan({ input in
+      try MRPDU(parsing: &input, application: msrp)
+    }) else { continue }
+    for message in pdu.messages
+      where message.attributeType == MSRPAttributeType.talkerAdvertise.rawValue
+    {
+      for vector in message.attributeList {
+        if let talker = vector.firstValue.value as? MSRPTalkerAdvertiseValue,
+           talker.streamID == streamID
+        {
+          result.append(talker.accumulatedLatency)
+        }
+      }
+    }
+  }
+  return result
+}
+
 // the (srClassID, value-count) of every Domain vector in the captured transmissions
 private func _transmittedDomainVectors(
   _ recorder: MRPTestRecorder,
@@ -407,6 +434,17 @@ private func _declaredTalkerFailureCode(
     attributeType: MSRPAttributeType.talkerFailed.rawValue, matching: .matchAnyIndex(streamID.id)
   ).first { $0.isDeclared }
   return (declared?.attributeValue as? MSRPTalkerFailedValue)?.failureCode
+}
+
+private func _declaredTalkerFailed(
+  _ msrp: MSRPApplication<MockPort>, _ streamID: MSRPStreamID, port: Int
+) async -> MSRPTalkerFailedValue? {
+  guard let participant = try? await msrp.findParticipant(port: MockPort(id: port))
+  else { return nil }
+  let declared = await participant.findAllAttributes(
+    attributeType: MSRPAttributeType.talkerFailed.rawValue, matching: .matchAnyIndex(streamID.id)
+  ).first { $0.isDeclared }
+  return declared?.attributeValue as? MSRPTalkerFailedValue
 }
 
 // the declared (propagated) Talker Advertise attribute for a stream on a port (nil if none)
@@ -3774,8 +3812,10 @@ final class MRPTests: XCTestCase {
       try reconstructed.serialized(), try diffLatency.serialized(),
       "a differing-latency stream does not reconstruct exactly, so it must not coalesce"
     )
-    // the trap this guards: == treats the differing-latency stream as identical
-    XCTAssertEqual(reconstructed, diffLatency, "== is latency-insensitive by design")
+    // == is wire-exact, so coalescing distinguishes latency (matching instead keys on index).
+    XCTAssertEqual(reconstructed, sameLatency)
+    XCTAssertNotEqual(reconstructed, diffLatency)
+    XCTAssertEqual(reconstructed.index, diffLatency.index)
   }
 
   // The Domain attribute opts out of coalescing (some peers don't expand a multi-value Domain
@@ -5361,6 +5401,43 @@ extension MRPTests {
     )
     _ = controller
   }
+
+  // a peer changing a listener's subtype on the SAME registration (AskingFailed -> Ready) must be
+  // observed by the recompute so the reservation appears. Guards the subtype-change notification
+  // path (whether realized by a leave-now replace or a direct write plus a re-indication).
+  func testListenerSubtypeChangeIsObserved() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0031)
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .JoinIn
+    )
+    // the listener starts AskingFailed -> no idleslope reserved
+    try await _drive(
+      msrp, port: 1, attributeType: .listener,
+      value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .askingFailed
+    )
+    try? await Task.sleep(nanoseconds: 200_000_000)
+    let before = await recorder.cbs
+    XCTAssertFalse(
+      before.contains { $0.port == 1 && $0.idleSlope > 0 },
+      "an asking-failed listener must not reserve idleslope"
+    )
+
+    // the peer re-declares the same listener as Ready: the subtype change must be observed
+    try await _drive(
+      msrp, port: 1, attributeType: .listener,
+      value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready
+    )
+    let reserved = await _waitFor {
+      await recorder.cbs.contains { $0.port == 1 && $0.idleSlope > 0 }
+    }
+    XCTAssertTrue(
+      reserved,
+      "a listener subtype change AskingFailed->Ready must be observed and reserve idleslope"
+    )
+    _ = controller
+  }
 }
 
 // MARK: - MSRP recompute: failed-talker, withdrawal, admission, port-removal
@@ -5368,7 +5445,8 @@ extension MRPTests {
 extension MRPTests {
   private func _talkerFailed(
     _ streamID: MSRPStreamID,
-    dest: EUI48 = [0x91, 0xE0, 0xF0, 0x00, 0x00, 0x01]
+    dest: EUI48 = [0x91, 0xE0, 0xF0, 0x00, 0x00, 0x01],
+    failureCode: TSNFailureCode = .insufficientBandwidth
   ) -> MSRPTalkerFailedValue {
     MSRPTalkerFailedValue(
       streamID: streamID,
@@ -5377,7 +5455,7 @@ extension MRPTests {
       priorityAndRank: MSRPPriorityAndRank(dataFramePriority: .CA, rank: true),
       accumulatedLatency: 1000,
       systemID: MSRPSystemID(id: 0x1234),
-      failureCode: .insufficientBandwidth
+      failureCode: failureCode
     )
   }
 
@@ -5643,13 +5721,12 @@ extension MRPTests {
     _ = controller
   }
 
-  // 35.2.2.8.6: the reported latency must not increase during the reservation's life. If a later
-  // event raises the egress per-hop latency above the value first declared (the initial
-  // guarantee), the Talker Advertise is converted to a Talker Failed with reportedLatencyHasChanged
-  // (code 7) rather than re-advertised with the higher value.
+  // 35.2.2.8.6: the reported latency must not increase during the reservation's life. When the
+  // peer re-advertises the stream with a higher upstream AccumulatedLatency (a non-FirstValue
+  // field), the ingress registration updates in place and the redeclaration's reported latency
+  // exceeds the initial guarantee, converting the Talker Advertise to a Talker Failed with
+  // reportedLatencyHasChanged (code 7) rather than re-advertising the higher value.
   func testTalkerLatencyIncreaseConvertsToFailedCode7() async throws {
-    MockPort._latencyOverrides.withLock { $0.removeAll() }
-    defer { MockPort._latencyOverrides.withLock { $0.removeAll() } }
     let (controller, msrp, _) = try await _makeRecomputeMSRP(
       portIDs: [0, 1, 2],
       portTcMaxLatency: [1: 12345]
@@ -5659,30 +5736,98 @@ extension MRPTests {
       msrp,
       port: 0,
       attributeType: .talkerAdvertise,
-      value: _talkerAdvertise(streamID),
+      value: _talkerAdvertise(streamID, accumulatedLatency: 1000),
       event: .JoinIn
     )
     let relayed = await _waitFor { await _declaredTalkerAdvertise(msrp, streamID, port: 1) != nil }
     XCTAssertTrue(relayed, "advertise must propagate to the egress and set the initial guarantee")
 
-    // gPTP re-measures a higher meanLinkDelay on port 1 (no port object change, no flap), then a
-    // topology change on an unrelated port triggers a recompute that re-samples the fresh latency
-    MockPort._latencyOverrides.withLock { $0[1] = 99999 }
-    var flapped = MockPort(id: 2, portTcMaxLatency: 0)
-    flapped.stpPortState = .blocking
-    let raised: Set<MockPort> = [
-      MockPort(id: 0, portTcMaxLatency: 0),
-      MockPort(id: 1, portTcMaxLatency: 12345),
-      flapped,
-    ]
-    try await msrp.didUpdate(contextIdentifier: MAPBaseSpanningTreeContext, with: raised)
+    // the peer re-advertises the same stream with a much higher upstream AccumulatedLatency; the
+    // ingress registration is updated in place, so the next recompute reports a latency above the
+    // guarantee (no local resample or topology change involved)
+    try await _drive(
+      msrp,
+      port: 0,
+      attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID, accumulatedLatency: 90000),
+      event: .JoinIn
+    )
 
     let failed = await _waitFor {
       await _declaredTalkerFailureCode(msrp, streamID, port: 1) == .reportedLatencyHasChanged
     }
-    XCTAssertTrue(failed, "a latency increase must declare Talker Failed with code 7")
+    XCTAssertTrue(failed, "an upstream latency increase must declare Talker Failed with code 7")
     let advertise = await _declaredTalkerAdvertise(msrp, streamID, port: 1)
     XCTAssertNil(advertise, "the Talker Advertise must no longer be declared once failed")
+    _ = controller
+  }
+
+  // 35.2.2.8.6: a peer's upstream AccumulatedLatency is tracked in both directions. After an
+  // increase fails the stream (code 7), a genuine decrease back within the guarantee must clear the
+  // failure and re-declare Talker Advertise -- a transient spike must not strand the stream Failed.
+  func testTalkerLatencyDecreaseClearsFailedCode7() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(
+      portIDs: [0, 1, 2],
+      portTcMaxLatency: [1: 12345]
+    )
+    let streamID = MSRPStreamID(0x0001_0000_0000_00AD)
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID, accumulatedLatency: 1000), event: .JoinIn
+    )
+    let relayed = await _waitFor { await _declaredTalkerAdvertise(msrp, streamID, port: 1) != nil }
+    XCTAssertTrue(relayed, "advertise must propagate and set the initial guarantee")
+
+    // the peer's upstream latency spikes -> code 7
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID, accumulatedLatency: 90000), event: .JoinIn
+    )
+    let failed = await _waitFor {
+      await _declaredTalkerFailureCode(msrp, streamID, port: 1) == .reportedLatencyHasChanged
+    }
+    XCTAssertTrue(failed, "the latency spike must fail the stream (code 7)")
+
+    // ... then recovers to the original latency: the stream must re-advertise, not stay Failed
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID, accumulatedLatency: 1000), event: .JoinIn
+    )
+    let recovered = await _waitFor {
+      let advertise = await _declaredTalkerAdvertise(msrp, streamID, port: 1)
+      let code = await _declaredTalkerFailureCode(msrp, streamID, port: 1)
+      return advertise != nil && code == nil
+    }
+    XCTAssertTrue(recovered, "a latency decrease back within the guarantee must clear code 7")
+    _ = controller
+  }
+
+  // 35.2.2.8: a peer re-declaring a registered Talker Failed with the same FirstValue but a changed
+  // FailureInformation (failureCode -- a non-FirstValue field) must update the registration in
+  // place
+  // so the new failure reason propagates downstream. It is neither a FirstValue conflict (code 16)
+  // nor a benign no-op to be ignored.
+  func testTalkerFailedFailureCodeChangePropagates() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_00AF)
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerFailed,
+      value: _talkerFailed(streamID, failureCode: .insufficientBandwidth), event: .JoinIn
+    )
+    let relayed = await _waitFor {
+      await _declaredTalkerFailureCode(msrp, streamID, port: 1) == .insufficientBandwidth
+    }
+    XCTAssertTrue(relayed, "the Talker Failed must propagate with its original failure code")
+
+    // re-declare with the same FirstValue and latency but a different failure reason
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerFailed,
+      value: _talkerFailed(streamID, failureCode: .egressPortIsNotAvbCapable), event: .JoinIn
+    )
+    let updated = await _waitFor {
+      await _declaredTalkerFailureCode(msrp, streamID, port: 1) == .egressPortIsNotAvbCapable
+    }
+    XCTAssertTrue(updated, "a changed failure code must update the registration and propagate")
     _ = controller
   }
 
@@ -5738,6 +5883,102 @@ extension MRPTests {
     )
     let advertise = await _declaredTalkerAdvertise(msrp, streamID, port: 1)
     XCTAssertNotNil(advertise, "the stream must stay advertised, not convert to Talker Failed")
+    _ = controller
+  }
+
+  // A changed non-FirstValue payload adopted in place (35.2.2.8) must reach the wire: the egress
+  // applicant sits in QA after its transmissions, where Join! alone is a no-op (Table 10-3), so
+  // the in-place update must re-arm it (periodic!, QA->AA) or peers keep the stale value.
+  func testInPlaceValueUpdateIsRetransmittedFromQuietActive() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_00C0)
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID, accumulatedLatency: 1000), event: .JoinIn
+    )
+    // two transmissions of the initial value: VP -tx-> AA -tx-> QA, so the applicant is now quiet
+    let quiet = await _waitFor {
+      await _transmittedAdvertiseLatencies(recorder, msrp, port: 1, streamID: streamID).count >= 2
+    }
+    XCTAssertTrue(quiet, "the initial advertise must be transmitted into QA")
+    let initial = await _transmittedAdvertiseLatencies(recorder, msrp, port: 1, streamID: streamID)
+
+    // the peer re-declares with a lower AccumulatedLatency: benign, adopted in place (same index)
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID, accumulatedLatency: 500), event: .JoinIn
+    )
+    let expected = try XCTUnwrap(initial.last) - 500
+    let retransmitted = await _waitFor {
+      await _transmittedAdvertiseLatencies(recorder, msrp, port: 1, streamID: streamID)
+        .contains(expected)
+    }
+    XCTAssertTrue(retransmitted, "the updated payload must be retransmitted from a QA applicant")
+    _ = controller
+  }
+
+  // A conflict (code 16) whose talker registration vanishes with its ingress port sees no withdraw
+  // or revert: it must be swept with the port so a later clean re-declaration starts fresh.
+  func testFirstValueConflictClearedWhenIngressPortRemoved() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_00C2)
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .JoinIn
+    )
+    let advertised = await _waitFor {
+      await _declaredTalkerAdvertise(msrp, streamID, port: 1) != nil
+    }
+    XCTAssertTrue(advertised, "the original advertise must propagate")
+    let conflicting = _talkerAdvertise(streamID, dest: [0x91, 0xE0, 0xF0, 0x00, 0x00, 0x99])
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise, value: conflicting, event: .JoinIn
+    )
+    let failed = await _waitFor {
+      await _declaredTalkerFailureCode(msrp, streamID, port: 1) ==
+        .changeInFirstValueForRegisteredStreamID
+    }
+    XCTAssertTrue(failed, "a FirstValue change must fail the stream (code 16)")
+
+    // the ingress port (and the talker registration with it) vanishes, then returns; the talker
+    // re-declares its new FirstValue cleanly -- code 16 must not survive the registration
+    try await msrp.didRemove(
+      contextIdentifier: MAPBaseSpanningTreeContext, with: [MockPort(id: 0)]
+    )
+    try await msrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: [MockPort(id: 0)])
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise, value: conflicting, event: .JoinIn
+    )
+    let recovered = await _waitFor {
+      let advertise = await _declaredTalkerAdvertise(msrp, streamID, port: 1)
+      let code = await _declaredTalkerFailureCode(msrp, streamID, port: 1)
+      return advertise != nil && code == nil
+    }
+    XCTAssertTrue(recovered, "a re-registered stream must start clean after its port vanished")
+    _ = controller
+  }
+
+  // 35.2.2.8.6: a topology change re-samples the per-hop latency but must NOT erase the
+  // per-stream guarantees -- a latency increase after reconvergence trips code 7 instead of
+  // silently re-baselining against the new, higher value.
+  func testInvalidateKeepsLatencyGuarantees() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_00C3)
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .JoinIn
+    )
+    let baselined = await _waitFor {
+      await ((try? msrp.withPortState(port: MockPort(id: 1)) { $0.configuredLatency[streamID] })
+        ?? nil) != nil
+    }
+    XCTAssertTrue(baselined, "the first declaration must set the guarantee")
+    let (kept, cacheCleared) = try await msrp.withPortState(port: MockPort(id: 1)) { state in
+      state.invalidate()
+      return (state.configuredLatency[streamID], state.portTcMaxLatency == nil)
+    }
+    XCTAssertNotNil(kept, "invalidate() must keep the per-stream guarantee")
+    XCTAssertTrue(cacheCleared, "invalidate() must clear the cached per-hop latency")
     _ = controller
   }
 
@@ -7150,24 +7391,24 @@ extension MRPTests {
     // the illegal change, same StreamID and ingress port
     try await _drive(msrp, port: 0, attributeType: .talkerAdvertise, value: changed, event: .JoinIn)
 
-    // give any (erroneous) recompute time to leak the changed value downstream
-    let leaked = await _waitFor(timeoutMs: 300) {
-      guard let egress = await _declaredTalkerAdvertise(msrp, streamID, port: 1)
-      else { return false }
-      return MSRPTalkerFirstValue(egress) == MSRPTalkerFirstValue(changed)
+    // 35.2.2.8: the stream converges to Talker Failed (code 16) and the original Advertise is
+    // withdrawn for it -- the two may briefly coexist during the transition (35.2.6)
+    let failed = await _waitFor {
+      let code = await _declaredTalkerFailureCode(msrp, streamID, port: 1)
+      let advertise = await _declaredTalkerAdvertise(msrp, streamID, port: 1)
+      return code == .changeInFirstValueForRegisteredStreamID && advertise == nil
     }
-    XCTAssertFalse(leaked, "\(field): a changed FirstValue field must not propagate", line: line)
-
-    let egress = await _declaredTalkerAdvertise(msrp, streamID, port: 1)
-    XCTAssertNotNil(
-      egress,
-      "\(field): the stream must remain advertised on its original value",
+    XCTAssertTrue(
+      failed,
+      "\(field): the changed FirstValue must fail the stream (code 16) and withdraw the advertise",
       line: line
     )
-    if let egress {
-      XCTAssertEqual(
-        MSRPTalkerFirstValue(egress), MSRPTalkerFirstValue(original),
-        "\(field): the egress declaration must keep the original FirstValue", line: line
+
+    // the Failed declaration carries the original (kept) FirstValue, not the changed one
+    if let egressFailed = await _declaredTalkerFailed(msrp, streamID, port: 1) {
+      XCTAssertTrue(
+        egressFailed.hasSameImmutableFields(as: original),
+        "\(field): the Failed declaration must carry the original FirstValue", line: line
       )
     }
     _ = controller
@@ -7251,8 +7492,64 @@ extension MRPTests {
     let egress = await _declaredTalkerAdvertise(msrp, streamID, port: 1)
     XCTAssertNotNil(egress, "the stream must remain advertised")
     if let egress {
-      XCTAssertEqual(MSRPTalkerFirstValue(egress), MSRPTalkerFirstValue(original))
+      XCTAssertTrue(egress.hasSameImmutableFields(as: original))
     }
+    _ = controller
+  }
+
+  // 35.2.2.8: the code-16 failure lasts only for the registration's life -- once the talker
+  // withdraws (Leave), a clean re-declaration recovers to Advertise (the flag is cleared).
+  func testFirstValueChangeRecoversAfterTalkerWithdraws() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0001)
+    let original = _talkerAdvertise(streamID)
+    let changed = MSRPTalkerAdvertiseValue(
+      streamID: streamID, dataFrameParameters: original.dataFrameParameters,
+      tSpec: MSRPTSpec(maxFrameSize: 128, maxIntervalFrames: 1),
+      priorityAndRank: original.priorityAndRank, accumulatedLatency: original.accumulatedLatency
+    )
+
+    try await _drive(
+      msrp,
+      port: 0,
+      attributeType: .talkerAdvertise,
+      value: original,
+      event: .JoinIn
+    )
+    let propagated = await _waitFor { await _isDeclared(msrp, .talkerAdvertise, streamID, port: 1) }
+    XCTAssertTrue(propagated, "the original advertise must propagate")
+
+    // the illegal change fails the stream (code 16)
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise, value: changed, event: .JoinIn)
+    let failed = await _waitFor {
+      await _declaredTalkerFailureCode(msrp, streamID, port: 1)
+        == .changeInFirstValueForRegisteredStreamID
+    }
+    XCTAssertTrue(failed, "the changed FirstValue must fail the stream (code 16)")
+
+    // the talker withdraws: the failure is cleared along with the registration
+    try await _drive(msrp, port: 0, attributeType: .talkerAdvertise, value: original, event: .Lv)
+    let withdrawn = await _waitFor {
+      let advertise = await _declaredTalkerAdvertise(msrp, streamID, port: 1)
+      let code = await _declaredTalkerFailureCode(msrp, streamID, port: 1)
+      return advertise == nil && code == nil
+    }
+    XCTAssertTrue(withdrawn, "the withdrawn talker must clear both the advertise and the failure")
+
+    // a clean re-declaration recovers to Advertise, proving the code-16 flag was cleared
+    try await _drive(
+      msrp,
+      port: 0,
+      attributeType: .talkerAdvertise,
+      value: original,
+      event: .JoinIn
+    )
+    let recovered = await _waitFor {
+      let advertise = await _declaredTalkerAdvertise(msrp, streamID, port: 1)
+      let code = await _declaredTalkerFailureCode(msrp, streamID, port: 1)
+      return advertise != nil && code == nil
+    }
+    XCTAssertTrue(recovered, "a clean re-declaration must recover to Advertise")
     _ = controller
   }
 
