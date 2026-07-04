@@ -110,17 +110,18 @@ struct VectorHeader: Sendable, Equatable, Hashable, SerDes {
 
   init(parsing input: inout ParserSpan) throws {
     let value: UInt16 = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
-    guard let leaveAllEvent = LeaveAllEvent(rawValue: UInt8(value >> 13)) else {
+    guard let leaveAllEvent = LeaveAllEvent(rawValue: UInt8(value >> Self.numberOfValuesBits)) else {
       throw MRPError.invalidLeaveAllEvent
     }
     self.leaveAllEvent = leaveAllEvent
-    numberOfValues = value & 0x1FFF
+    numberOfValues = value & Self.maxNumberOfValues
   }
 
   func serialize(into serializationContext: inout SerializationContext) throws {
-    // widen before the shift: leaveAllEvent.rawValue is UInt8, so `rawValue << 13` in UInt8
-    // arithmetic overshifts its 8-bit width and drops the LeaveAll bit (10.8.2.6)
-    let value = (UInt16(leaveAllEvent.rawValue) << 13) | (numberOfValues & 0x1FFF)
+    // widen before the shift: leaveAllEvent.rawValue is UInt8, so shifting in UInt8 arithmetic
+    // overshifts its 8-bit width and drops the LeaveAll bit (10.8.2.6)
+    let value = (UInt16(leaveAllEvent.rawValue) << Self.numberOfValuesBits) |
+      (numberOfValues & Self.maxNumberOfValues)
     serializationContext.serialize(uint16: value)
   }
 }
@@ -359,7 +360,9 @@ struct Message {
     repeat {
       if let attributeListLength {
         let bytesProcessed = startCount - input.count
-        if bytesProcessed == Int(attributeListLength) - 2 { break }
+        // attributeListLength counts the vectors plus the trailing EndMark; stop once the vectors
+        // are consumed and only the EndMark remains
+        if bytesProcessed == Int(attributeListLength) - MRPDU.endMarkLength { break }
       } else {
         // Peek at next 2 bytes to check for EndMark
         var peekSpan = ParserSpan(input.bytes)
@@ -402,9 +405,10 @@ struct Message {
     serializationContext.serialize(uint16: EndMark)
     serializationContext.serialize(uint8: attributeLength, at: attributeLengthPosition)
     if let attributeListLengthPosition {
+      // the length covers everything after the AttributeListLength field itself
       let attributeListLength = UInt16(
         serializationContext
-          .position - attributeListLengthPosition - 2
+          .position - attributeListLengthPosition - Message.attributeListLengthLength
       )
       serializationContext.serialize(uint16: attributeListLength, at: attributeListLengthPosition)
     }
@@ -459,5 +463,115 @@ struct MRPDU {
       try message.serialize(into: &serializationContext, application: application)
     }
     serializationContext.serialize(uint16: EndMark)
+  }
+}
+
+// MARK: - PDU framing sizes and MTU fragmentation (10.8.2)
+
+extension VectorHeader {
+  // NumberOfValues is the low 13 bits, LeaveAllEvent the top 3 (10.8.2.6/10.8.2.7).
+  static let numberOfValuesBits = 13
+  static let maxNumberOfValues = NumberOfValues((1 << numberOfValuesBits) - 1)
+  // leaveAllEvent << numberOfValuesBits | numberOfValues, serialized as one UInt16.
+  static let serializedLength = 2
+}
+
+extension Message {
+  static let attributeTypeLength = 1
+  static let attributeLengthLength = 1
+  static let attributeListLengthLength = 2
+
+  // Octets framing a Message's VectorAttributes: AttributeType, AttributeLength, the optional
+  // AttributeListLength, and the trailing EndMark.
+  static func framingLength(hasAttributeListLength: Bool) -> Int {
+    attributeTypeLength + attributeLengthLength +
+      (hasAttributeListLength ? attributeListLengthLength : 0) + MRPDU.endMarkLength
+  }
+}
+
+extension VectorAttribute {
+  // Largest NumberOfValues one vector may carry and still fit `maxLength` serialized octets: a vector
+  // costs VectorHeader + firstValue + ceil(N/3) packed events (+ N subtype octets when the type
+  // carries them). Also bounded by the 13-bit NumberOfValues field (10.8.2.7).
+  static func maxNumberOfValues(
+    firstValue: V?,
+    hasSubtype: Bool,
+    hasAttributeListLength: Bool,
+    maxLength: Int
+  ) -> Int {
+    let firstValueLength = (try? firstValue?.serialized().count) ?? 0
+    let fixed = MRPDU.protocolVersionLength + MRPDU.endMarkLength +
+      Message.framingLength(hasAttributeListLength: hasAttributeListLength) +
+      VectorHeader.serializedLength + firstValueLength
+    let budget = maxLength - fixed
+    guard budget > 0 else { return 1 }
+    // Packed-event octets per N values: ceil(N/3) three-packed AttributeEvents, plus ceil(N/4)
+    // four-packed subtype octets when the type carries a subtype. Invert conservatively for the
+    // largest N within budget: without a subtype ceil(N/3) <= budget gives N <= 3*budget exactly;
+    // with a subtype (N+2)/3 + (N+3)/4 <= budget gives N <= (12*budget - 17)/7 (17 = 4*2 + 3*3).
+    let maxN = hasSubtype ? (12 * budget - 17) / 7 : 3 * budget
+    return max(1, min(Int(VectorHeader.maxNumberOfValues), maxN))
+  }
+}
+
+extension MRPDU {
+  static let protocolVersionLength = 1
+  static let endMarkLength = 2 // a Message EndMark and the MRPDU EndMark are each one UInt16
+}
+
+extension Array where Element == Message {
+  // 10.8.2.8 c): split these messages into MRPDUs that each serialize within `maxLength` octets,
+  // packing whole VectorAttributes greedily and emitting successive PDUs (frames) for the remainder.
+  // A serialized MRPDU is exactly the PDU framing plus, per message, the message framing plus each
+  // vector's own length, so the running size is tracked without re-serializing the prefix. A vector
+  // that alone exceeds `maxLength` is emitted on its own (best-effort) and reported via `oversize`;
+  // callers cap vector size up front with VectorAttribute.maxNumberOfValues.
+  func fragmentedIntoPDUs(
+    protocolVersion: ProtocolVersion,
+    hasAttributeListLength: Bool,
+    maxLength: Int,
+    oversize: (Int) -> Void = { _ in }
+  ) throws -> [MRPDU] {
+    let pduFraming = MRPDU.protocolVersionLength + MRPDU.endMarkLength
+    let msgFraming = Message.framingLength(hasAttributeListLength: hasAttributeListLength)
+    // Exact serialized length without re-serializing the packed events (bridge.tx serializes them
+    // again): VectorHeader + firstValue + the three-packed and optional four-packed subtype octets.
+    func vectorLength(_ vector: VectorAttribute<AnyValue>) throws -> Int {
+      VectorHeader.serializedLength + (try vector.firstValue.serialized().count) +
+        vector.threePackedEvents.count + (vector.fourPackedEvents?.count ?? 0)
+    }
+
+    var pdus = [MRPDU]()
+    var current = [Message]()
+    var currentBytes = pduFraming
+    for message in self {
+      var vectors = [VectorAttribute<AnyValue>]()
+      var headerCounted = false
+      for vector in message.attributeList {
+        let vBytes = try vectorLength(vector)
+        let delta = vBytes + (headerCounted ? 0 : msgFraming)
+        if currentBytes + delta > maxLength, !(current.isEmpty && vectors.isEmpty) {
+          if !vectors.isEmpty {
+            current.append(Message(attributeType: message.attributeType, attributeList: vectors))
+            vectors.removeAll()
+          }
+          pdus.append(MRPDU(protocolVersion: protocolVersion, messages: current))
+          current.removeAll()
+          currentBytes = pduFraming
+          headerCounted = false
+        }
+        if pduFraming + msgFraming + vBytes > maxLength { oversize(vBytes) }
+        if !headerCounted { currentBytes += msgFraming; headerCounted = true }
+        currentBytes += vBytes
+        vectors.append(vector)
+      }
+      if !vectors.isEmpty {
+        current.append(Message(attributeType: message.attributeType, attributeList: vectors))
+      }
+    }
+    if !current.isEmpty {
+      pdus.append(MRPDU(protocolVersion: protocolVersion, messages: current))
+    }
+    return pdus
   }
 }
