@@ -205,6 +205,8 @@ extension BaseApplication {
       fallthrough
     case .peer:
       fallthrough
+    case .peerChanged:
+      fallthrough
     case .application:
       return true // FIXME: check whether we should propagate application withdrawals?
     case .internal:
@@ -297,7 +299,7 @@ extension BaseApplication {
       let isRegisteredElsewhere = participants.contains {
         $0.port != participant.port && $0.isRegisteredUnchecked(
           attributeType: attributeType,
-          matching: .matchEqual(attributeValue),
+          matching: .matchIndex(attributeValue),
           isolation: self
         )
       }

@@ -269,6 +269,11 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
 
   private var _pendingStreams = OrderedSet<MSRPStreamID>()
   private var _streamUpdateTask: Task<(), Never>?
+  // 35.2.2.8: streams whose registered FirstValue a peer tried to change; each stays Talker Failed
+  // (code 16) until its talker withdraws (cleared in _withdrawStream). Kept as an explicit set
+  // because the conflict cannot be re-derived from the store: a coexisting egress failure or an
+  // already-Failed stream would otherwise erase or never record the marker.
+  private var _firstValueViolations = Set<MSRPStreamID>()
   private var _reservations: [P.ID: [MSRPStreamID: Reservation]] = [:]
   private var _ingressFdbEntries: [MSRPStreamID: FDBEntry] = [:]
 
@@ -616,6 +621,18 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
       // drop cached reservations so a later re-add reprograms the hardware
       _reservations[port.id] = nil
     }
+    // a violation (code 16) whose talker registration vanishes with its port sees no withdraw or
+    // revert to clear it: sweep those so a clean future re-declaration is not failed forever
+    _firstValueViolations = _firstValueViolations.filter { streamID in
+      var registeredElsewhere = false
+      apply(for: MAPBaseSpanningTreeContext) { participant in
+        guard !vanishedPortIDs.contains(participant.port.id) else { return }
+        if _findTalkerRegistration(for: streamID, participant: participant) != nil {
+          registeredElsewhere = true
+        }
+      }
+      return registeredElsewhere
+    }
     // the kernel drops FDB entries on a vanished port; forget any ingress entry we tracked for a
     // Talker on one so the cache does not go stale
     if !vanishedPortIDs.isEmpty {
@@ -868,7 +885,7 @@ extension MSRPApplication {
       if let mmrpParticipant = try? await _mmrp?.findParticipant(port: port),
          mmrpParticipant.findAttribute(
            attributeType: MMRPAttributeType.mac.rawValue,
-           matching: .matchEqual(
+           matching: .matchIndex(
              MMRPMACValue(macAddress: talker.dataFrameParameters.destinationAddress)
            )
          ) == nil
@@ -1127,7 +1144,7 @@ extension MSRPApplication {
       if let existingTalkerRegistration = _findTalkerRegistration(
         for: talker.streamID,
         participant: participant
-      ), MSRPTalkerFirstValue(existingTalkerRegistration) != MSRPTalkerFirstValue(talker) {
+      ), !existingTalkerRegistration.hasSameImmutableFields(as: talker) {
         _logger
           .error(
             "MSRP: stream \(talker.streamID) is already registered on port \(port) with a different FirstValue"
@@ -1644,25 +1661,34 @@ extension MSRPApplication {
         throw MRPError.doNotPropagateAttribute
       }
       let ingress = try findParticipant(for: contextIdentifier, port: port)
-      // 35.2.2.8: MSRP does not support changing a FirstValue field of a registered StreamID;
-      // reject the change and keep the existing valid registration rather than silently dropping
-      // it.
-      // Scope to the same declaration type: an Advertise<->Failed transition is not a FirstValue
-      // change and is handled by the mutual-exclusion deregistration below.
-      if let existing = ingress.findAttribute(
-        attributeType: attributeType.rawValue,
-        matching: .matchAnyIndex(talkerValue.streamID.index)
-      )?.1 as? any MSRPTalkerValue,
-        MSRPTalkerFirstValue(existing) != MSRPTalkerFirstValue(talkerValue)
-      {
-        _logger
-          .error(
-            "MSRP: rejecting changed FirstValue for registered stream \(talkerValue.streamID) on \(port) (35.2.2.8)"
-          )
-        throw MRPError.doNotPropagateAttribute
-      }
-      // mutual exclusion: clear the opposite talker registration on the source port
-      if eventSource == .peer {
+      // 35.2.2.8: .peerChanged means the peer re-declared this StreamID with a value differing from
+      // the retained (index-matched) one. A changed FirstValue fails the stream (code 16); an
+      // unchanged one (only AccumulatedLatency differs) is a benign latency update.
+      if eventSource == .peerChanged {
+        // inspect the retained registration once, in place:
+        ingress.updateRegisteredValue(
+          attributeType: attributeType.rawValue,
+          matching: .matchAnyIndex(talkerValue.streamID.index)
+        ) { current in
+          guard let existing = current as? any MSRPTalkerValue else { return nil }
+          if !existing.hasSameImmutableFields(as: talkerValue) {
+            // a forbidden FirstValue change: fail the stream (code 16) until the talker withdraws,
+            // keeping the retained value (35.2.2.8: a talker must withdraw before changing)
+            _logger
+              .error(
+                "MSRP: stream \(talkerValue.streamID) FirstValue changed on \(port); failing (35.2.2.8)"
+              )
+            _firstValueViolations.insert(talkerValue.streamID)
+            return nil
+          }
+          // FirstValue unchanged but some other field did (AccumulatedLatency, or a Talker Failed's
+          // FailureInformation): adopt the peer's value in place. The peer is declaring matching
+          // immutable fields again, so any prior FirstValue violation is resolved (35.2.2.8).
+          _firstValueViolations.remove(talkerValue.streamID)
+          return talkerValue
+        }
+      } else if eventSource == .peer {
+        // mutual exclusion: clear the opposite talker registration on the source port
         _deregisterOppositeTalkerRegistration(
           participant: ingress,
           declarationType: talkerValue.declarationType!,
@@ -1674,6 +1700,16 @@ extension MSRPApplication {
       _streamDidUpdate((attributeValue as! MSRPListenerValue).streamID)
     case .domain:
       let domain = (attributeValue as! MSRPDomainValue)
+      // adopt a peer's changed Domain payload into the retained registration (the index is the
+      // srClassID alone): otherwise every subsequent refresh re-detects the change, and a later
+      // registrar re-indication delivers the stale value and flips the boundary state back
+      if eventSource == .peerChanged {
+        let ingress = try findParticipant(for: contextIdentifier, port: port)
+        ingress.updateRegisteredValue(
+          attributeType: attributeType.rawValue,
+          matching: .matchAnyIndex(domain.index)
+        ) { _ in domain }
+      }
       let isEndStation = await controller?.isEndStation ?? false
       try withPortState(port: port) { portState in
         if isEndStation {
@@ -1826,13 +1862,9 @@ extension MSRPApplication {
 
     var declaredTalkerPorts = Set<P.ID>()
 
-    // re-sample per-hop latency this recompute so a since-changed gPTP meanLinkDelay is reflected;
-    // only the cache (not the per-stream guarantee) resets, and the loop below re-fills it so every
-    // talker on a port still reports a uniform value within this pass (35.2.2.8.6)
-    for (participant, _) in plan.talkerDeclarations {
-      _portStates[participant.port.id]?.portTcMaxLatency = nil
-    }
-
+    // per-hop latency is cached per port and refreshed only when the topology changes (a link flap
+    // or STP transition calls invalidate()); it is NOT re-sampled every recompute, so ordinary gPTP
+    // meanLinkDelay jitter cannot push the reported latency past its guarantee (35.2.2.8.6).
     for (participant, failure) in plan.talkerDeclarations {
       // a newer event re-marked this stream while we awaited: abandon the now-stale plan
       // rather than emitting declarations from it; the pending recompute will reapply (10.3)
@@ -1901,6 +1933,13 @@ extension MSRPApplication {
       // with reportedLatencyHasChanged (code 7). The first successful declaration sets the
       // guarantee.
       var failure = failure
+      // 35.2.2.8: a peer changed a FirstValue field of this registered stream; it stays Failed
+      // (code 16) until the talker withdraws and re-declares cleanly.
+      if _firstValueViolations.contains(streamID) {
+        failure = MSRPFailure(
+          systemID: _systemID, failureCode: .changeInFirstValueForRegisteredStreamID
+        )
+      }
       if failure == nil, !latencyIsProvisional {
         if let baseline = _portStates[participant.port.id]?.configuredLatency[streamID] {
           if latency > baseline {
@@ -2012,6 +2051,8 @@ extension MSRPApplication {
   private func _withdrawStream(_ streamID: MSRPStreamID) async throws {
     // the Talker is gone: drop the secure-switch ingress admission entry (no-op if none)
     await _removeIngressFdbEntry(streamID: streamID)
+    // 35.2.2.8: the talker withdrew, so a subsequent re-declaration starts clean (clears code 16)
+    _firstValueViolations.remove(streamID)
 
     for (portID, talker) in _reservationsToWithdraw(streamID, keeping: []) {
       if let participant = _participant(for: portID) {
@@ -2035,7 +2076,6 @@ extension MSRPApplication {
     }
   }
 
-  // leave our own declared attributes (of the given types) for a stream on one port.
   // Any declared attribute is left, including one that is also registered: leaving with
   // eventSource .map withdraws our Applicant declaration without clearing the Registrar,
   // which is what stops us declaring toward a port that now registers the stream itself.

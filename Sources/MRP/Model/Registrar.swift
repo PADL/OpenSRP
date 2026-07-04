@@ -77,7 +77,7 @@ final class Registrar: Sendable, CustomStringConvertible {
     let (leaveTimerAction, stateAction) = _state.withLock { state in
       var leaveTimerAction = LeaveTimerAction.none
 
-      if state == .LV, event == .rNew || event == .rJoinIn || event == .rJoinMt {
+      if state == .LV, event.indicatesRegistration {
         leaveTimerAction = .stop
       } else if state != .MT, event == .rLvNow {
         leaveTimerAction = .stop

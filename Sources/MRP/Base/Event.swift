@@ -65,6 +65,11 @@ public enum ProtocolEvent: Sendable {
       return false
     }
   }
+
+  // the received events that drive the Registrar toward IN, i.e. a Join indication (10.7.7)
+  var indicatesRegistration: Bool {
+    self == .rNew || self == .rJoinIn || self == .rJoinMt
+  }
 }
 
 public struct EventContext<A: Application>: Sendable, CustomStringConvertible {
@@ -84,7 +89,7 @@ public struct EventContext<A: Application>: Sendable, CustomStringConvertible {
   }
 }
 
-public enum EventSource: Sendable {
+public enum EventSource: Sendable, Equatable {
   // event source was join timer
   case joinTimer
   // event source was leave timer
@@ -95,6 +100,9 @@ public enum EventSource: Sendable {
   case periodicTimer
   // event source was a remote peer
   case peer
+  // a remote peer re-declared an already-registered index with a changed value (35.2.2.8): distinct
+  // from .peer so it is told apart from the registrar's re-indication of the retained value
+  case peerChanged
   // event source was explicit administrative control (e.g. TSN endpoint)
   case `internal`
   // event source was transitive via MAP function

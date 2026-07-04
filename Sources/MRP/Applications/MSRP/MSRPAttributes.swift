@@ -105,22 +105,15 @@ extension MSRPTalkerValue {
       systemID: failure.systemID, failureCode: failure.failureCode
     )
   }
-}
 
-// 35.2.2.8: the FirstValue fields MSRP forbids changing for an existing StreamID. Projected into
-// an Equatable value (excluding the per-hop AccumulatedLatency and Failed-only fields) so an
-// Advertise and a Failed compare on identity alone, regardless of concrete declaration type.
-struct MSRPTalkerFirstValue: Equatable {
-  let streamID: MSRPStreamID
-  let dataFrameParameters: MSRPDataFrameParameters
-  let tSpec: MSRPTSpec
-  let priorityAndRank: MSRPPriorityAndRank
-
-  init(_ talker: any MSRPTalkerValue) {
-    streamID = talker.streamID
-    dataFrameParameters = talker.dataFrameParameters
-    tSpec = talker.tSpec
-    priorityAndRank = talker.priorityAndRank
+  // 35.2.2.8: the FirstValue fields MSRP forbids changing for an existing StreamID, excluding
+  // the per-hop AccumulatedLatency and Failed-only fields (so an Advertise and a Failed compare
+  // on identity alone, regardless of concrete declaration type)
+  func hasSameImmutableFields(as other: any MSRPTalkerValue) -> Bool {
+    streamID == other.streamID &&
+      dataFrameParameters == other.dataFrameParameters &&
+      tSpec == other.tSpec &&
+      priorityAndRank == other.priorityAndRank
   }
 }
 
@@ -130,18 +123,6 @@ struct MSRPTalkerAdvertiseValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equ
   let tSpec: MSRPTSpec
   let priorityAndRank: MSRPPriorityAndRank
   let accumulatedLatency: UInt32
-
-  static func == (lhs: MSRPTalkerAdvertiseValue, rhs: MSRPTalkerAdvertiseValue) -> Bool {
-    lhs.streamID == rhs.streamID && lhs.dataFrameParameters == rhs.dataFrameParameters && lhs
-      .tSpec == rhs.tSpec && lhs.priorityAndRank == rhs.priorityAndRank
-  }
-
-  func hash(into hasher: inout Hasher) {
-    streamID.hash(into: &hasher)
-    dataFrameParameters.hash(into: &hasher)
-    tSpec.hash(into: &hasher)
-    priorityAndRank.hash(into: &hasher)
-  }
 
   var index: UInt64 { streamID.id }
 
@@ -200,12 +181,6 @@ struct MSRPTalkerFailedValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equata
   let accumulatedLatency: UInt32
   let systemID: MSRPSystemID
   let failureCode: TSNFailureCode
-
-  static func == (lhs: MSRPTalkerFailedValue, rhs: MSRPTalkerFailedValue) -> Bool {
-    lhs.streamID == rhs.streamID && lhs.dataFrameParameters == rhs.dataFrameParameters && lhs
-      .tSpec == rhs.tSpec && lhs.priorityAndRank == rhs.priorityAndRank && lhs.systemID == rhs
-      .systemID && lhs.failureCode == rhs.failureCode
-  }
 
   var index: UInt64 { streamID.id }
 
