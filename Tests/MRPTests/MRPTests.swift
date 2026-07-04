@@ -174,6 +174,23 @@ actor MRPTestRecorder {
     cbs.append((port, queue, idleSlope))
   }
 
+  // ports whose egress queues (mqprio) MockBridge has configured
+  private(set) var egressConfiguredPorts = Set<Int>()
+  func recordEgressConfigured(port: Int) { egressConfiguredPorts.insert(port) }
+  func didConfigureEgress(port: Int) -> Bool { egressConfiguredPorts.contains(port) }
+
+  // when set, getSRClassPriorityMap returns nil for a port whose egress queues were never
+  // configured (models a DSA port with no AVB mqprio until we program it)
+  private(set) var priorityMapRequiresEgressConfig = false
+  func setPriorityMapRequiresEgressConfig(_ enabled: Bool) {
+    priorityMapRequiresEgressConfig = enabled
+  }
+
+  // ports whose egress-queue configuration MockBridge should reject (simulate a transient error)
+  private var failEgressConfigPorts = Set<Int>()
+  func setFailEgressConfig(ports: Set<Int>) { failEgressConfigPorts = ports }
+  func shouldFailEgressConfig(port: Int) -> Bool { failEgressConfigPorts.contains(port) }
+
   func recordFDBRegister(mac: EUI48, vlan: VLAN?, ports: Set<Int>) {
     fdbRegister.append((mac, vlan, ports))
   }
@@ -460,9 +477,22 @@ extension MockBridge: MSRPAwareBridge {
     srClassPriorityMap: SRClassPriorityMap,
     queues: [SRclassID: UInt],
     forceAvbCapable: Bool
-  ) async throws {}
+  ) async throws {
+    if await recorder.shouldFailEgressConfig(port: port.id) {
+      throw MRPError.internalError // simulate a transient mqprio-programming error
+    }
+    await recorder.recordEgressConfigured(port: port.id)
+  }
 
-  func unconfigureEgressQueues(port: P) async throws {}
+  func unconfigureEgressQueues(port: P) async throws {
+    // a port with no configured mqprio has nothing to remove; mirror tc del on a missing qdisc so a
+    // caller that lets this abort the configure that follows leaves the port with no queues
+    if await recorder.priorityMapRequiresEgressConfig,
+       await !recorder.didConfigureEgress(port: port.id)
+    {
+      throw MRPError.internalError
+    }
+  }
 
   func configureIngressQueues(
     port: P,
@@ -493,7 +523,12 @@ extension MockBridge: MSRPAwareBridge {
   }
 
   func getSRClassPriorityMap(port: P) async throws -> SRClassPriorityMap? {
-    [.A: .CA, .B: .EE]
+    if await recorder.priorityMapRequiresEgressConfig,
+       await !recorder.didConfigureEgress(port: port.id)
+    {
+      return nil // an unconfigured DSA port has no AVB mqprio to read a map from
+    }
+    return [.A: .CA, .B: .EE]
   }
 
   var srClassPriorityMapNotifications: AnyAsyncSequence<SRClassPriorityMapNotification<P>> {
@@ -3579,6 +3614,123 @@ final class MRPTests: XCTestCase {
     let domainsAfter = try await msrp.withPortState(port: MockPort(id: 0)) { $0.declaredDomains }
     XCTAssertNotNil(domainsAfter[.A], "the port must declare its Class A domain once up")
     XCTAssertNotNil(domainsAfter[.B], "the port must declare its Class B domain once up")
+    _ = controller
+  }
+
+  // Regression (a893d5f): when we own the queues (--configure-egress-queues), a port that is down
+  // at
+  // startup is skipped by didAdd, so its mqprio is never written and reads back empty. When it
+  // later
+  // comes up, onContextUpdated must configure the queues (and use the default map), not just read
+  // the
+  // empty map back -- otherwise the port declares itself a domain boundary and fails every talker
+  // with requestedPriorityIsNotAnSRClassPriority until mrpd restarts.
+  func testLateLinkPortConfiguresQueuesWhenOwningThem() async throws {
+    let recorder = MRPTestRecorder()
+    // model a switch where a port has no readable SR mqprio until we configure its egress queues
+    await recorder.setPriorityMapRequiresEgressConfig(true)
+    // start sub-100 Mb/s (an effectively down link): not AVB capable
+    let ports: Set<MockPort> = [MockPort(id: 0, linkSpeed: 10000)]
+    let bridge = MockBridge(ports: ports, recorder: recorder)
+    let controller = try await MRPController(
+      bridge: bridge,
+      logger: Logger(label: "com.padl.MRPTests.lateLinkConfigure")
+    )
+    let msrp = try await MSRPApplication(controller: controller, flags: [.configureEgressQueues])
+    try await msrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
+
+    let configuredBefore = await recorder.didConfigureEgress(port: 0)
+    XCTAssertFalse(
+      configuredBefore, "a port that is down at startup must not have its queues configured yet"
+    )
+    let domainsBefore = try await msrp.withPortState(port: MockPort(id: 0)) { $0.declaredDomains }
+    XCTAssertTrue(domainsBefore.isEmpty, "a non-AVB port must not declare SR domains")
+
+    // link comes up full-duplex gigabit: now AVB capable (MockPort equality is by id)
+    let up: Set<MockPort> = [MockPort(id: 0)]
+    try await msrp.didUpdate(contextIdentifier: MAPBaseSpanningTreeContext, with: up)
+
+    let configuredAfter = await recorder.didConfigureEgress(port: 0)
+    XCTAssertTrue(
+      configuredAfter,
+      "onContextUpdated must configure the queues of a port that becomes AVB capable after startup"
+    )
+    let mapAfter = try await msrp.withPortState(port: MockPort(id: 0)) { $0.srClassPriorityMap }
+    XCTAssertEqual(
+      mapAfter,
+      [.A: .CA, .B: .EE],
+      "the port must adopt the default map we configured"
+    )
+    let domainsAfter = try await msrp.withPortState(port: MockPort(id: 0)) { $0.declaredDomains }
+    XCTAssertNotNil(domainsAfter[.A], "the port must declare its Class A domain once configured")
+    XCTAssertNotNil(domainsAfter[.B], "the port must declare its Class B domain once configured")
+    _ = controller
+  }
+
+  // A configureEgressQueues failure at startup must surface from didAdd (an operator-visible
+  // error, as before the shared-configure refactor), not leave the port silently non-SR.
+  func testEgressConfigFailureAtStartupThrows() async throws {
+    let recorder = MRPTestRecorder()
+    await recorder.setPriorityMapRequiresEgressConfig(true)
+    await recorder.setFailEgressConfig(ports: [0])
+    let ports: Set<MockPort> = [MockPort(id: 0)]
+    let bridge = MockBridge(ports: ports, recorder: recorder)
+    let controller = try await MRPController(
+      bridge: bridge,
+      logger: Logger(label: "com.padl.MRPTests.egressFailStartup")
+    )
+    let msrp = try await MSRPApplication(controller: controller, flags: [.configureEgressQueues])
+    do {
+      try await msrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
+      XCTFail("didAdd must propagate an egress-queue configuration failure")
+    } catch {}
+    _ = controller
+  }
+
+  // If configureEgressQueues fails on the late-capability path, the port must NOT be left marked
+  // configured with a non-empty map: that would declare domains and admit talkers whose CBS program
+  // then ENOENTs, and the onContextUpdated isEmpty guard would never retry it. It must keep an
+  // empty
+  // map and recover on a later update once configuration succeeds.
+  func testEgressConfigFailureLeavesPortRetryable() async throws {
+    let recorder = MRPTestRecorder()
+    await recorder.setPriorityMapRequiresEgressConfig(true)
+    // start sub-100 Mb/s: not AVB capable, so didAdd skips the port (no configure attempt)
+    let ports: Set<MockPort> = [MockPort(id: 0, linkSpeed: 10000)]
+    let bridge = MockBridge(ports: ports, recorder: recorder)
+    let controller = try await MRPController(
+      bridge: bridge,
+      logger: Logger(label: "com.padl.MRPTests.egressFail")
+    )
+    let msrp = try await MSRPApplication(controller: controller, flags: [.configureEgressQueues])
+    try await msrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
+
+    // link comes up but the configure fails: the port must not carry a phantom map or declare
+    // domains, and the update must not abort
+    await recorder.setFailEgressConfig(ports: [0])
+    let up: Set<MockPort> = [MockPort(id: 0)]
+    try await msrp.didUpdate(contextIdentifier: MAPBaseSpanningTreeContext, with: up)
+    let mapFailed = try await msrp.withPortState(port: MockPort(id: 0)) { $0.srClassPriorityMap }
+    XCTAssertTrue(
+      mapFailed.isEmpty,
+      "a port whose egress config failed must not keep a priority map"
+    )
+    let domainsFailed = try await msrp.withPortState(port: MockPort(id: 0)) { $0.declaredDomains }
+    XCTAssertTrue(domainsFailed.isEmpty, "a port with no mqprio must not declare SR domains")
+
+    // configuration now succeeds; a later update must retry and bring the port up
+    await recorder.setFailEgressConfig(ports: [])
+    try await msrp.didUpdate(contextIdentifier: MAPBaseSpanningTreeContext, with: up)
+
+    let configured = await recorder.didConfigureEgress(port: 0)
+    XCTAssertTrue(
+      configured,
+      "a later update must retry egress configuration after a transient failure"
+    )
+    let mapOk = try await msrp.withPortState(port: MockPort(id: 0)) { $0.srClassPriorityMap }
+    XCTAssertEqual(mapOk, [.A: .CA, .B: .EE], "the port must adopt the default map once configured")
+    let domainsOk = try await msrp.withPortState(port: MockPort(id: 0)) { $0.declaredDomains }
+    XCTAssertNotNil(domainsOk[.A], "the port must declare its Class A domain once configured")
     _ = controller
   }
 

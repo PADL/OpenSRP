@@ -381,6 +381,56 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     }
   }
 
+  // Configure an AVB-capable port's queues and return the SR-class priority map to record for it
+  // (nil when the port is neither AVB capable nor forced, so the caller skips it). When we own the
+  // queues we program the mqprio with the default map and return that; otherwise we read it back.
+  // Shared by didAdd and onContextUpdated so a port that goes AVB capable after startup is set up
+  // the same way, rather than left with an empty map that fails every talker.
+  private func _configureAvbCapablePort(
+    _ port: P,
+    bridge: any MSRPAwareBridge<P>
+  ) async throws -> SRClassPriorityMap? {
+    guard port.isAvbCapable || _forceAvbCapable else { return nil }
+    if _configureEgressQueues || _configureIngressQueues {
+      if _configureEgressQueues {
+        // best-effort unconfigure (a fresh port has no mqprio to remove); it must not abort the
+        // configure that follows, or the port is left with no mqprio and every CBS program ENOENTs
+        try? await bridge.unconfigureEgressQueues(port: port)
+        // a failure throws: didAdd surfaces it to its caller, onContextUpdated logs it and leaves
+        // the port map-less so its isEmpty guard retries on a later update
+        try await bridge.configureEgressQueues(
+          port: port,
+          srClassPriorityMap: DefaultSRClassPriorityMap,
+          queues: _queues,
+          forceAvbCapable: _forceAvbCapable
+        )
+      }
+      if _configureIngressQueues {
+        // configureIngressQueues is ref-counted at the bridge and handles both per-port ingress
+        // maps (e.g. 88E6390) and global maps shared across all ports (e.g. 88E6352). No pre-clear
+        // is needed here (a blind per-port delete would tear down a shared global map for the other
+        // member ports). Ingress (DCBNL) configuration is best-effort: kernels/switches without the
+        // DCBNL priority-map migration return EOPNOTSUPP; log and continue.
+        do {
+          try await bridge.configureIngressQueues(
+            port: port,
+            srClassPriorityMap: DefaultSRClassPriorityMap,
+            queues: _queues,
+            forceAvbCapable: _forceAvbCapable
+          )
+        } catch {
+          _logger.error("MSRP: failed to configure ingress queues for port \(port): \(error)")
+        }
+      }
+      return DefaultSRClassPriorityMap
+    } else if port.isAvbCapable {
+      return await (try? bridge.getSRClassPriorityMap(port: port)) ?? SRClassPriorityMap()
+    } else {
+      _logger.warning("MSRP: forcing port \(port) to advertise as AVB capable")
+      return DefaultSRClassPriorityMap
+    }
+  }
+
   func onContextAdded(
     contextIdentifier: MAPContextIdentifier,
     with context: MAPContext<P>
@@ -399,55 +449,12 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     for port in context {
       await _setupFlowControl(port: port)
 
-      if _configureEgressQueues || _configureIngressQueues,
-         port.isAvbCapable || _forceAvbCapable
-      {
-        if _configureEgressQueues {
-          try? await bridge.unconfigureEgressQueues(port: port)
-          try await bridge.configureEgressQueues(
-            port: port,
-            srClassPriorityMap: DefaultSRClassPriorityMap,
-            queues: _queues,
-            forceAvbCapable: _forceAvbCapable
-          )
-        }
-        if _configureIngressQueues {
-          // configureIngressQueues is ref-counted at the bridge and handles both per-port
-          // ingress maps (e.g. 88E6390) and global maps shared across all ports (e.g.
-          // 88E6352). No pre-clear is needed here (a blind per-port delete would tear down a
-          // shared global map for the other member ports).
-          //
-          // Ingress (DCBNL) configuration is best-effort: kernels/switches without the DCBNL
-          // priority-map migration return EOPNOTSUPP. A failure here must not abort port setup
-          // (otherwise the port is left half-registered and re-notifications fail with
-          // portAlreadyExists), so log and continue.
-          do {
-            try await bridge.configureIngressQueues(
-              port: port,
-              srClassPriorityMap: DefaultSRClassPriorityMap,
-              queues: _queues,
-              forceAvbCapable: _forceAvbCapable
-            )
-          } catch {
-            _logger
-              .error("MSRP: failed to configure ingress queues for port \(port): \(error)")
-          }
-        }
-        srClassPriorityMap[port.id] = DefaultSRClassPriorityMap
-        _logger
-          .debug(
-            "MSRP: allocating port state for \(port), configuring queues with default prio map"
-          )
-      } else if port.isAvbCapable {
-        srClassPriorityMap[port.id] = try? await bridge.getSRClassPriorityMap(port: port)
-        _logger.debug("MSRP: allocating port state for \(port), prio map \(srClassPriorityMap)")
-      } else if _forceAvbCapable {
-        srClassPriorityMap[port.id] = DefaultSRClassPriorityMap
-        _logger.warning("MSRP: forcing port \(port) to advertise as AVB capable")
-      } else {
+      guard let map = try await _configureAvbCapablePort(port, bridge: bridge) else {
         _logger.debug("MSRP: port \(port) is not AVB capable, skipping")
         continue
       }
+      srClassPriorityMap[port.id] = map
+      _logger.debug("MSRP: allocating port state for \(port), prio map \(map)")
       // best-effort; folded into the boundary-port state below (fetched here, in the awaiting
       // loop, so the state-building loop stays synchronous)
       pfcEnabledPriorities[port.id] = await (try? port.pfcEnabledPriorities) ?? []
@@ -492,6 +499,36 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
       }
     }
 
+    // A port that goes AVB capable after startup (its link was down when didAdd ran) was skipped by
+    // didAdd and still has an empty map. Configure it now as didAdd would: when we own the queues
+    // this writes its mqprio with the default map (no TC notification fires on link-up), so it can
+    // declare SR domains instead of failing every talker with
+    // requestedPriorityIsNotAnSRClassPriority
+    // until restart. When we do not own the queues we can only read the map back. Do this BEFORE
+    // the
+    // stream recompute below, so a reservation programmed on a freshly-capable port finds its
+    // mqprio.
+    if let bridge = (controller?.bridge as? any MSRPAwareBridge<P>) {
+      _bridgeSystemID = await bridge.systemID
+      var configuredMaps = [P.ID: SRClassPriorityMap]()
+      for port in context where port.isAvbCapable || _forceAvbCapable {
+        guard let index = _portStates.index(forKey: port.id),
+              _portStates.values[index].srClassPriorityMap.isEmpty else { continue }
+        do {
+          guard let map = try await _configureAvbCapablePort(port, bridge: bridge),
+                !map.isEmpty else { continue }
+          configuredMaps[port.id] = map
+        } catch {
+          // keep the port map-less (retried on a later update) without aborting the other ports
+          _logger.error("MSRP: failed to configure late-AVB-capable port \(port): \(error)")
+        }
+      }
+      for (portID, map) in configuredMaps {
+        guard let index = _portStates.index(forKey: portID) else { continue }
+        _portStates.values[index].srClassPriorityMap = map
+      }
+    }
+
     // refresh spanning-tree state from the fresh port (a synchronous read, no actor hop); a change
     // is a topology change, so invalidate the port's latency state here (the single place STP
     // clears it) and re-derive the active streams
@@ -510,25 +547,6 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
       // below re-samples per-hop latency fresh and fails a stream whose reported latency rose above
       // its guarantee.
       _forceUpdateActiveStreams()
-    }
-
-    // A port whose link was down at startup was skipped for the priority-map fetch (it was not yet
-    // AVB capable). Now that it may have come up, fetch the map so it can declare SR domains: the
-    // mqprio qdisc exists independent of link state, but no TC notification fires on link-up, so
-    // without this a late-linking port would keep an empty map and never declare its domains.
-    if let bridge = (controller?.bridge as? any MSRPAwareBridge<P>) {
-      _bridgeSystemID = await bridge.systemID
-      var fetchedMaps = [P.ID: SRClassPriorityMap]()
-      for port in context where port.isAvbCapable || _forceAvbCapable {
-        guard let index = _portStates.index(forKey: port.id),
-              _portStates.values[index].srClassPriorityMap.isEmpty,
-              let map = try? await bridge.getSRClassPriorityMap(port: port) else { continue }
-        fetchedMaps[port.id] = map
-      }
-      for (portID, map) in fetchedMaps {
-        guard let index = _portStates.index(forKey: portID) else { continue }
-        _portStates.values[index].srClassPriorityMap = map
-      }
     }
 
     for port in context {
