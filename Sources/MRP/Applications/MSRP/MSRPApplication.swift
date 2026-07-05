@@ -106,6 +106,22 @@ protocol MSRPAwareBridge<P>: Bridge where P: AVBPort {
 private let DefaultSRClassPriorityMap: SRClassPriorityMap = [.A: .CA, .B: .EE]
 private let DefaultDeltaBandwidths: [SRclassID: Int] = [.A: 75, .B: 0]
 
+// a programmed per-port reservation: the merged declaration type plus the bound Talker value. Held
+// per port in MSRPPortState.reservations, dropped with the port state on removal. Equality ignores
+// the Talker's non-reserving fields (latency, failure) so an idempotency check only reprograms the
+// kernel when the reservation itself changed.
+private struct Reservation: Equatable, Sendable {
+  let declarationType: MSRPDeclarationType?
+  let talker: any MSRPTalkerValue
+
+  static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.declarationType == rhs.declarationType &&
+      lhs.talker.dataFrameParameters == rhs.talker.dataFrameParameters &&
+      lhs.talker.tSpec == rhs.talker.tSpec &&
+      lhs.talker.priorityAndRank == rhs.talker.priorityAndRank
+  }
+}
+
 struct MSRPPortState<P: AVBPort>: Sendable {
   var mediaType: MSRPPortMediaType { .accessControlPort }
   var msrpPortEnabledStatus: Bool
@@ -136,6 +152,9 @@ struct MSRPPortState<P: AVBPort>: Sendable {
   // per-stream reported-latency guarantee first declared on this port (35.2.2.8.6); lives here so
   // it is dropped with the port state on removal.
   var configuredLatency = [MSRPStreamID: UInt32]()
+  // programmed reservations on this port keyed by stream: the merged declaration type + bound
+  // Talker last applied to the kernel, for idempotent (re)programming and the withdraw sweep.
+  fileprivate var reservations = [MSRPStreamID: Reservation]()
 
   // drop the cached per-hop latency on a link change (flap/STP) so the next recompute re-samples
   // gPTP meanLinkDelay. Per-stream guarantees survive for the reservation's life (35.2.2.8.6):
@@ -246,18 +265,6 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     var displacedStreams = Set<MSRPStreamID>()
   }
 
-  private struct Reservation: Equatable {
-    let declarationType: MSRPDeclarationType?
-    let talker: any MSRPTalkerValue
-
-    static func == (lhs: Self, rhs: Self) -> Bool {
-      lhs.declarationType == rhs.declarationType &&
-        lhs.talker.dataFrameParameters == rhs.talker.dataFrameParameters &&
-        lhs.talker.tSpec == rhs.talker.tSpec &&
-        lhs.talker.priorityAndRank == rhs.talker.priorityAndRank
-    }
-  }
-
   // the ingress-port FDB entry installed for a stream when .configureIngressMdb is set. Keyed by
   // stream so it is installed once for the bound Talker and torn down only when the Talker leaves
   // (not on Listener churn); records the port + frame parameters so a Talker that moves ports
@@ -274,7 +281,6 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
   // because the conflict cannot be re-derived from the store: a coexisting egress failure or an
   // already-Failed stream would otherwise erase or never record the marker.
   private var _firstValueViolations = Set<MSRPStreamID>()
-  private var _reservations: [P.ID: [MSRPStreamID: Reservation]] = [:]
   private var _ingressFdbEntries: [MSRPStreamID: FDBEntry] = [:]
 
   // Convenience accessors for flags
@@ -563,7 +569,7 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
   // re-derive every stream with a registered talker or a programmed reservation; used when a
   // port's Forwarding state changes (the active topology, and thus propagation, has changed)
   private func _forceUpdateActiveStreams() {
-    var streamIDs = Set(_reservations.values.flatMap(\.keys))
+    var streamIDs = Set(_portStates.values.flatMap(\.reservations.keys))
     apply(for: MAPBaseSpanningTreeContext) { participant in
       for type in [MSRPAttributeType.talkerAdvertise, .talkerFailed] {
         for attr in participant.findAllAttributesUnchecked(
@@ -617,9 +623,8 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     let vanishedPortIDs = Set(context.map(\.id))
     for port in context {
       _logger.debug("MSRP: port \(port) disappeared, removing")
+      // this also drops the port's cached reservations so a later re-add reprograms the hardware
       _portStates.removeValue(forKey: port.id)
-      // drop cached reservations so a later re-add reprograms the hardware
-      _reservations[port.id] = nil
     }
     // a violation (code 16) whose talker registration vanishes with its port sees no withdraw or
     // revert to clear it: sweep those so a clean future re-declaration is not failed forever
@@ -1500,7 +1505,7 @@ extension MSRPApplication {
     // reservation is Listener Ready/Ready Failed (a Forwarding dynamic reservation entry); a
     // stream filtered on this egress (no listener, Asking Failed, or admission/STP failure)
     // does not consume bandwidth (35.2.4.2, Table 35-13/35-14)
-    guard let reservations = _reservations[participant.port.id] else { return [] }
+    guard let reservations = _portStates[participant.port.id]?.reservations else { return [] }
     return Set(reservations.values.compactMap { reservation in
       guard reservation.declarationType == .listenerReady ||
         reservation.declarationType == .listenerReadyFailed,
@@ -2015,7 +2020,7 @@ extension MSRPApplication {
       let desired = Reservation(declarationType: declarationType, talker: boundTalker.1)
 
       // idempotency: only touch the kernel when the reservation actually changed
-      if _reservations[participant.port.id]?[streamID] != desired {
+      if _portStates[participant.port.id]?.reservations[streamID] != desired {
         do {
           try await _updatePortParameters(
             port: participant.port, streamID: streamID,
@@ -2031,7 +2036,7 @@ extension MSRPApplication {
           continue
         }
       }
-      _reservations[participant.port.id, default: [:]][streamID] = desired
+      _portStates[participant.port.id]?.reservations[streamID] = desired
     }
 
     for (portID, talker) in _reservationsToWithdraw(streamID, keeping: keep) {
@@ -2102,15 +2107,15 @@ extension MSRPApplication {
   }
 
   private func _clearReservation(portID: P.ID, streamID: MSRPStreamID) {
-    _reservations[portID]?[streamID] = nil
-    if _reservations[portID]?.isEmpty == true { _reservations[portID] = nil }
+    _portStates[portID]?.reservations[streamID] = nil
   }
 
   private func _reservationsToWithdraw(
     _ streamID: MSRPStreamID, keeping: Set<P.ID>
   ) -> [(P.ID, any MSRPTalkerValue)] {
-    _reservations.compactMap { portID, streams in
-      guard let applied = streams[streamID], !keeping.contains(portID) else { return nil }
+    _portStates.compactMap { portID, portState in
+      guard let applied = portState.reservations[streamID], !keeping.contains(portID)
+      else { return nil }
       return (portID, applied.talker)
     }
   }
