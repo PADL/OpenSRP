@@ -207,20 +207,36 @@ class MSRPCommands:
             print(self.formatter.format_json(data))
         else:
             if isinstance(data, list):
-                headers = ["Port", "Enabled", "AS Capable", "Forwarding", "Transmit Rate (kbps)"]
+                # One row per SR class (A/B) per port, with the Domain attribute's
+                # App/Reg state and boundary status.
+                headers = ["Port", "Enabled", "AS Capable", "Fwd", "Cls",
+                           "Bndry", "App/Reg", "Sr-Pvid"]
                 rows = []
                 for port_data in data:
                     port = self.formatter.format_port(
                         port_data.get("port_name"),
                         port_data.get("port_number")
                     )
-                    rows.append([
+                    base = [
                         port,
                         "Yes" if port_data.get("enabled") else "No",
                         "Yes" if port_data.get("as_capable") else "No",
                         "Yes" if port_data.get("forwarding") else "No",
-                        port_data.get("transmit_rate", "N/A")
-                    ])
+                    ]
+                    sr_class = port_data.get("sr_class", {})
+                    classes = [(c.upper(), sr_class[c]) for c in ("a", "b") if c in sr_class]
+                    if not classes:
+                        rows.append(base + ["-", "-", "-", "-"])
+                        continue
+                    for i, (name, cd) in enumerate(classes):
+                        app_reg = f"{cd.get('_applicant_state', '?')}/{cd.get('_registrar_state', '?')}"
+                        lead = base if i == 0 else ["", "", "", ""]
+                        rows.append(lead + [
+                            name,
+                            "Yes" if cd.get("domain_boundary_port") else "No",
+                            app_reg,
+                            cd.get("vid", ""),
+                        ])
                 print(self.formatter.format_table(headers, rows))
 
     def show_port(self, port: str, output_format: str):
@@ -308,6 +324,7 @@ class MSRPCommands:
                         print(f"    VLAN ID: {class_data.get('vid', 'N/A')}")
                         print(f"    Delta Bandwidth: {class_data.get('delta_bandwidth', 'N/A')}%")
                         print(f"    Domain Boundary Port: {'Yes' if class_data.get('domain_boundary_port') else 'No'}")
+                        print(f"    Domain State (App/Reg): {class_data.get('_applicant_state', '?')}/{class_data.get('_registrar_state', '?')}")
 
     def _get_port_sr_class_map(self, port_name: str, port_number: int) -> Dict[int, str]:
         """Get SR class mapping for a port (priority -> class letter)"""

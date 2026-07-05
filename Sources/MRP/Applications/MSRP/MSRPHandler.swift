@@ -127,6 +127,9 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
     let srClassID: UInt8
     let priority: UInt8
     let operIdleSlope: Int
+    // Domain attribute applicant/registrar state; API extension, hence underscored
+    let _applicantState: String
+    let _registrarState: String
 
     fileprivate init?(
       application: Application,
@@ -140,6 +143,12 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
       guard let domain = portState.getDomain(for: srClassID, defaultSRPVid: application._srPVid)
       else { return nil }
       domainBoundaryPort = portState.srpDomainBoundaryPort[srClassID] ?? true
+      let domainState = await participant.findAllAttributes(
+        attributeType: MSRPAttributeType.domain.rawValue,
+        matching: .matchAny
+      ).first { ($0.attributeValue as? MSRPDomainValue)?.srClassID == srClassID }
+      _applicantState = domainState.map { String(describing: $0.applicantState) } ?? "VO"
+      _registrarState = domainState?.registrarState.map { String(describing: $0) } ?? "MT"
       vid = domain.srClassVID
       self.srClassID = srClassID.rawValue
       let priority = portState.srClassPriorityMap[srClassID]?.rawValue ?? 0
