@@ -238,15 +238,18 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
 
   private func _tx() async throws -> Bool {
     guard let application, let controller else { throw MRPError.internalError }
-    guard let pdu = try _txDequeue() else { return false }
-    _debugLogPdu(pdu, direction: .tx)
-    try await controller.bridge.tx(
-      pdu: pdu,
-      for: application,
-      contextIdentifier: contextIdentifier,
-      on: port,
-      controller: controller
-    )
+    let pdus = try _txDequeue()
+    guard !pdus.isEmpty else { return false }
+    for pdu in pdus {
+      _debugLogPdu(pdu, direction: .tx)
+      try await controller.bridge.tx(
+        pdu: pdu,
+        for: application,
+        contextIdentifier: contextIdentifier,
+        on: port,
+        controller: controller
+      )
+    }
     return true
   }
 
@@ -321,7 +324,7 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
 
     let didTransmit = try await _tx()
 
-    // If events remain (e.g., arrived during TX processing or didn't fit in PDU),
+    // If events remain (e.g., arrived during TX processing),
     // request another TX opportunity. Note: isRunning returns false at this point
     // because _fire() cleared the task reference before calling this callback, but
     // applicant state transitions may have already scheduled a new timer via
@@ -330,7 +333,7 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
       _transmissionOpportunityTimestamps.append(ContinuousClock.now)
     }
 
-    // if events remain (e.g., arrived during TX processing or didn't fit in PDU),
+    // if events remain (e.g., arrived during TX processing),
     // request another TX opportunity
     if !_enqueuedEvents.isEmpty {
       _scheduleTxOpportunity(eventSource: eventSource)
@@ -443,17 +446,25 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
 
   private func _chunkAttributeEvents(
     _ attributeEvents: [EnqueuedEvent<A>.AttributeEvent],
-    coalesce: Bool
+    coalesce: Bool,
+    maxRun: Int
   )
     -> [[EnqueuedEvent<A>.AttributeEvent]]
   {
     guard !attributeEvents.isEmpty else { return [] }
 
     // Helper function to trim trailing optional events and add chunk if non-empty
-    func finalizeChunk(_ chunk: inout [EnqueuedEvent<A>.AttributeEvent]) {
-      // Optional events at the end don't reduce chunk count, so omit them
-      while !chunk.isEmpty && chunk.last!.encodingOptional {
-        chunk.removeLast()
+    func finalizeChunk(
+      _ chunk: inout [EnqueuedEvent<A>.AttributeEvent],
+      trimTrailingOptional: Bool = true
+    ) {
+      // Optional events at the end don't reduce chunk count, so omit them -- unless this chunk was
+      // split mid-run by maxRun, where those events continue into the next vector and trimming them
+      // would leave a gap the receiver cannot reconstruct.
+      if trimTrailingOptional {
+        while !chunk.isEmpty && chunk.last!.encodingOptional {
+          chunk.removeLast()
+        }
       }
       if !chunk.isEmpty {
         chunks.append(chunk)
@@ -487,17 +498,23 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
 
     for attributeEvent in attributeEvents {
       if let previous = currentChunk.last,
+         currentChunk.count < maxRun,
          chains(after: previous.attributeValue, to: attributeEvent.attributeValue)
       {
-        // Value continues the increment chain, include it for now
+        // Value continues the increment chain and the vector still has room (NumberOfValues is a
+        // 13-bit field and one vector must fit a single PDU): include it for now
         currentChunk.append(attributeEvent)
       } else {
-        // Event would start a new chunk - finish current chunk first
-        finalizeChunk(&currentChunk)
-
-        // Start new chunk with this event (if not optional)
-        // Optional events that would start a new chunk are skipped entirely
-        if !attributeEvent.encodingOptional {
+        // A split forced by maxRun (chunk full, but the value still continues the increment chain)
+        // must not lose values at the boundary: keep this chunk's trailing optional events (mid-run,
+        // not truly trailing) and seed the next chunk with the value even when it is optional. A
+        // genuinely disjoint value instead ends the run, so trailing optionals may be trimmed and a
+        // disjoint optional value is skipped. Only re-test chains() when the chunk is actually full;
+        // otherwise the guard above already proved this value does not chain.
+        let maxRunSplit = currentChunk.count >= maxRun && (currentChunk.last
+          .map { chains(after: $0.attributeValue, to: attributeEvent.attributeValue) } ?? false)
+        finalizeChunk(&currentChunk, trimTrailingOptional: !maxRunSplit)
+        if !attributeEvent.encodingOptional || maxRunSplit {
           currentChunk = [attributeEvent]
         }
       }
@@ -522,7 +539,13 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
         })
       let attributeEventChunks = _chunkAttributeEvents(
         attributeEvents,
-        coalesce: application.coalesceVectors(for: attributeType)
+        coalesce: application.coalesceVectors(for: attributeType),
+        maxRun: VectorAttribute<AnyValue>.maxNumberOfValues(
+          firstValue: attributeEvents.first?.attributeValue.value,
+          hasSubtype: application.hasAttributeSubtype(for: attributeType),
+          hasAttributeListLength: application.hasAttributeListLength,
+          maxLength: Int(port.mtu)
+        )
       )
 
       var vectorAttributes: [VectorAttribute<AnyValue>] = attributeEventChunks
@@ -628,20 +651,30 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
     }
   }
 
-  private func _txDequeue() throws -> MRPDU? {
+  private func _txDequeue() throws -> [MRPDU] {
     _assertIsolatedToApplication()
 
     guard let application else { throw MRPError.internalError }
 
     let enqueuedMessages = try _packMessages(with: _enqueuedEvents)
-    _enqueuedEvents.removeAll()
+    guard !enqueuedMessages.isEmpty else { _enqueuedEvents.removeAll(); return [] }
 
-    guard !enqueuedMessages.isEmpty else { return nil }
-
-    return MRPDU(
+    // Fragmenting one declaration set across frames trades per-MRPDU atomicity: a lost frame leaves
+    // the peer a subset until the next LeaveAll/periodic refresh (inherent to MRP).
+    let pdus = try enqueuedMessages.fragmentedIntoPDUs(
       protocolVersion: application.protocolVersion,
-      messages: enqueuedMessages
+      hasAttributeListLength: application.hasAttributeListLength,
+      maxLength: Int(port.mtu),
+      oversize: { octets in
+        self._logger.warning(
+          "\(self): a single attribute (\(octets) octets) exceeds the port MTU (\(Int(self.port.mtu))); transmitting an over-sized MRPDU"
+        )
+      }
     )
+    // clear only after fragmentation succeeds: a serialization throw keeps the events enqueued for
+    // the next opportunity rather than dropping the declarations
+    _enqueuedEvents.removeAll()
+    return pdus
   }
 
   private func rx(message: Message, eventSource: EventSource, leaveAll: inout Bool) throws {

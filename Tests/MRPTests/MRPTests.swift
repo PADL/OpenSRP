@@ -4713,7 +4713,84 @@ extension MRPTests {
     )
   }
 
-  @discardableResult
+  // 10.8.2.8 c): a set too large for one MRPDU fragments across frames within the MTU, losing no
+  // attribute. 1500 VIDs on port 0 MAP-propagate to port 1, whose small MTU forces several PDUs.
+  func testLargeDeclarationFragmentsAcrossPDUs() async throws {
+    let recorder = MRPTestRecorder()
+    let ports: Set<MockPort> = [
+      MockPort(id: 0, vlans: [], mtu: 1500),
+      MockPort(id: 1, vlans: [], mtu: 50), // small MTU: a couple hundred VIDs already span several PDUs
+    ]
+    let bridge = MockBridge(ports: ports, recorder: recorder)
+    let controller = try await MRPController(
+      bridge: bridge,
+      logger: Logger(label: "com.padl.MRPTests.fragment"),
+      timerConfiguration: MRPTimerConfiguration(leaveTime: .seconds(1), periodicTime: .zero)
+    )
+    let mvrp = try await MVRPApplication(controller: controller)
+    try await mvrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
+
+    let count = 150
+    let joinAll = Message(
+      attributeType: MVRPAttributeType.vid.rawValue,
+      attributeList: [VectorAttribute(
+        leaveAllEvent: .NullLeaveAllEvent,
+        firstValue: AnyValue(VLAN(vid: 1)),
+        attributeEvents: [AttributeEvent](repeating: .JoinIn, count: count),
+        applicationEvents: nil
+      )]
+    )
+    try await mvrp.rx(
+      pdu: MRPDU(protocolVersion: 0, messages: [joinAll]),
+      for: MAPBaseSpanningTreeContext,
+      from: MockPort(id: 0),
+      sourceMacAddress: [0x02, 0x00, 0x00, 0x00, 0x00, 0x0A]
+    )
+
+    @Sendable func port1VIDs() async -> Set<UInt16> {
+      var vids = Set<UInt16>()
+      for packet in await recorder.txPackets where packet.port == 1 {
+        guard let pdu = try? packet.payload.withParserSpan({ input in
+          try MRPDU(parsing: &input, application: mvrp)
+        }) else { continue }
+        for message in pdu.messages where message.attributeType == MVRPAttributeType.vid.rawValue {
+          for vector in message.attributeList {
+            for i in 0..<Int(vector.numberOfValues) {
+              if let value = try? vector.firstValue.value.makeValue(relativeTo: UInt64(i)),
+                 let vlan = value as? VLAN { vids.insert(vlan.vid) }
+            }
+          }
+        }
+      }
+      return vids
+    }
+
+    // the applicant paces the propagated declarations across a few tx opportunities
+    let complete = await _waitFor(timeoutMs: 6000) { await port1VIDs().count >= count }
+    XCTAssertTrue(complete, "port 1 must transmit all \(count) propagated VIDs")
+
+    let packets = await recorder.txPackets.filter { $0.port == 1 }
+    XCTAssertGreaterThan(
+      packets.count, 1, "an oversized declaration must fragment into multiple PDUs"
+    )
+    for packet in packets {
+      XCTAssertLessThanOrEqual(packet.payload.count, 50, "each PDU must fit the port MTU")
+      guard let pdu = try? packet.payload.withParserSpan({ input in
+        try MRPDU(parsing: &input, application: mvrp)
+      }) else { continue }
+      for message in pdu.messages {
+        for vector in message.attributeList {
+          XCTAssertLessThanOrEqual(Int(vector.numberOfValues), 0x1FFF, "NumberOfValues is 13-bit")
+        }
+      }
+    }
+    let finalVIDs = await port1VIDs()
+    XCTAssertTrue(
+      finalVIDs.isSuperset(of: Set(1...UInt16(count))),
+      "fragmentation must not drop any attribute"
+    )
+  }
+
   private func _waitFor(
     timeoutMs: Int = 3000,
     _ condition: @Sendable () async -> Bool
