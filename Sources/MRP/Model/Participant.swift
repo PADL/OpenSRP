@@ -1143,13 +1143,16 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
     _attributeSubtype = .init(subtype)
     self.value = AnyValue(value)
     if participant._type != .applicantOnly {
+      // hold a strong ref so the weak controller can't be released mid-init (teardown race)
+      let controller = participant.controller!
       registrar = Registrar(
-        leaveTime: participant.controller!.timerConfiguration.leaveTime,
+        leaveTime: controller.timerConfiguration.leaveTime,
         administrativelyRegistered: administrativelyRegistered
       ) { @Sendable [weak self] in
         guard let self, let application = self.participant?.application else { return }
         try await _onLeaveTimerExpired(isolation: application)
       }
+      _ = controller
     }
   }
 
