@@ -43,13 +43,15 @@ public struct MMRPRegistrationFlags: OptionSet, Sendable {
 }
 
 protocol MMRPAwareBridge<P>: Bridge where P: Port {
+  @discardableResult
   func register(
     macAddress: EUI48,
     vlan: VLAN?,
     flags: MMRPRegistrationFlags,
     on ports: Set<P>
-  ) async throws
-  func deregister(macAddress: EUI48, vlan: VLAN?, from ports: Set<P>) async throws
+  ) async -> Set<P.ID>
+  @discardableResult
+  func deregister(macAddress: EUI48, vlan: VLAN?, from ports: Set<P>) async -> Set<P.ID>
 
   func register(
     serviceRequirement requirementSpecification: MMRPServiceRequirementValue,
@@ -228,7 +230,7 @@ extension MMRPApplication {
         .debug(
           "MMRP: join indication from port \(port) address \(_macAddressToString(macAddress)) isNew \(isNew) source \(eventSource)"
         )
-      try await bridge.register(macAddress: macAddress, vlan: nil, flags: [], on: ports)
+      await bridge.register(macAddress: macAddress, vlan: nil, flags: [], on: ports)
     case .serviceRequirement:
       try await bridge.register(
         serviceRequirement: attributeValue as! MMRPServiceRequirementValue,
@@ -266,7 +268,7 @@ extension MMRPApplication {
         .debug(
           "MMRP: leave indication from port \(port) address \(_macAddressToString(macAddress)) source \(eventSource)"
         )
-      try? await bridge.deregister(macAddress: macAddress, vlan: nil, from: ports)
+      await bridge.deregister(macAddress: macAddress, vlan: nil, from: ports)
     case .serviceRequirement:
       try? await bridge.deregister(
         serviceRequirement: attributeValue as! MMRPServiceRequirementValue,

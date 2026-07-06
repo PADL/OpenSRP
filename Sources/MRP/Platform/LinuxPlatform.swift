@@ -1138,65 +1138,75 @@ fileprivate final class FilterRegistration: Equatable, Hashable, Sendable, Custo
 }
 
 extension LinuxBridge: MMRPAwareBridge {
+  // Returns the ports actually programmed. Best-effort per port: a per-port failure is logged and
+  // skipped, never aborting the rest, so the caller can track exactly what the kernel now holds.
+  @discardableResult
   func register(
     macAddress: EUI48,
     vlan: VLAN?,
     flags: MMRPRegistrationFlags,
     on ports: Set<P>
-  ) async throws {
+  ) async -> Set<P.ID> {
     // _bridgePort is nil once the bridge is torn down: a reservation update racing a concurrent
-    // shutdown then throws (caught by the caller) rather than force-unwrapping and crashing
-    guard let rtnl = _bridgePort?._rtnl as? RTNLLinkBridge
-    else { throw Errno.noSuchAddressOrDevice }
+    // shutdown programs nothing rather than force-unwrapping and crashing
+    guard let rtnl = _bridgePort?._rtnl as? RTNLLinkBridge else { return [] }
     let state: RTNLLinkBridge.MDBState =
       flags.contains(.dynamicReservation) ? .dynamicReservation : .permanent
+    var programmed = Set<P.ID>()
     for port in ports {
-      if _isMulticast(macAddress: macAddress) {
-        do {
-          try await rtnl.add(
-            link: port._rtnl,
-            groupAddresses: [macAddress],
-            vlanID: vlan?.vid,
-            state: state,
-            socket: _nlLinkSocket
-          )
-        } catch where state == .dynamicReservation {
-          // Kernels predating MDB_DYNAMIC_RESERVATION reject the state value;
-          // fall back to a permanent entry so non-conformant kernels still get
-          // the MDB entry installed (without the 802.1Qat reserved-stream mark).
-          _logger.debug(
-            "LinuxBridge: failed to add dynamic reservation MDB entry for \(_macAddressToString(macAddress)) on \(port): \(error); falling back to permanent entry"
-          )
-          try await rtnl.add(
-            link: port._rtnl,
-            groupAddresses: [macAddress],
-            vlanID: vlan?.vid,
-            state: .permanent,
-            socket: _nlLinkSocket
-          )
+      do {
+        if _isMulticast(macAddress: macAddress) {
+          do {
+            try await rtnl.add(
+              link: port._rtnl, groupAddresses: [macAddress], vlanID: vlan?.vid,
+              state: state, socket: _nlLinkSocket
+            )
+          } catch where state == .dynamicReservation {
+            // Kernels predating MDB_DYNAMIC_RESERVATION reject the state value; fall back to a
+            // permanent entry so non-conformant kernels still get the MDB entry installed.
+            _logger.debug(
+              "LinuxBridge: failed to add dynamic reservation MDB entry for \(_macAddressToString(macAddress)) on \(port): \(error); falling back to permanent entry"
+            )
+            try await rtnl.add(
+              link: port._rtnl, groupAddresses: [macAddress], vlanID: vlan?.vid,
+              state: .permanent, socket: _nlLinkSocket
+            )
+          }
+        } else {
+          try await rtnl.add(link: port._rtnl, fdbEntry: macAddress, socket: _nlLinkSocket)
         }
-      } else {
-        try await rtnl.add(link: port._rtnl, fdbEntry: macAddress, socket: _nlLinkSocket)
+        programmed.insert(port.id)
+      } catch {
+        _logger.error(
+          "LinuxBridge: failed to register MDB entry for \(_macAddressToString(macAddress)) on \(port): \(error)"
+        )
       }
     }
+    return programmed
   }
 
-  func deregister(macAddress: EUI48, vlan: VLAN?, from ports: Set<P>) async throws {
-    // see register(): tolerate a nil _bridgePort from a concurrent shutdown instead of crashing
-    guard let rtnl = _bridgePort?._rtnl as? RTNLLinkBridge
-    else { throw Errno.noSuchAddressOrDevice }
+  // Returns the ports actually deprogrammed; best-effort per port (see register()).
+  @discardableResult
+  func deregister(macAddress: EUI48, vlan: VLAN?, from ports: Set<P>) async -> Set<P.ID> {
+    guard let rtnl = _bridgePort?._rtnl as? RTNLLinkBridge else { return [] }
+    var removed = Set<P.ID>()
     for port in ports {
-      if _isMulticast(macAddress: macAddress) {
-        try await rtnl.remove(
-          link: port._rtnl,
-          groupAddresses: [macAddress],
-          vlanID: vlan?.vid,
-          socket: _nlLinkSocket
+      do {
+        if _isMulticast(macAddress: macAddress) {
+          try await rtnl.remove(
+            link: port._rtnl, groupAddresses: [macAddress], vlanID: vlan?.vid, socket: _nlLinkSocket
+          )
+        } else {
+          try await rtnl.remove(link: port._rtnl, fdbEntry: macAddress, socket: _nlLinkSocket)
+        }
+        removed.insert(port.id)
+      } catch {
+        _logger.error(
+          "LinuxBridge: failed to deregister MDB entry for \(_macAddressToString(macAddress)) on \(port): \(error)"
         )
-      } else {
-        try await rtnl.remove(link: port._rtnl, fdbEntry: macAddress, socket: _nlLinkSocket)
       }
     }
+    return removed
   }
 
   func register(
