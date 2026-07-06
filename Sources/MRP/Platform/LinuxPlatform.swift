@@ -136,6 +136,30 @@ private func _computeIngressDCBApps(
   .map { pcp, queue in RTNLDCBApp.pcp(pcp, priority: queue) }
 }
 
+// Classic-BPF (SO_ATTACH_FILTER) accepting only ingress frames whose EtherType is in `etherTypes`
+// and dropping our own TX (PACKET_OUTGOING); lets an ETH_P_ALL socket narrow to MRP in-kernel.
+private func _makeMRPPacketFilter(etherTypes: [UInt16]) -> [SocketFilter] {
+  // opcodes: BPF_LD|B|ABS=0x30, BPF_LD|H|ABS=0x28, BPF_JMP|JEQ|K=0x15, BPF_RET|K=0x06
+  let n = etherTypes.count
+  var program: [SocketFilter] = [
+    SocketFilter(
+      code: 0x30,
+      jt: 0,
+      jf: 0,
+      k: 0xFFFF_F000 &+ 4
+    ), // A = skb->pkt_type (SKF_AD_PKTTYPE)
+    SocketFilter(code: 0x15, jt: UInt8(n + 1), jf: 0, k: 4), // A == PACKET_OUTGOING -> drop
+    SocketFilter(code: 0x28, jt: 0, jf: 0, k: 12), // A = EtherType (offset 12)
+  ]
+  for (i, etherType) in etherTypes.enumerated() {
+    // match -> jump past the remaining tests to the accept; else fall through
+    program.append(SocketFilter(code: 0x15, jt: UInt8(n - i), jf: 0, k: UInt32(etherType)))
+  }
+  program.append(SocketFilter(code: 0x06, jt: 0, jf: 0, k: 0)) // drop
+  program.append(SocketFilter(code: 0x06, jt: 0, jf: 0, k: 0x0004_0000)) // accept
+  return program
+}
+
 private func _makeLinkLayerAddress(
   family: sa_family_t = sa_family_t(AF_PACKET),
   macAddress: EUI48? = nil,
@@ -604,9 +628,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   public typealias P = LinuxPort
 
   fileprivate let _nlLinkSocket: NLSocket
-  private let _nlNfLog: NFNLLog
   private let _nlQDiscHandle: UInt16?
-  private var _nlNfLogMonitorTask: Task<(), Error>!
   private var _nlLinkMonitorTask: Task<(), Error>!
   private let _bridgeName: String
   private var _bridgeIndex: Int = 0
@@ -661,7 +683,6 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
 
   public init(
     name: String,
-    netFilterGroup group: Int,
     qDiscHandle: UInt16? = nil,
     ptpManagementClientSocketPath: String? = nil,
     portExclusions: Set<String> = [],
@@ -669,7 +690,6 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   ) async throws {
     _bridgeName = name
     _nlLinkSocket = try NLSocket(protocol: NETLINK_ROUTE)
-    _nlNfLog = try NFNLLog(group: UInt16(group))
     _nlQDiscHandle = qDiscHandle
     _pmc = try await PTPManagementClient(path: ptpManagementClientSocketPath)
     _portExclusions = portExclusions
@@ -989,12 +1009,6 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
         } catch {}
       }
     }
-    _nlNfLogMonitorTask = Task<(), Error> { [self] in
-      for try await packet in _nfNlLogRxPackets {
-        await _rxPacketsChannel.send(packet)
-      }
-    }
-
     // Seed the live VLAN map from an RTM_GETVLAN dump: unlike the libnl AF_BRIDGE
     // bitmaps this carries the per-VID flags, so dynamic (protocol-created) entries
     // left over from a previous run are recognised as such and not treated as static.
@@ -1045,7 +1059,6 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
       try? _cancelLinkLocalRxTask(portID: portID)
     }
 
-    _nlNfLogMonitorTask?.cancel()
     _nlLinkMonitorTask?.cancel()
 
     try? _nlLinkSocket.unsubscribeBridgeVLANs()
@@ -1083,17 +1096,6 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   public nonisolated var rxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)> {
     _rxPacketsChannel.eraseToAnyAsyncSequence()
   }
-
-  private var _nfNlLogRxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)> {
-    _nlNfLog.logMessages.compactMap { logMessage in
-      guard let hwHeader = logMessage.hwHeader, let payload = logMessage.payload,
-            let packet = try? IEEE802Packet(hwHeader: hwHeader, payload: payload)
-      else {
-        return nil
-      }
-      return (logMessage.physicalInputDevice, packet)
-    }.eraseToAnyAsyncSequence()
-  }
 }
 
 fileprivate final class FilterRegistration: Equatable, Hashable, Sendable, CustomStringConvertible {
@@ -1121,15 +1123,20 @@ fileprivate final class FilterRegistration: Equatable, Hashable, Sendable, Custo
   func _rxPackets(port: LinuxPort) async throws -> AnyAsyncSequence<IEEE802Packet> {
     precondition(_isLinkLocal(macAddress: _groupAddress) ||
       _isMRPApplicationGroupAddress(_groupAddress))
+    // ETH_P_ALL rides ptype_all (before the bridge consumes non-link-local MRP addresses); open
+    // with
+    // protocol 0 and attach the BPF before bind() enables capture, so no unfiltered frames leak in
+    // the socket()->attachFilter() window.
     let rxSocket = try Socket(
       ring: IORing.shared,
       domain: sa_family_t(AF_PACKET),
       type: SOCK_RAW,
-      protocol: CInt(_etherType.bigEndian)
+      protocol: 0
     )
+    try rxSocket.attachFilter(_makeMRPPacketFilter(etherTypes: [_etherType]))
     try rxSocket.bind(to: _makeLinkLayerAddress(
       macAddress: port.macAddress,
-      etherType: _etherType,
+      etherType: UInt16(ETH_P_ALL),
       packetType: UInt8(PACKET_MULTICAST),
       index: port.id
     ))

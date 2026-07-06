@@ -55,9 +55,6 @@ private final class MRPDaemon: AsyncParsableCommand {
   @Option(name: .shortAndLong, help: "Master bridge interface name")
   var bridgeInterface: String
 
-  @Option(name: .shortAndLong, help: "NetFilter group")
-  var nfGroup: Int = 10
-
   @Option(name: .shortAndLong, help: "Qdisc handle")
   var qDiscHandle: UInt16 = 0x9000
 
@@ -164,7 +161,6 @@ private final class MRPDaemon: AsyncParsableCommand {
 
   enum CodingKeys: String, CodingKey {
     case bridgeInterface
-    case nfGroup
     case qDiscHandle
     case forceAvbCapable
     case ignoreAsCapable
@@ -222,7 +218,6 @@ private final class MRPDaemon: AsyncParsableCommand {
 
     let bridge = try await B(
       name: bridgeInterface,
-      netFilterGroup: nfGroup,
       qDiscHandle: qDiscHandle,
       ptpManagementClientSocketPath: pmcUdsPath,
       portExclusions: Set(excludeIface),
