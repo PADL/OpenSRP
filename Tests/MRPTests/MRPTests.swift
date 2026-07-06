@@ -611,12 +611,14 @@ extension MockBridge: MMRPAwareBridge {
     vlan: VLAN?,
     flags: MMRPRegistrationFlags,
     on ports: Set<P>
-  ) async throws {
+  ) async -> Set<P.ID> {
     await recorder.recordFDBRegister(mac: macAddress, vlan: vlan, ports: Set(ports.map(\.id)))
+    return Set(ports.map(\.id))
   }
 
-  func deregister(macAddress: EUI48, vlan: VLAN?, from ports: Set<P>) async throws {
+  func deregister(macAddress: EUI48, vlan: VLAN?, from ports: Set<P>) async -> Set<P.ID> {
     await recorder.recordFDBDeregister(mac: macAddress, vlan: vlan, ports: Set(ports.map(\.id)))
+    return Set(ports.map(\.id))
   }
 
   func register(

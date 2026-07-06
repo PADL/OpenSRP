@@ -1448,13 +1448,10 @@ extension MSRPApplication {
     // a Talker that changed its frame parameters (or withdrew) orphans the group under the old
     // (DA, VLAN) key: tear that down in full before programming the current one
     if let stale = _reservedGroupPorts[streamID], stale.params != params {
-      let ports = Set(stale.ports.compactMap { _participant(for: $0)?.port })
-      if !ports.isEmpty {
-        try? await bridge.deregister(
-          macAddress: stale.params.destinationAddress,
-          vlan: stale.params.vlanIdentifier, from: ports
-        )
-      }
+      await bridge.deregister(
+        macAddress: stale.params.destinationAddress, vlan: stale.params.vlanIdentifier,
+        from: Set(stale.ports.compactMap { _participant(for: $0)?.port })
+      )
       _reservedGroupPorts[streamID] = nil
     }
 
@@ -1467,36 +1464,28 @@ extension MSRPApplication {
     let desiredIDs = Set(desired.keys)
     var programmed = current.intersection(desiredIDs)
 
-    let group = "\(_macAddressToString(params.destinationAddress)) vlan \(params.vlanIdentifier.vid)"
-
     let addIDs = desiredIDs.subtracting(current)
     if !addIDs.isEmpty {
-      _logger
-        .debug("MSRP: registering group MDB entry for \(group) on ports \(_renderPorts(addIDs))")
-      do {
-        try await bridge.register(
-          macAddress: params.destinationAddress, vlan: params.vlanIdentifier,
-          flags: .dynamicReservation, on: Set(addIDs.compactMap { desired[$0] })
-        )
-        programmed.formUnion(addIDs)
-      } catch {
-        // leave the failed ports unrecorded so the next recompute retries them
-        _logger.error("MSRP: failed to register group MDB entry for \(group): \(error)")
-      }
+      _logger.debug(
+        "MSRP: registering group MDB entry for \(_macAddressToString(params.destinationAddress)) vlan \(params.vlanIdentifier.vid) on ports \(_renderPorts(addIDs))"
+      )
+      // track exactly the ports the bridge programmed: a per-port failure leaves that port
+      // untracked so the next recompute retries it, instead of leaking it on a later teardown
+      await programmed.formUnion(bridge.register(
+        macAddress: params.destinationAddress, vlan: params.vlanIdentifier,
+        flags: .dynamicReservation, on: Set(addIDs.compactMap { desired[$0] })
+      ))
     }
 
     let removeIDs = current.subtracting(desiredIDs)
     if !removeIDs.isEmpty {
-      _logger
-        .debug(
-          "MSRP: deregistering group MDB entry for \(group) on ports \(_renderPorts(removeIDs))"
-        )
-      let ports = Set(removeIDs.compactMap { _participant(for: $0)?.port })
-      if !ports.isEmpty {
-        try? await bridge.deregister(
-          macAddress: params.destinationAddress, vlan: params.vlanIdentifier, from: ports
-        )
-      }
+      _logger.debug(
+        "MSRP: deregistering group MDB entry for \(_macAddressToString(params.destinationAddress)) vlan \(params.vlanIdentifier.vid) on ports \(_renderPorts(removeIDs))"
+      )
+      await bridge.deregister(
+        macAddress: params.destinationAddress, vlan: params.vlanIdentifier,
+        from: Set(removeIDs.compactMap { _participant(for: $0)?.port })
+      )
     }
 
     _reservedGroupPorts[streamID] = programmed.isEmpty ? nil : GroupReservation(
@@ -2091,6 +2080,9 @@ extension MSRPApplication {
         groupPorts[boundTalker.0.port.id] = boundTalker.0.port
       }
     }
+    // CBS idle-slope (above) and the group MDB entries (here) are deliberately reconciled in
+    // separate passes, not interleaved in the old add-FDB-after-credit / remove-FDB-before-credit
+    // order; the brief teardown under-credit window this allows is accepted.
     await _updateGroupReservations(
       streamID: streamID, params: boundTalker.1.dataFrameParameters, desired: groupPorts
     )
