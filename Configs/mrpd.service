@@ -27,7 +27,7 @@ Environment=LD_PRELOAD=/usr/lib/aarch64-linux-gnu/libjemalloc.so.2
 # rarely makes). Cuts steady-state RSS without touching the working set.
 Environment=MALLOC_CONF=narenas:2,background_thread:true,dirty_decay_ms:5000,muzzy_decay_ms:0
 Environment=SWIFT_IORING_QUEUE_ENTRIES=64
-Environment=SWIFT_BACKTRACE=enable=yes
+Environment=SWIFT_BACKTRACE=enable=yes,demangle=yes,swift-backtrace=/usr/libexec/swift/swift-backtrace
 EnvironmentFile=/etc/default/avb
 
 #ExecStartPre=/sbin/ip link set br0 type bridge mcast_vlan_snooping 1
