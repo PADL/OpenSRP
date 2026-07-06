@@ -1324,14 +1324,13 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
     )
 
     if var applicantAction {
-      // 10.7.2: a Registration Fixed Registrar always sends In *and* JoinIn (never Empty or
-      // Leave), so a peer on this port receives a registerable Join even while the local
-      // Applicant is only an Observer emitting In. Model this as upgrading the Applicant's
-      // emission to a mandatory JoinIn (.sJ, which is never encoding-optional). This is purely
-      // an emission rule; Applicant state and MAP refcounting are untouched. Scope it so a New
-      // (.sN, e.g. from a Re-declare!) is preserved rather than downgraded to JoinIn -- New
-      // already carries JoinIn semantics plus the New flag.
-      if registrar?.isAdministrativelyRegistered == true, applicantAction != .sN {
+      // A Registration Fixed Registrar never sends In/Empty/Leave: upgrade those to a mandatory
+      // JoinIn so peers still register. The optional QA JoinIn (.sJ_) is deliberately left optional
+      // (forcing it re-sends every tx opportunity); a new peer registers by the next LeaveAll
+      // (10.7.6.3).
+      if registrar?.isAdministrativelyRegistered == true,
+         applicantAction != .sN, applicantAction != .sJ, applicantAction != .sJ_
+      {
         applicantAction = .sJ
       }
 
