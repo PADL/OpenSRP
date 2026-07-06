@@ -73,6 +73,9 @@ public protocol Application<P>: Actor, Equatable, Hashable, Sendable {
   func didUpdate(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) async throws
   func didRemove(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) async throws
 
+  // withdraw programmed hardware state on graceful shutdown, while the bridge is still usable
+  func shutdown() async
+
   // apply for all participants. if contextIdentifier is nil, then all participants are called
   // regardless of contextIdentifier.
   @discardableResult

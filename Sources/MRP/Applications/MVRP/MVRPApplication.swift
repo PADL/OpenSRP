@@ -196,6 +196,8 @@ public actor MVRPApplication<P: Port>: BaseApplication, BaseApplicationEventObse
       try participant.periodic()
     }
   }
+
+  public func shutdown() async {}
 }
 
 extension MVRPApplication {

@@ -140,6 +140,11 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
     #if RestAPI
     await _httpServer?.stop()
     #endif
+    // let applications withdraw programmed hardware state (MSRP dynamic-reservation MDB entries)
+    // while the bridge is still usable, before its netlink sockets are torn down below
+    for application in _applications.values {
+      await application.shutdown()
+    }
     try? await bridge.shutdown(controller: self)
     for port in ports {
       try? await _didRemove(port: port)
