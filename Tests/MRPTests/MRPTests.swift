@@ -3373,6 +3373,36 @@ final class MRPTests: XCTestCase {
     _ = controller
   }
 
+  // A quiet (QA) static (Registration Fixed) VLAN must not re-emit a mandatory JoinIn on every
+  // unrelated transmit opportunity. Per 10.7.6.3 a QA re-declaration is optional (sJ_) -- "not
+  // necessary for correct protocol operation" -- so the encoder trims it; only the VLAN's own
+  // periodic QA->AA reassertion re-sends it. Regression: the Registration-Fixed emission upgrade
+  // (never send In/Empty/Leave) also forced sJ_ -> sJ, so any other attribute's tx opportunity
+  // dragged a duplicate JoinIn for every static VLAN onto the wire (observed on the DUT).
+  func testMVRPStaticVlanQuietDoesNotReemitOnUnrelatedTxOpportunity() async throws {
+    let (controller, mvrp, recorder) = try await _makeMVRP(
+      portIDs: [0, 1], staticVlans: [VLAN(vid: 2)]
+    )
+    // static VID 2 declares on port 1 and settles to QA (quiet)
+    _ = await _waitFor { await _isVLANDeclared(mvrp, vid: 2, port: 1) }
+    _ = await _waitFor { await _vlanJoinCount(recorder, mvrp, port: 1, vid: 2) >= 1 }
+    try await Task.sleep(for: .milliseconds(250)) // settle to QA
+    let before = await _vlanJoinCount(recorder, mvrp, port: 1, vid: 2)
+
+    // unrelated dynamic VLANs churn on port 0 -> propagate to port 1, each firing a tx opportunity
+    // there. The quiet static VID 2 must not ride along with a fresh mandatory JoinIn each time.
+    for vid in [UInt16(100), 101, 102] {
+      try await _driveMVRP(mvrp, port: 0, vid: vid, event: .JoinIn)
+    }
+    try await Task.sleep(for: .milliseconds(150))
+    let after = await _vlanJoinCount(recorder, mvrp, port: 1, vid: 2)
+    XCTAssertEqual(
+      after, before,
+      "a quiet static VID must not re-emit JoinIn on an unrelated tx opportunity (10.7.6.3)"
+    )
+    _ = controller
+  }
+
   // --exclude-vlan wins over configured static VLANs.
   func testMVRPConfiguredStaticVlansRespectExclusions() async throws {
     let (controller, mvrp, recorder) = try await _makeMVRP(
