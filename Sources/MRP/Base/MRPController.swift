@@ -136,7 +136,6 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
 
   private func _shutdown() async {
     logger.info("stopping MRP for bridge \(bridge)")
-    // FIXME: there appears to be a crash here
     _taskGroup?.cancelAll()
     #if RestAPI
     await _httpServer?.stop()

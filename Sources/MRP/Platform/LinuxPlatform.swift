@@ -1107,7 +1107,10 @@ extension LinuxBridge: MMRPAwareBridge {
     flags: MMRPRegistrationFlags,
     on ports: Set<P>
   ) async throws {
-    guard let rtnl = bridgePort._rtnl as? RTNLLinkBridge else { throw Errno.noSuchAddressOrDevice }
+    // _bridgePort is nil once the bridge is torn down: a reservation update racing a concurrent
+    // shutdown then throws (caught by the caller) rather than force-unwrapping and crashing
+    guard let rtnl = _bridgePort?._rtnl as? RTNLLinkBridge
+    else { throw Errno.noSuchAddressOrDevice }
     let state: RTNLLinkBridge.MDBState =
       flags.contains(.dynamicReservation) ? .dynamicReservation : .permanent
     for port in ports {
@@ -1142,7 +1145,9 @@ extension LinuxBridge: MMRPAwareBridge {
   }
 
   func deregister(macAddress: EUI48, vlan: VLAN?, from ports: Set<P>) async throws {
-    guard let rtnl = bridgePort._rtnl as? RTNLLinkBridge else { throw Errno.noSuchAddressOrDevice }
+    // see register(): tolerate a nil _bridgePort from a concurrent shutdown instead of crashing
+    guard let rtnl = _bridgePort?._rtnl as? RTNLLinkBridge
+    else { throw Errno.noSuchAddressOrDevice }
     for port in ports {
       if _isMulticast(macAddress: macAddress) {
         try await rtnl.remove(
