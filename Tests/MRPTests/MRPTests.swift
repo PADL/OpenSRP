@@ -125,6 +125,18 @@ actor MRPTestRecorder {
   private(set) var cbs = [(port: Int, queue: UInt, idleSlope: Int)]()
   private(set) var fdbRegister = [(mac: EUI48, vlan: VLAN?, ports: Set<Int>)]()
   private(set) var fdbDeregister = [(mac: EUI48, vlan: VLAN?, ports: Set<Int>)]()
+  // register/deregister ops in the order applied, so tests can compute net group membership
+  private(set) var fdbOps = [(register: Bool, mac: EUI48, ports: Set<Int>)]()
+
+  // ports currently carrying a group MDB entry for `mac` (replays fdbOps in order)
+  func fdbMembers(mac: EUI48) -> Set<Int> {
+    var members = Set<Int>()
+    for op in fdbOps where _isEqualMacAddress(op.mac, mac) {
+      if op.register { members.formUnion(op.ports) } else { members.subtract(op.ports) }
+    }
+    return members
+  }
+
   private(set) var vlanRegister = [(vlan: VLAN, port: Int)]()
   private(set) var vlanDeregister = [(vlan: VLAN, port: Int)]()
   private(set) var staticVlanAdd = [(vlan: VLAN, port: Int)]()
@@ -193,10 +205,12 @@ actor MRPTestRecorder {
 
   func recordFDBRegister(mac: EUI48, vlan: VLAN?, ports: Set<Int>) {
     fdbRegister.append((mac, vlan, ports))
+    fdbOps.append((register: true, mac: mac, ports: ports))
   }
 
   func recordFDBDeregister(mac: EUI48, vlan: VLAN?, ports: Set<Int>) {
     fdbDeregister.append((mac, vlan, ports))
+    fdbOps.append((register: false, mac: mac, ports: ports))
   }
 
   func recordVLANRegister(vlan: VLAN, port: Int) {
@@ -5268,6 +5282,121 @@ extension MRPTests {
       fdb.contains { $0.ports.contains(0) },
       "no ingress MDB entry may be installed on a non-point-to-point talker port"
     )
+    _ = controller
+  }
+
+  // (3 ports) A Talker relocates across ingress ports while the Listener stays fixed. The group's
+  // ingress admission entry must follow the Talker to its new port, and -- because the Talker is
+  // registered on both ports during the hand-off (as in a ring) -- the fixed Listener's egress
+  // entry must never be torn down. Regression for the relocation race that stranded the entry.
+  func testRecomputeIngressMdbFollowsTalkerRelocationKeepingFixedListener() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(
+      portIDs: [0, 1, 2], flags: _ingressMdbFlags()
+    )
+    let streamID = MSRPStreamID(0x0001_0000_0000_00A5)
+    let group = Self._ingressGroup
+
+    // Talker on port 0, Listener Ready on port 2 -> group {ingress 0, egress 2}
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .JoinIn
+    )
+    try await _drive(
+      msrp, port: 2, attributeType: .listener,
+      value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready
+    )
+    let established = await _waitFor { await recorder.fdbMembers(mac: group) == [0, 2] }
+    let m0 = await recorder.fdbMembers(mac: group)
+    XCTAssertTrue(established, "group should converge to {ingress 0, egress 2}; got \(m0)")
+
+    // relocate the Talker 0 -> 1, make-before-break (briefly registered on both, as in a ring)
+    try await _drive(
+      msrp, port: 1, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .JoinIn
+    )
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .Lv
+    )
+    let relocated = await _waitFor { await recorder.fdbMembers(mac: group) == [1, 2] }
+    let m1 = await recorder.fdbMembers(mac: group)
+    XCTAssertTrue(relocated, "ingress must follow the Talker to port 1, egress 2 kept; got \(m1)")
+
+    // the fixed Listener's egress entry must never have been deregistered during the hand-off
+    let deregs = await recorder.fdbDeregister
+    XCTAssertFalse(
+      deregs.contains { $0.ports.contains(2) && _isEqualMacAddress($0.mac, group) },
+      "the fixed Listener's egress entry (port 2) must not be torn down by the relocation"
+    )
+    _ = controller
+  }
+
+  // (4 ports) The group's port set is the union of every Listener-Ready egress port plus the
+  // Talker's ingress port, reconciled in one pass; a single Listener leaving prunes only its port.
+  func testRecomputeIngressMdbUnionOfMultipleListeners() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(
+      portIDs: [0, 1, 2, 3], flags: _ingressMdbFlags()
+    )
+    let streamID = MSRPStreamID(0x0001_0000_0000_00A6)
+    let group = Self._ingressGroup
+
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .JoinIn
+    )
+    for listenerPort in [1, 2, 3] {
+      try await _drive(
+        msrp, port: listenerPort, attributeType: .listener,
+        value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready
+      )
+    }
+    let full = await _waitFor { await recorder.fdbMembers(mac: group) == [0, 1, 2, 3] }
+    let mAll = await recorder.fdbMembers(mac: group)
+    XCTAssertTrue(full, "group should be ingress 0 + listeners 1,2,3; got \(mAll)")
+
+    // one Listener leaves -> only its egress port is pruned; ingress and the others stay
+    try await _drive(
+      msrp, port: 2, attributeType: .listener,
+      value: MSRPListenerValue(streamID: streamID), event: .Lv, subtype: .ready
+    )
+    let pruned = await _waitFor { await recorder.fdbMembers(mac: group) == [0, 1, 3] }
+    let mPruned = await recorder.fdbMembers(mac: group)
+    XCTAssertTrue(pruned, "only the departed Listener (port 2) should be pruned; got \(mPruned)")
+    _ = controller
+  }
+
+  // (3 ports) A Talker withdrawing entirely tears the whole group down; re-declaring rebuilds it.
+  func testRecomputeIngressMdbTornDownOnTalkerLeaveAndRebuilt() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(
+      portIDs: [0, 1, 2], flags: _ingressMdbFlags()
+    )
+    let streamID = MSRPStreamID(0x0001_0000_0000_00A7)
+    let group = Self._ingressGroup
+
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .JoinIn
+    )
+    try await _drive(
+      msrp, port: 2, attributeType: .listener,
+      value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready
+    )
+    _ = await _waitFor { await recorder.fdbMembers(mac: group) == [0, 2] }
+
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .Lv
+    )
+    let emptied = await _waitFor { await recorder.fdbMembers(mac: group).isEmpty }
+    XCTAssertTrue(emptied, "talker leave must tear the whole group down")
+
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .JoinIn
+    )
+    let rebuilt = await _waitFor { await recorder.fdbMembers(mac: group) == [0, 2] }
+    let mReb = await recorder.fdbMembers(mac: group)
+    XCTAssertTrue(rebuilt, "re-declaring the Talker must rebuild the group; got \(mReb)")
     _ = controller
   }
 }
