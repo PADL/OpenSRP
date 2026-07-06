@@ -2668,12 +2668,13 @@ final class MRPTests: XCTestCase {
     return try await MVRPApplication(controller: controller)
   }
 
-  // A benign RTM_NEWLINK (e.g. a statistics refresh) re-presents the same port; the controller
-  // must ignore it so it does not ReDeclare and churn peer registrations. A real change — STP
-  // state, or a carrier flap that flips isOperational — must still be processed.
-  // _checkTopologyChange
-  // polls getStpPortStatus only on a processed update, so the query count is our proxy for that.
-  func testNoOpPortUpdateIsIgnoredButRealChangesAreProcessed() async throws {
+  // _checkTopologyChange polls getStpPortStatus on EVERY port update, including a PortMRPState
+  // no-op
+  // (e.g. a statistics refresh): an STP role-only transition (Designated->Root, same forwarding
+  // state) has no netlink-visible field, so gating the poll would miss its Re-declare! (10.7.5.3).
+  // The PortMRPState gate still suppresses context re-processing / ReDeclare churn on a no-op --
+  // that is covered by testBenignPortUpdateDoesNotRedeclare.
+  func testStpRoleIsPolledOnEveryPortUpdate() async throws {
     let logger = Logger(label: "com.padl.MRPTests.portGuard")
     let recorder = MRPTestRecorder()
     let bridge = MockBridge(ports: [MockPort(id: 0)], recorder: recorder)
@@ -2683,24 +2684,20 @@ final class MRPTests: XCTestCase {
     try await controller._didAdd(port: MockPort(id: 0))
     let afterAdd = await recorder.stpStatusQueries.count
 
-    // identical snapshot -> ignored (no further STP poll)
+    // an identical snapshot (PortMRPState no-op) must still poll the role
     try await controller._didUpdate(port: MockPort(id: 0))
     let afterNoOp = await recorder.stpStatusQueries.count
-    XCTAssertEqual(afterNoOp, afterAdd, "no-op port update must be ignored")
+    XCTAssertEqual(
+      afterNoOp, afterAdd + 1,
+      "STP role must be polled even on a no-op update (role changes have no netlink signal)"
+    )
 
-    // STP state transition -> processed
+    // a real change also polls
     var blocking = MockPort(id: 0)
     blocking.stpPortState = .blocking
     try await controller._didUpdate(port: blocking)
     let afterState = await recorder.stpStatusQueries.count
-    XCTAssertEqual(afterState, afterAdd + 1, "STP state change must be processed")
-
-    // carrier flap (isOperational flips, state unchanged) -> processed
-    var down = blocking
-    down.isOperational = false
-    try await controller._didUpdate(port: down)
-    let afterCarrier = await recorder.stpStatusQueries.count
-    XCTAssertEqual(afterCarrier, afterAdd + 2, "carrier flap must be processed")
+    XCTAssertEqual(afterState, afterAdd + 2, "STP role must be polled on a real change")
   }
 
   // 10.7.5.3: a port role change from Designated to Root (or Alternate) generates Re-declare! --
@@ -2729,6 +2726,61 @@ final class MRPTests: XCTestCase {
     try await controller._didUpdate(port: moved)
     let redeclared = await _waitFor { await _vlanRegistrarState(mvrp, vid: 100, port: 0) == .LV }
     XCTAssertTrue(redeclared, "Designated->Root must Re-declare!, moving the registrar to LV")
+    _ = controller
+  }
+
+  // A role-only Designated->Root transition (same forwarding state, no other field change) leaves
+  // PortMRPState identical, so the update is gated out of the context machinery -- but the role
+  // change must still Re-declare! (10.7.5.3). Guards running _checkTopologyChange before that gate.
+  func testRedeclareOnPureDesignatedToRootRoleChange() async throws {
+    let recorder = MRPTestRecorder()
+    let bridge = MockBridge(ports: [MockPort(id: 0)], recorder: recorder)
+    let controller = try await MRPController(
+      bridge: bridge,
+      logger: Logger(label: "com.padl.MRPTests.stp")
+    )
+    let mvrp = try await MVRPApplication(controller: controller)
+    await recorder.setStpStatus(STPPortStatus(role: .designated, state: .forwarding), port: 0)
+    try await controller._didAdd(port: MockPort(id: 0))
+
+    try await _driveMVRP(mvrp, port: 0, vid: 100, event: .JoinIn)
+    let registered = await _waitFor { await _vlanRegistrarState(mvrp, vid: 100, port: 0) == .IN }
+    XCTAssertTrue(registered, "peer join must register VID 100 (registrar IN)")
+
+    // role Designated -> Root, forwarding both times, no other field change: PortMRPState is a
+    // no-op
+    await recorder.setStpStatus(STPPortStatus(role: .root, state: .forwarding), port: 0)
+    try await controller._didUpdate(port: MockPort(id: 0))
+    let redeclared = await _waitFor { await _vlanRegistrarState(mvrp, vid: 100, port: 0) == .LV }
+    XCTAssertTrue(redeclared, "a role-only Designated->Root must still Re-declare! (IN -> LV)")
+    _ = controller
+  }
+
+  // The inverse guard: a benign port update with no STP role change (still Designated) must NOT
+  // Re-declare! and move a registered attribute to LV -- Re-declare! is topology-scoped (10.7.5.3).
+  func testBenignPortUpdateDoesNotRedeclare() async throws {
+    let recorder = MRPTestRecorder()
+    let bridge = MockBridge(ports: [MockPort(id: 0)], recorder: recorder)
+    let controller = try await MRPController(
+      bridge: bridge,
+      logger: Logger(label: "com.padl.MRPTests.stp")
+    )
+    let mvrp = try await MVRPApplication(controller: controller)
+    await recorder.setStpStatus(STPPortStatus(role: .designated, state: .forwarding), port: 0)
+    try await controller._didAdd(port: MockPort(id: 0))
+
+    try await _driveMVRP(mvrp, port: 0, vid: 100, event: .JoinIn)
+    let registered = await _waitFor { await _vlanRegistrarState(mvrp, vid: 100, port: 0) == .IN }
+    XCTAssertTrue(registered, "peer join must register VID 100 (registrar IN)")
+
+    // change only the forwarding state (role stays Designated) so the update passes the gate but is
+    // not a topology change
+    var moved = MockPort(id: 0)
+    moved.stpPortState = .learning
+    try await controller._didUpdate(port: moved)
+    try await Task.sleep(for: .milliseconds(200)) // allow any erroneous redeclare to land
+    let state = await _vlanRegistrarState(mvrp, vid: 100, port: 0)
+    XCTAssertEqual(state, .IN, "a benign port update (no role change) must not Re-declare!")
     _ = controller
   }
 

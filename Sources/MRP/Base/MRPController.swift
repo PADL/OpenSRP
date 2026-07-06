@@ -314,6 +314,12 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
   }
 
   func _didUpdate(port: P) async throws {
+    // The STP Port Role is not part of PortMRPState (it comes from an async mstpd poll, not the
+    // netlink port snapshot), so a role-only transition -- Designated -> Root with unchanged
+    // forwarding state -- would be gated out below and miss its Re-declare! (10.7.5.3). Check it
+    // first; _checkTopologyChange caches the role (_stpPortStatus) and acts only on a transition.
+    await _checkTopologyChange(port: port)
+
     // Act only on a real MRP-relevant change, not a netlink no-op (e.g. stats refresh). Compare
     // against the last snapshot: re-deriving from the stored port reads the same live cache.
     let state = PortMRPState(port)
@@ -324,7 +330,6 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
     _ports[port.id] = port
     _portMRPState[port.id] = state
     _portContextIdentifiers[port.id] = port.contextIdentifiers
-    await _checkTopologyChange(port: port)
   }
 
   // On a port event, poll the bridge's STP role and act on a role transition. Soft no-op when the
