@@ -276,6 +276,9 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     var boundTalker: TalkerRegistration?
     var talkerDeclarations = [(participant: Participant<MSRPApplication>, failure: MSRPFailure?)]()
     var mergedListener: MSRPDeclarationType? // propagated towards talker
+    // ingress ports of the listeners merged into mergedListener; a received New (or a topology
+    // change) on any of them marks the propagated Listener New (10.3 a)
+    var listenerSourcePorts = Set<P.ID>()
     var listenerPorts =
       [(participant: Participant<MSRPApplication>, declarationType: MSRPDeclarationType)]()
     // lower-importance streams this one displaces by reserving (Avnu §9.1); re-evaluated by
@@ -299,6 +302,13 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
   // because the conflict cannot be re-derived from the store: a coexisting egress failure or an
   // already-Failed stream would otherwise erase or never record the marker.
   private var _firstValueViolations = Set<MSRPStreamID>()
+  // 10.3 a): propagate a declaration as New when it was received New (or its ingress port had a
+  // topology change). Per stream, the ingress ports pending New propagation; consumed once the
+  // recompute emits the propagated declaration, so a later refresh is a plain Join (one-shot).
+  private var _receivedNew = [MSRPStreamID: Set<P.ID>]()
+  // ports whose spanning-tree state just changed: a declaration propagated from such a port is
+  // forced New (10.3 a). Approximates tcDetected (13.25); cleared once the recompute drains.
+  private var _tcDetected = Set<P.ID>()
   private var _ingressFdbEntries: [MSRPStreamID: FDBEntry] = [:]
 
   // Convenience accessors for flags
@@ -565,6 +575,7 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
         _logger.info("MSRP: port \(port) spanning-tree state now \(port.stpPortState)")
         _portStates.values[index].stpPortState = port.stpPortState
         _portStates.values[index].invalidate()
+        _tcDetected.insert(port.id) // 10.3 a): declarations propagated from this port are New
         stpChanged = true
       }
     }
@@ -573,6 +584,9 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
       // below re-samples per-hop latency fresh and fails a stream whose reported latency rose above
       // its guarantee.
       _forceUpdateActiveStreams()
+      // no drain in flight means nothing was queued to consume the New marking: clear it now so
+      // it cannot linger and spuriously mark an unrelated declaration New long after the TC
+      if _streamUpdateTask == nil { _tcDetected.removeAll() }
     }
 
     for port in context {
@@ -1741,9 +1755,13 @@ extension MSRPApplication {
           streamID: talkerValue.streamID
         )
       }
+      // 10.3 a): remember a received New so the recompute propagates it as New (not JoinMt)
+      if isNew { _receivedNew[talkerValue.streamID, default: []].insert(port.id) }
       _streamDidUpdate(talkerValue.streamID)
     case .listener:
-      _streamDidUpdate((attributeValue as! MSRPListenerValue).streamID)
+      let listenerStreamID = (attributeValue as! MSRPListenerValue).streamID
+      if isNew { _receivedNew[listenerStreamID, default: []].insert(port.id) }
+      _streamDidUpdate(listenerStreamID)
     case .domain:
       let domain = (attributeValue as! MSRPDomainValue)
       // adopt a peer's changed Domain payload into the retained registration (the index is the
@@ -1797,12 +1815,16 @@ extension MSRPApplication {
       let plan = _makeStreamPlan(streamID)
       do { try await _applyStreamPlan(plan) }
       catch { _logger.error("MSRP: recompute failed for stream \(streamID): \(error)") }
+      // 10.3 a): the propagated declarations carry any New marking now, so consume it -- unless a
+      // stale plan was abandoned (stream re-queued), where the replan still needs it.
+      if !_pendingStreams.contains(streamID) { _receivedNew[streamID] = nil }
       // a stream that just reserved may have displaced lower-importance streams (Avnu §9.1);
       // queue them so they re-evaluate admission and declare Failed (drained in this loop)
       for displaced in plan.displacedStreams where displaced != streamID {
         _streamDidUpdate(displaced)
       }
     }
+    _tcDetected.removeAll() // topology-change New marking applied to every re-derived stream
     _streamUpdateTask = nil
   }
 
@@ -1880,6 +1902,7 @@ extension MSRPApplication {
           declarationType: ownDeclaration,
           with: plan.mergedListener
         )
+        plan.listenerSourcePorts.insert(participant.port.id)
       }
 
       // never declare the talker onto a port that already registered it
@@ -1909,6 +1932,15 @@ extension MSRPApplication {
     try? await _updateIngressFdbEntry(streamID: streamID, boundTalker: boundTalker)
 
     var declaredTalkerPorts = Set<P.ID>()
+
+    // 10.3 a): mark a propagated declaration New if it was received New, or a topology change
+    // occurred on its ingress port (consumed after the drain, so a later refresh is a plain Join).
+    let newPorts = _receivedNew[streamID] ?? []
+    let talkerIsNew = newPorts.contains(boundTalker.0.port.id) ||
+      _tcDetected.contains(boundTalker.0.port.id)
+    let listenerIsNew = plan.listenerSourcePorts.contains {
+      newPorts.contains($0) || _tcDetected.contains($0)
+    }
 
     // per-hop latency is cached per port and refreshed only when the topology changes (a link flap
     // or STP transition calls invalidate()); it is NOT re-sampled every recompute, so ordinary gPTP
@@ -2009,13 +2041,13 @@ extension MSRPApplication {
         try participant.join(
           attributeType: MSRPAttributeType.talkerFailed.rawValue,
           attributeValue: boundTalker.1.makeFailed(accumulatedLatency: latency, failure: failure),
-          isNew: false, eventSource: .map
+          isNew: talkerIsNew, eventSource: .map
         )
       } else {
         try participant.join(
           attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
           attributeValue: boundTalker.1.makeAdvertise(accumulatedLatency: latency),
-          isNew: false, eventSource: .map
+          isNew: talkerIsNew, eventSource: .map
         )
       }
 
@@ -2041,7 +2073,7 @@ extension MSRPApplication {
       try boundTalker.0.join(
         attributeType: MSRPAttributeType.listener.rawValue,
         attributeSubtype: merged.attributeSubtype!.rawValue,
-        attributeValue: listenerValue, isNew: false, eventSource: .map
+        attributeValue: listenerValue, isNew: listenerIsNew, eventSource: .map
       )
     }
 
