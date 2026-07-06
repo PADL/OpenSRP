@@ -371,7 +371,8 @@ public struct MSRPPriorityAndRank: SerDes, Equatable, Hashable, Comparable,
   }
 
   public var description: String {
-    "MSRPPriorityAndRank(dataFramePriority: \(dataFramePriority), rank: \(rank))"
+    // rank bit 0 is emergency, 1 non-emergency (35.2.2.8.5(c))
+    "priority \(dataFramePriority) rank \(rank ? "normal" : "emergency")"
   }
 }
 
