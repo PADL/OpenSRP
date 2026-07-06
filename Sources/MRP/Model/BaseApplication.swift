@@ -161,17 +161,9 @@ extension BaseApplication {
     contextIdentifier: MAPContextIdentifier,
     with context: MAPContext<P>
   ) async throws {
-    if _isParticipantValid(contextIdentifier: contextIdentifier) {
-      for port in context {
-        let participant = try findParticipant(
-          for: contextIdentifier,
-          port: port
-        )
-        try participant.redeclare()
-      }
-    }
-    // also call this regardless of the value of nonBaseContextsSupported, so that
-    // MVRP can be advised of VLAN changes on a port
+    // No Re-declare! here: 10.7.5.3 scopes it to an STP topology change (signaled by
+    // _checkTopologyChange). A blanket redeclare on every port update ages out freshly registered
+    // attributes. Just advise observers so MVRP tracks VLAN membership changes on the port.
     if let observer = self as? any BaseApplicationContextObserver<P> {
       try await observer.onContextUpdated(contextIdentifier: contextIdentifier, with: context)
     }

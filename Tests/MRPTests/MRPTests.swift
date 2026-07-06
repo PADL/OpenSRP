@@ -3044,6 +3044,59 @@ final class MRPTests: XCTestCase {
     _ = controller
   }
 
+  // AVnu Bridge-1.1-MRP.c.10.1.7B TRAFFIC FORWARDED: a New for a VID that the DUT is already
+  // declaring (as an applicant, propagated from another port) arriving right after a LeaveAll on
+  // the same port must register durably -- it must NOT be aged out by a stale leaveTimer.
+  func testMVRPNewAfterLeaveAllStaysRegistered() async throws {
+    let (controller, mvrp, _) = try await _makeMVRP(portIDs: [0, 1])
+
+    // TS2 (port 1) declares VID 16; MAP propagates it as an applicant declaration on port 0
+    // (registrar there is still MT).
+    try await _driveMVRP(mvrp, port: 1, vid: 16, event: .New)
+    let declaredP0 = await _waitFor { await _isVLANDeclared(mvrp, vid: 16, port: 0) }
+    XCTAssertTrue(declaredP0, "VID 16 must be propagated (declared) toward port 0")
+
+    // TS1 (port 0) sends a LeaveAll, then immediately a New for VID 16 (the on-device order).
+    let leaveAll = Message(
+      attributeType: MVRPAttributeType.vid.rawValue,
+      attributeList: [VectorAttribute(
+        leaveAllEvent: .LeaveAll,
+        firstValue: AnyValue(VLAN(vid: 0)),
+        attributeEvents: [],
+        applicationEvents: nil
+      )]
+    )
+    try await mvrp.rx(
+      pdu: MRPDU(protocolVersion: 0, messages: [leaveAll]),
+      for: MAPBaseSpanningTreeContext,
+      from: MockPort(id: 0),
+      sourceMacAddress: [0x02, 0x00, 0x00, 0x00, 0x00, 0x0A]
+    )
+    try await _driveMVRP(mvrp, port: 0, vid: 16, event: .New)
+
+    let registered = await _isVLANRegistered(mvrp, vid: 16, port: 0)
+    XCTAssertTrue(registered, "the New must register VID 16 on port 0")
+
+    // On device, installing the dynamic VLAN in the FDB generates a netlink notification that comes
+    // back as a port update (no STP topology change). This must NOT ReDeclare and age out the
+    // registration we just made: Re-declare! is scoped to a topology change (STP Designated ->
+    // Root/Alternate), per 10.7.5.3 -- not to arbitrary port updates.
+    try await mvrp.didUpdate(
+      contextIdentifier: MAPBaseSpanningTreeContext,
+      with: Set([MockPort(id: 0), MockPort(id: 1)])
+    )
+
+    // must survive past LeaveTime (1s in the test config): the port update must not sweep the
+    // registration to LV and start a leaveTimer.
+    try await Task.sleep(for: .seconds(2))
+    let stillRegistered = await _isVLANRegistered(mvrp, vid: 16, port: 0)
+    XCTAssertTrue(
+      stillRegistered,
+      "VID 16 registered by a New after a LeaveAll must not be aged out by a stale leaveTimer"
+    )
+    _ = controller
+  }
+
   private func _makeMVRP(
     portIDs: [Int],
     exclusions: Set<VLAN> = [],
