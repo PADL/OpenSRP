@@ -162,17 +162,17 @@ struct MSRPPortState<P: AVBPort>: Sendable {
     }
   }
 
-  init(msrp: MSRPApplication<P>, port: P) throws {
-    let isAvbCapable = port.isAvbCapable || msrp._forceAvbCapable
+  init(application: MSRPApplication<P>, port: P) throws {
+    let isAvbCapable = port.isAvbCapable || application._forceAvbCapable
     msrpPortEnabledStatus = isAvbCapable
     stpPortState = port.stpPortState
-    srpDomainBoundaryPort = .init(uniqueKeysWithValues: msrp._allSRClassIDs.map { (
+    srpDomainBoundaryPort = .init(uniqueKeysWithValues: application._allSRClassIDs.map { (
       $0,
       !isAvbCapable
     ) })
-    srpClassVID = .init(uniqueKeysWithValues: msrp._allSRClassIDs.map { (
+    srpClassVID = .init(uniqueKeysWithValues: application._allSRClassIDs.map { (
       $0,
-      msrp._srPVid
+      application._srPVid
     ) })
   }
 }
@@ -440,7 +440,7 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     }
 
     for port in context {
-      var portState = try MSRPPortState(msrp: self, port: port)
+      var portState = try MSRPPortState(application: self, port: port)
       if let srClassPriorityMap = srClassPriorityMap[port.id] {
         portState.srClassPriorityMap = srClassPriorityMap
       }
