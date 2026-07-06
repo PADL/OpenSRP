@@ -424,6 +424,21 @@ private func _declaredListenerSubtype(
   return MSRPAttributeSubtype(rawValue: subtype)
 }
 
+// the Applicant state of the declared attribute for a stream on a port; a New-marked declaration
+// leaves it in .VN/.AN (10.3 a). Free function for use inside _waitFor's @Sendable closure.
+private func _declaredApplicantState(
+  _ msrp: MSRPApplication<MockPort>, _ attributeType: MSRPAttributeType,
+  _ streamID: MSRPStreamID, port: Int
+) async -> Applicant.State? {
+  guard let participant = try? await msrp.findParticipant(port: MockPort(id: port))
+  else { return nil }
+  return await participant.findAllAttributes(
+    attributeType: attributeType.rawValue, matching: .matchAnyIndex(streamID.id)
+  ).first { $0.isDeclared }?.applicantState
+}
+
+private func _isNewMarked(_ state: Applicant.State?) -> Bool { state == .VN || state == .AN }
+
 // the failure code of the declared Talker Failed attribute for a stream on a port (nil if none)
 private func _declaredTalkerFailureCode(
   _ msrp: MSRPApplication<MockPort>, _ streamID: MSRPStreamID, port: Int
@@ -5593,6 +5608,91 @@ extension MRPTests {
     XCTAssertFalse(
       fdb.contains { $0.ports.contains(1) },
       "a blocked listener port must not get an FDB reservation"
+    )
+    _ = controller
+  }
+
+  // 10.3 a): a Talker received New must be re-propagated as New, not a plain Join. Steady-state
+  // JoinIn propagation is the control (not New-marked); a subsequent received New re-marks it.
+  func testRecomputeReceivedNewMarksPropagatedTalkerNew() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0046)
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerFailed,
+      value: _talkerFailed(streamID), event: .JoinIn
+    )
+    _ = await _waitFor { await _isDeclared(msrp, .talkerFailed, streamID, port: 1) }
+    let before = await _declaredApplicantState(msrp, .talkerFailed, streamID, port: 1)
+    XCTAssertNotNil(before)
+    XCTAssertFalse(_isNewMarked(before), "a JoinIn-registered talker propagates as a plain Join")
+
+    // the peer re-declares the same stream New: the propagated Talker Failed must also be New
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerFailed,
+      value: _talkerFailed(streamID), event: .New
+    )
+    let markedNew = await _waitFor {
+      await _isNewMarked(_declaredApplicantState(msrp, .talkerFailed, streamID, port: 1))
+    }
+    XCTAssertTrue(markedNew, "a Talker received New must be propagated as New (10.3 a)")
+    _ = controller
+  }
+
+  // 10.3 a): a Listener received New re-marks the merged Listener toward the talker as New
+  func testRecomputeReceivedNewMarksMergedListenerNew() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0047)
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .JoinIn
+    )
+    try await _drive(
+      msrp, port: 1, attributeType: .listener,
+      value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready
+    )
+    _ = await _waitFor { await _isDeclared(msrp, .listener, streamID, port: 0) }
+    let before = await _declaredApplicantState(msrp, .listener, streamID, port: 0)
+    XCTAssertNotNil(before)
+    XCTAssertFalse(_isNewMarked(before), "a JoinIn-registered listener propagates as a plain Join")
+
+    try await _drive(
+      msrp, port: 1, attributeType: .listener,
+      value: MSRPListenerValue(streamID: streamID), event: .New, subtype: .ready
+    )
+    let markedNew = await _waitFor {
+      await _isNewMarked(_declaredApplicantState(msrp, .listener, streamID, port: 0))
+    }
+    XCTAssertTrue(markedNew, "a Listener received New must be propagated as New (10.3 a)")
+    _ = controller
+  }
+
+  // 10.3 a): a declaration propagated from a port that just underwent a spanning-tree transition
+  // is marked New (tcDetected approximation), even though the registration itself was not New
+  func testRecomputeTopologyChangeMarksPropagatedTalkerNew() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0048)
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .JoinIn
+    )
+    try await _drive(
+      msrp, port: 1, attributeType: .listener,
+      value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready
+    )
+    _ = await _waitFor { await _isDeclared(msrp, .talkerAdvertise, streamID, port: 1) }
+    let before = await _declaredApplicantState(msrp, .talkerAdvertise, streamID, port: 1)
+    XCTAssertNotNil(before)
+    XCTAssertFalse(_isNewMarked(before), "no New on the propagated talker before a topology change")
+
+    // a spanning-tree transition on the talker's ingress port (0): block, then restore Forwarding
+    try await _setStpStates(msrp, portIDs: [0, 1], [0: .blocking])
+    try await _setStpStates(msrp, portIDs: [0, 1], [:])
+    let markedNew = await _waitFor {
+      await _isNewMarked(_declaredApplicantState(msrp, .talkerAdvertise, streamID, port: 1))
+    }
+    XCTAssertTrue(
+      markedNew,
+      "a Talker re-propagated after a topology change on its source must be New (10.3 a)"
     )
     _ = controller
   }
