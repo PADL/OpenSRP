@@ -1430,6 +1430,12 @@ extension MSRPApplication {
     return talkerRegistration
   }
 
+  // Render port IDs with their interface names for logging, e.g. "[lan3(9), lan1(7)]".
+  private func _renderPorts(_ ids: some Sequence<P.ID>) -> String {
+    "[" + ids.map { id in _participant(for: id).map { "\($0.port)(\(id))" } ?? "\(id)" }
+      .joined(separator: ", ") + "]"
+  }
+
   // Converge a stream's group MDB entry to `desired` (portID -> Port) in one pass, diffing against
   // the tracked set. params == nil tears the whole group down (Talker withdrawn/shutdown).
   private func _updateGroupReservations(
@@ -1465,7 +1471,8 @@ extension MSRPApplication {
 
     let addIDs = desiredIDs.subtracting(current)
     if !addIDs.isEmpty {
-      _logger.debug("MSRP: registering group MDB entry for \(group) on ports \(addIDs)")
+      _logger
+        .debug("MSRP: registering group MDB entry for \(group) on ports \(_renderPorts(addIDs))")
       do {
         try await bridge.register(
           macAddress: params.destinationAddress, vlan: params.vlanIdentifier,
@@ -1480,7 +1487,10 @@ extension MSRPApplication {
 
     let removeIDs = current.subtracting(desiredIDs)
     if !removeIDs.isEmpty {
-      _logger.debug("MSRP: deregistering group MDB entry for \(group) on ports \(removeIDs)")
+      _logger
+        .debug(
+          "MSRP: deregistering group MDB entry for \(group) on ports \(_renderPorts(removeIDs))"
+        )
       let ports = Set(removeIDs.compactMap { _participant(for: $0)?.port })
       if !ports.isEmpty {
         try? await bridge.deregister(

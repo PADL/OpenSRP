@@ -311,6 +311,29 @@ private func _getEthLinkSettingsCompat(
   return (linkSettings, linkModes)
 }
 
+// Open a throwaway socket and read a port's ethtool link settings (falling back to the legacy
+// ioctl,
+// then to an empty/down snapshot). Used by the bridge to refresh its authoritative link-state
+// cache.
+private func _readLinkSettings(name: String) -> (ethtool_link_settings, [UInt32]) {
+  guard let fileHandle = try? FileHandle(
+    fileDescriptor: socket(CInt(AF_PACKET), Int32(SOCK_DGRAM.rawValue), 0),
+    closeOnDealloc: true
+  ) else { return (ethtool_link_settings(), [0, 0, 0]) }
+  if let settings = try? _getEthLinkSettings(fileHandle: fileHandle, name: name) { return settings }
+  if let settings = try? _getEthLinkSettingsCompat(fileHandle: fileHandle, name: name) {
+    return settings
+  }
+  return (ethtool_link_settings(), [0, 0, 0])
+}
+
+// Per-port state that changes on link up/down, held authoritatively by the bridge (see
+// _portLinkState). flags give admin/oper/point-to-point; the ethtool settings give duplex/speed.
+struct LinuxPortLinkState: Sendable {
+  var flags: Int = 0
+  var linkSettings: (ethtool_link_settings, [UInt32]) = (ethtool_link_settings(), [0, 0, 0])
+}
+
 public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
   public static var now: ContinuousClock.Instant { .now }
 
@@ -322,8 +345,13 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
 
   fileprivate let _rtnl: RTNLLink
   fileprivate let _txSocket: Socket
-  private let _linkSettings: (ethtool_link_settings, [UInt32])
   private let _channels: EthernetChannelParameters?
+
+  // Read link-volatile state from the bridge cache so a Port copy captured before the link settled
+  // still reports current state. A function, not a property: it takes the bridge lock.
+  private func _getCurrentLinkState() -> LinuxPortLinkState {
+    _bridge?._portLinkState.withLock { $0[id] } ?? LinuxPortLinkState()
+  }
 
   // real_num_tx_queues: prefer the bridge's AF_UNSPEC-seeded map (the _rtnl snapshot came from an
   // AF_BRIDGE dump, which omits IFLA_NUM_TX_QUEUES and so reads 0), falling back to _rtnl for a
@@ -347,18 +375,8 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
       closeOnDealloc: true
     )
 
-    do {
-      _linkSettings = try _getEthLinkSettings(fileHandle: fileHandle, name: _rtnl.name)
-    } catch {
-      do {
-        _linkSettings = try _getEthLinkSettingsCompat(fileHandle: fileHandle, name: _rtnl.name)
-      } catch {
-        debugPrint("LinuxBridge: failed to get link settings for \(_rtnl.name): \(error), ignoring")
-        _linkSettings = (ethtool_link_settings(), [0, 0, 0])
-      }
-    }
-
-    // we allow this to fail, port won't be AVB capable but that is OK
+    // link-volatile settings (duplex/speed) come from the bridge's cache, not this snapshot; the
+    // channel count is fixed silicon, so it is read once here. Failure just makes the port non-AVB.
     _channels = try? _getEthChannelCount(fileHandle: fileHandle, name: _rtnl.name)
   }
 
@@ -371,15 +389,16 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
   }
 
   public var isOperational: Bool {
-    _rtnl.flags & IFF_RUNNING != 0
+    _getCurrentLinkState().flags & IFF_RUNNING != 0
   }
 
   public var isEnabled: Bool {
-    _rtnl.flags & IFF_UP != 0
+    _getCurrentLinkState().flags & IFF_UP != 0
   }
 
   public var isPointToPoint: Bool {
-    _operPointToPointMAC || _rtnl.flags & IFF_POINTOPOINT != 0
+    let state = _getCurrentLinkState()
+    return state.linkSettings.0.duplex == DUPLEX_FULL || state.flags & IFF_POINTOPOINT != 0
   }
 
   // A bridge member's BR_STATE_*; non-members (no master) are always Forwarding. With STP
@@ -394,10 +413,6 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
     case 4: return .blocking
     default: return .disabled
     }
-  }
-
-  private var _operPointToPointMAC: Bool {
-    _linkSettings.0.duplex == DUPLEX_FULL
   }
 
   public var _isBridgeSelf: Bool {
@@ -450,20 +465,22 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
   }
 
   public var linkSpeed: UInt {
-    UInt(_linkSettings.0.speed) * 1000
+    UInt(_getCurrentLinkState().linkSettings.0.speed) * 1000
   }
 
   public var isAvbCapable: Bool {
     // an MTU above the AVB max frame size can't bound stream latency, so such a port is not AVB
     // capable (IEEE 802.1BA / 802.1Q 35.2.2.8.4)
     guard _rtnl.mtu <= AVBMaxFrameSize else { return false }
+    let state = _getCurrentLinkState()
     // The link must be up: a down or unreadable link carries no AVB traffic. It also reports
     // DUPLEX_UNKNOWN / SPEED_UNKNOWN (the legacy ethtool path truncates the latter to 0xFFFF, so a
     // speed range check alone would misread a dead port as a real link), so gate on it first.
-    guard isOperational else { return false }
+    guard state.flags & IFF_RUNNING != 0 else { return false }
     // A half-duplex or sub-100 Mb/s link cannot carry AVB traffic, so it is an SRP domain boundary
     // port (IEEE 802.1BA-2011 §6.4 / Table 6.1).
-    guard _linkSettings.0.duplex == DUPLEX_FULL, _linkSettings.0.speed >= 100 else { return false }
+    guard state.linkSettings.0.duplex == DUPLEX_FULL, state.linkSettings.0.speed >= 100
+    else { return false }
     // TX/combined queue count gates the credit-based shaper: AVB needs queues for SR class A,
     // class B and best effort, so require more than two. A DSA switch port doesn't implement
     // ETHTOOL_GCHANNELS (no _channels), so use the netlink TX queue count; if even that is unknown,
@@ -608,6 +625,9 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   // objects report 0. Seeded from a full AF_UNSPEC dump (like `ip -d link`) and kept live by link
   // notifications; a Mutex so LinuxPort.numTXQueues reads it synchronously.
   let _portNumTXQueues = Mutex<[Int: Int]>([:])
+  // Authoritative link-volatile per-port state (flags + ethtool settings) by ifindex, so a stale
+  // Port value copy reads current duplex/speed. Refreshed at startup and on each link notification.
+  let _portLinkState = Mutex<[Int: LinuxPortLinkState]>([:])
   private let _portNotificationChannel = AsyncChannel<PortNotification<P>>()
   private let _rxPacketsChannel = AsyncThrowingChannel<(P.ID, IEEE802Packet), Error>()
   private var _linkLocalRegistrations = Set<FilterRegistration>()
@@ -666,11 +686,23 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     _bridgeName
   }
 
+  // Refresh the authoritative link-volatile state (flags + ethtool settings) for a port, so a Port
+  // value captured earlier reads the current duplex/speed/flags. Called at startup and per
+  // notification.
+  private func _updatePortLinkState(_ rtnl: RTNLLink) {
+    let linkSettings = _readLinkSettings(name: rtnl.name)
+    _portLinkState.withLock { $0[rtnl.index] = LinuxPortLinkState(
+      flags: rtnl.flags,
+      linkSettings: linkSettings
+    ) }
+  }
+
   private func _handleLinkNotification(_ linkMessage: RTNLLinkMessage) async throws {
     var portNotification: PortNotification<P>?
     let port = try P(rtnl: linkMessage.link, bridge: self)
     if port._isBridgeSelf, port._rtnl.index == _bridgeIndex {
       if case .new = linkMessage {
+        _updatePortLinkState(port._rtnl)
         _bridgePort = port
       } else {
         _logger.debug("LinuxBridge: bridge device itself removed")
@@ -678,6 +710,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
       }
     } else if port._rtnl.master == _bridgeIndex {
       if case .new = linkMessage {
+        _updatePortLinkState(port._rtnl)
         portNotification = .added(port)
         // seed the live VLAN map from the link's AF_BRIDGE info unless VLAN DB
         // notifications have already populated it (they are the fresher source, and
@@ -695,6 +728,9 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
         _portPropertiesCache[port.id] = nil
         _portVLANs.withLock { $0[port.id] = nil }
         _portPVID.withLock { $0[port.id] = nil }
+        // deliberately keep the last-known link state: a value-copy of this Port held by a
+        // concurrent recompute would otherwise read a zeroed state (speed 0 -> bad CBS). The stale
+        // entry is harmless (bounded by port count) and overwritten if the ifindex is re-added.
         portNotification = .removed(port)
       }
     } else {
@@ -920,6 +956,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   public func run(controller: MRPController<P>) async throws {
     _bridgePort = try await _getBridgePort(name: _bridgeName)
     _bridgeIndex = _bridgePort!._rtnl.index
+    _updatePortLinkState(_bridgePort!._rtnl)
 
     try _nlLinkSocket.subscribeLinks()
     try _nlLinkSocket.subscribeTC()
@@ -978,6 +1015,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
 
     let ports = try await _getMemberPorts()
     for port in ports {
+      _updatePortLinkState(port._rtnl)
       if let pvid = port._pvid { _portPVID.withLock { $0[port.id] = pvid } }
       // fall back to the (flagless) AF_BRIDGE info for ports the dump did not cover
       _portVLANs.withLock { map in
