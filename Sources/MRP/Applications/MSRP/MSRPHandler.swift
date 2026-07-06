@@ -142,7 +142,9 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
       else { return nil }
       guard let domain = portState.getDomain(for: srClassID, defaultSRPVid: application._srPVid)
       else { return nil }
-      domainBoundaryPort = portState.srpDomainBoundaryPort[srClassID] ?? true
+      domainBoundaryPort = portState.isSrpDomainBoundary(
+        for: srClassID, application: application
+      ) ?? true
       let domainState = await participant.findAllAttributes(
         attributeType: MSRPAttributeType.domain.rawValue,
         matching: .matchAny
@@ -293,9 +295,14 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
       }
       portNumber = port.id
       portName = port.name
-      asCapable = await (try? port.isAsCapable) ?? false
+      // report the cached asCapable admission relies on, not a fresh PMC query: a transient read
+      // failure would show false here and disagree with admission (which keeps the last-known
+      // value)
+      let asCapable = await (try? application
+        .withPortState(port: port) { $0.asCapable }).flatMap { $0 }
+      self.asCapable = asCapable ?? false
       transmitRate = await (try? application._getTransmitRate(for: participant)) ?? 0
-      forwarding = application._ignoreAsCapable || asCapable
+      forwarding = application._ignoreAsCapable || asCapable != false
     }
   }
 

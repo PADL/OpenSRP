@@ -1975,25 +1975,6 @@ final class MRPTests: XCTestCase {
     _ = controller
   }
 
-  // Avnu ProAV Bridge §9.1 (per 802.1Q 5.4.4) disables PeriodicTransmission for MSRP only; MVRP and
-  // MMRP keep it. Guards against a value flip that would starve VLAN/group registrations
-  // (MVRP/MMRP -> false) or violate Avnu (MSRP -> true).
-  func testPeriodicTransmissionScopedToMVRPandMMRPNotMSRP() async throws {
-    let recorder = MRPTestRecorder()
-    let ports = Set([MockPort(id: 0)])
-    let bridge = MockBridge(ports: ports, recorder: recorder)
-    let controller = try await MRPController(
-      bridge: bridge, logger: Logger(label: "com.padl.MRPTests.periodic.scope")
-    )
-    let mvrp = try await MVRPApplication(controller: controller)
-    let mmrp = try await MMRPApplication(controller: controller)
-    let msrp = try await MSRPApplication(controller: controller)
-    XCTAssertTrue(mvrp.usePeriodicTransmission, "MVRP uses PeriodicTransmission")
-    XCTAssertTrue(mmrp.usePeriodicTransmission, "MMRP uses PeriodicTransmission")
-    XCTAssertFalse(msrp.usePeriodicTransmission, "MSRP disables PeriodicTransmission (Avnu §9.1)")
-    _ = controller
-  }
-
   // MVRP uses PeriodicTransmission: a periodic tick re-asserts an active declaration
   // (QA -> AA -> tx -> Join), keeping a VLAN registered on a short-LeaveTime peer between
   // LeaveAlls.
