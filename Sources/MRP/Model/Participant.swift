@@ -772,11 +772,13 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
     _ attribute: VectorAttribute<AnyValue>,
     direction: _Direction
   ) {
-    let threePackedEventsString = try! attribute.attributeEvents
-      .compactMap { String(describing: $0) }.joined(separator: ", ")
+    // tolerate malformed, attacker-controlled events: the debug log must never abort the daemon
+    // (10.8.3.3 -- a badly formed MRPDU is discarded by rx, not fatal). Reserved values render "?".
+    let threePackedEventsString = ((try? attribute.attributeEvents)?
+      .compactMap { String(describing: $0) }.joined(separator: ", ")) ?? "?"
     let fourPackedEventsString = attribute.applicationEvents?
       .prefix(Int(attribute.numberOfValues))
-      .compactMap { String(describing: MSRPAttributeSubtype(rawValue: $0)!) }
+      .map { MSRPAttributeSubtype(rawValue: $0).map { String(describing: $0) } ?? "?" }
       .joined(separator: ", ")
     let firstValueString = attribute
       .numberOfValues > 0 ? String(describing: attribute.firstValue) : "--"
