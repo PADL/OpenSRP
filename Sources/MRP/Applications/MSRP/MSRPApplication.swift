@@ -114,6 +114,8 @@ private struct Reservation: Equatable, Sendable {
   let declarationType: MSRPDeclarationType?
   let talker: any MSRPTalkerValue
 
+  var isListenerReady: Bool { declarationType?.isListenerReady == true }
+
   static func == (lhs: Self, rhs: Self) -> Bool {
     lhs.declarationType == rhs.declarationType &&
       lhs.talker.dataFrameParameters == rhs.talker.dataFrameParameters &&
@@ -671,6 +673,28 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     // Talker on one so the cache does not go stale
     if !vanishedPortIDs.isEmpty {
       _ingressFdbEntries = _ingressFdbEntries.filter { !vanishedPortIDs.contains($0.value.portID) }
+    }
+  }
+
+  // Withdraw the dynamic-reservation MDB entries we programmed (egress Listener reservations and
+  // secure-admission ingress entries) so the switch stops forwarding reserved streams once no
+  // participant manages them. In-memory state is discarded after, so the caches are not cleared.
+  public func shutdown() async {
+    for streamID in Array(_ingressFdbEntries.keys) {
+      await _removeIngressFdbEntry(streamID: streamID)
+    }
+    for (portID, portState) in _portStates {
+      guard let port = _participant(for: portID)?.port else { continue }
+      for (streamID, reservation) in portState.reservations {
+        // only entries _updateDynamicReservationEntries installs (Advertise + Listener
+        // Ready/Failed)
+        guard reservation.talker is MSRPTalkerAdvertiseValue, reservation.isListenerReady
+        else { continue }
+        try? await _updateDynamicReservationEntries(
+          port: port, portState: portState, streamID: streamID,
+          declarationType: nil, talkerRegistration: reservation.talker
+        )
+      }
     }
   }
 
@@ -1426,9 +1450,7 @@ extension MSRPApplication {
     guard let controller,
           let bridge = controller.bridge as? any MMRPAwareBridge<P>
     else { throw MRPError.internalError }
-    if talkerRegistration is MSRPTalkerAdvertiseValue,
-       declarationType == .listenerReady || declarationType == .listenerReadyFailed
-    {
+    if talkerRegistration is MSRPTalkerAdvertiseValue, declarationType?.isListenerReady == true {
       _logger.debug("MSRP: registering FDB entries for \(talkerRegistration.dataFrameParameters)")
       do {
         try await bridge.register(
@@ -1562,9 +1584,8 @@ extension MSRPApplication {
     // does not consume bandwidth (35.2.4.2, Table 35-13/35-14)
     guard let reservations = _portStates[participant.port.id]?.reservations else { return [] }
     return Set(reservations.values.compactMap { reservation in
-      guard reservation.declarationType == .listenerReady ||
-        reservation.declarationType == .listenerReadyFailed,
-        let talker = reservation.talker as? MSRPTalkerAdvertiseValue
+      guard reservation.isListenerReady,
+            let talker = reservation.talker as? MSRPTalkerAdvertiseValue
       else { return nil }
       return talker
     })
@@ -1597,7 +1618,7 @@ extension MSRPApplication {
 
     // Only add it back if there are active listeners for this talker
     if let talkerRegistration = talkerRegistration as? MSRPTalkerAdvertiseValue,
-       declarationType == .listenerReady || declarationType == .listenerReadyFailed
+       declarationType?.isListenerReady == true
     {
       talkers.insert(talkerRegistration)
     }
@@ -1637,7 +1658,7 @@ extension MSRPApplication {
     talkerRegistration: TalkerRegistration
   ) async throws {
     let portState = try withPortState(port: port) {
-      if mergedDeclarationType == .listenerReady || mergedDeclarationType == .listenerReadyFailed {
+      if mergedDeclarationType?.isListenerReady == true {
         $0.register(streamID: streamID)
       } else {
         $0.deregister(streamID: streamID)
@@ -1651,7 +1672,7 @@ extension MSRPApplication {
       )
 
     do {
-      if mergedDeclarationType == .listenerReady || mergedDeclarationType == .listenerReadyFailed {
+      if mergedDeclarationType?.isListenerReady == true {
         // increase (if necessary) bandwidth first before updating dynamic reservation entries
         try await _updateOperIdleSlope(
           port: port,
@@ -1856,7 +1877,7 @@ extension MSRPApplication {
         if !participant.port.isPointToPoint, failed == nil,
            let listener = _findListenerRegistration(for: streamID, participant: participant),
            let ownDeclaration = MSRPDeclarationType(attributeSubtype: listener.1),
-           ownDeclaration == .listenerReady || ownDeclaration == .listenerReadyFailed
+           ownDeclaration.isListenerReady
         {
           plan.listenerPorts.append((participant, ownDeclaration))
         }
@@ -1883,7 +1904,7 @@ extension MSRPApplication {
         // and any prior reservation on the port is torn down by the withdraw sweep in
         // _applyStreamPlan — so it does not enter listenerPorts and touches no hardware
         let declarationType = egressFailure != nil ? .listenerAskingFailed : ownDeclaration
-        if declarationType == .listenerReady || declarationType == .listenerReadyFailed {
+        if declarationType.isListenerReady {
           plan.listenerPorts.append((participant, declarationType))
           // Avnu §9.1: this stream now reserves on the port, so collect the lower-importance
           // streams it displaces; their own recompute then declares them Failed

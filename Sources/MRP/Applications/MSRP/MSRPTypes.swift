@@ -34,6 +34,12 @@ public enum MSRPDeclarationType: Sendable, Equatable {
   case listenerReady
   case listenerReadyFailed
 
+  // Listener Ready or Ready Failed: at least one listener is ready, so the stream reserves
+  // bandwidth and gets a dynamic MDB entry (Table 35-13/35-14). Asking Failed reserves nothing.
+  var isListenerReady: Bool {
+    self == .listenerReady || self == .listenerReadyFailed
+  }
+
   var attributeType: MSRPAttributeType {
     switch self {
     case .talkerAdvertise:
