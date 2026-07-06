@@ -923,6 +923,85 @@ final class MRPTests: XCTestCase {
     XCTAssertEqual(vectorAttribute.numberOfValues, 0)
   }
 
+  // AVnu Bridge-1.1-MRP.c.10.1.7A: an MVRPDU whose ThreePackedEvents octet decodes to a reserved
+  // AttributeEvent (>5, e.g. 0xFF -> 7) must be discarded (10.8.3.3) and must never trap the RX
+  // debug-log path -- Participant._debugLogAttribute previously did `try!` and aborted the daemon.
+  func testReservedAttributeEventDoesNotTrapDebugLog() async throws {
+    var logger = Logger(label: "com.padl.MRPTests.7A")
+    logger.logLevel = .debug // exercise _debugLogPdu -> _debugLogAttribute (the crash site)
+    let recorder = MRPTestRecorder()
+    let port = MockPort(id: 0)
+    let bridge = MockBridge(ports: [port], recorder: recorder)
+    let controller = try await MRPController(bridge: bridge, logger: logger)
+    let mvrp = try await MVRPApplication(controller: controller)
+    try await mvrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: [port])
+
+    // a valid VLAN 1 JoinIn, then corrupt the single ThreePackedEvents octet to 0xFF (event -> 7)
+    var sc = SerializationContext()
+    try MRPDU(protocolVersion: 0, messages: [Message(
+      attributeType: MVRPAttributeType.vid.rawValue,
+      attributeList: [VectorAttribute(
+        leaveAllEvent: .NullLeaveAllEvent,
+        firstValue: AnyValue(VLAN(vid: 1)),
+        attributeEvents: [.JoinIn],
+        applicationEvents: nil
+      )]
+    )]).serialize(into: &sc, application: mvrp)
+    var bytes = sc.bytes
+    let tpeIndex = bytes.count - 5 // ThreePackedEvents octet sits before the msg + MRPDU EndMarks
+    XCTAssertEqual(bytes[tpeIndex], 0x24, "layout sanity: JoinIn ThreePackedEvents octet")
+    bytes[tpeIndex] = 0xFF
+
+    // the PDU still parses (events are decoded lazily) but decoding the reserved event throws
+    let pdu = try bytes.withParserSpan { try MRPDU(parsing: &$0, application: mvrp) }
+    XCTAssertThrowsError(try pdu.messages[0].attributeList[0].attributeEvents) {
+      XCTAssertEqual($0 as? MRPError, .unknownAttributeEvent)
+    }
+
+    // driving rx logs the PDU at .debug then discards it: must not crash, must register nothing
+    _ = try? await mvrp.rx(
+      pdu: pdu,
+      for: MAPBaseSpanningTreeContext,
+      from: port,
+      sourceMacAddress: [0x02, 0x00, 0x00, 0x00, 0x00, 0x0A]
+    )
+    let registered = await _isVLANRegistered(mvrp, vid: 1, port: 0)
+    XCTAssertFalse(registered, "a reserved-AttributeEvent attribute must register nothing")
+    _ = controller
+  }
+
+  // AVnu Bridge-1.1-MRP.c.10.1.7B: a reserved LeaveAllEvent (>1) discards only the offending PDU
+  // (10.8.3.3/10.8.3.4) -- a subsequent well-formed declaration must still register (the parser is
+  // stateless across PDUs and rejects the reserved value before mutating any Registrar state).
+  func testReservedLeaveAllEventDiscardsPduAndRecovers() async throws {
+    let (controller, mvrp, _) = try await _makeMVRP(portIDs: [0])
+
+    // a valid VLAN 1 New, then set the vector header's top 3 bits (LeaveAllEvent) to a reserved 3
+    var sc = SerializationContext()
+    try MRPDU(protocolVersion: 0, messages: [Message(
+      attributeType: MVRPAttributeType.vid.rawValue,
+      attributeList: [VectorAttribute(
+        leaveAllEvent: .NullLeaveAllEvent,
+        firstValue: AnyValue(VLAN(vid: 1)),
+        attributeEvents: [.New],
+        applicationEvents: nil
+      )]
+    )]).serialize(into: &sc, application: mvrp)
+    var bytes = sc.bytes
+    bytes[3] = (bytes[3] & 0x1F) | (3 << 5) // vector header high byte: LeaveAllEvent = reserved 3
+
+    // the reserved LeaveAllEvent throws in VectorHeader parse before any state change; the message
+    // is discarded and no valid prefix precedes it, so the PDU parses to zero messages (10.8.3.3).
+    let parsed = try bytes.withParserSpan { try MRPDU(parsing: &$0, application: mvrp) }
+    XCTAssertEqual(parsed.messages.count, 0, "the reserved-LeaveAllEvent message must be discarded")
+
+    // recovery: a subsequent well-formed New for another VID registers normally
+    try await _driveMVRP(mvrp, port: 0, vid: 16, event: .New)
+    let registered = await _waitFor { await _isVLANRegistered(mvrp, vid: 16, port: 0) }
+    XCTAssertTrue(registered, "a valid declaration after a discarded malformed PDU must register")
+    _ = controller
+  }
+
   func testMMRPSerialization() async throws {
     let logger = Logger(label: "com.padl.MRPTests.MMRP")
     let bridge = MockBridge()
