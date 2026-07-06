@@ -333,6 +333,7 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
     let n = Int(_rtnl.numTXQueues)
     return n > 0 ? n : nil
   }
+
   fileprivate weak var _bridge: LinuxBridge?
 
   init(rtnl: RTNLLink, bridge: LinuxBridge) throws {
@@ -900,7 +901,8 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     etherType: UInt16,
     controller: MRPController<P>
   ) async throws {
-    guard _isLinkLocal(macAddress: groupAddress) else { return }
+    guard _isLinkLocal(macAddress: groupAddress) || _isMRPApplicationGroupAddress(groupAddress)
+    else { return }
     _linkLocalRegistrations.insert(FilterRegistration(
       groupAddress: groupAddress,
       etherType: etherType
@@ -912,7 +914,8 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     etherType: UInt16,
     controller: MRPController<P>
   ) async throws {
-    guard _isLinkLocal(macAddress: groupAddress) else { return }
+    guard _isLinkLocal(macAddress: groupAddress) || _isMRPApplicationGroupAddress(groupAddress)
+    else { return }
     _linkLocalRegistrations.remove(FilterRegistration(
       groupAddress: groupAddress,
       etherType: etherType
@@ -1073,7 +1076,8 @@ fileprivate final class FilterRegistration: Equatable, Hashable, Sendable, Custo
   }
 
   func _rxPackets(port: LinuxPort) async throws -> AnyAsyncSequence<IEEE802Packet> {
-    precondition(_isLinkLocal(macAddress: _groupAddress))
+    precondition(_isLinkLocal(macAddress: _groupAddress) ||
+      _isMRPApplicationGroupAddress(_groupAddress))
     let rxSocket = try Socket(
       ring: IORing.shared,
       domain: sa_family_t(AF_PACKET),

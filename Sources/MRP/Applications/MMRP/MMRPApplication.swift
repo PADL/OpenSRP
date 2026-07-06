@@ -77,7 +77,7 @@ public actor MMRPApplication<P: Port>: BaseApplication, BaseApplicationEventObse
   }
 
   // 10.12.1.3 MMRP application address
-  public nonisolated var groupAddress: EUI48 { CustomerBridgeMRPGroupAddress }
+  public nonisolated var groupAddress: EUI48 { CustomerBridgeMMRPGroupAddress }
 
   // 10.12.1.4 MMRP application EtherType
   public nonisolated var etherType: UInt16 { MMRPEtherType }

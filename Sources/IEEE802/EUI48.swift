@@ -45,8 +45,12 @@ public extension UInt64 {
   }
 }
 
-// used by MVRP and MMRP (forwarded by bridges that do not support application protocol)
-public let CustomerBridgeMRPGroupAddress: EUI48 = [0x01, 0x80, 0xC2, 0x00, 0x00, 0x21]
+// Customer Bridge MVRP address (802.1Q Table 10-1); forwarded by bridges that do not run MVRP (10.5
+// b)
+public let CustomerBridgeMVRPGroupAddress: EUI48 = [0x01, 0x80, 0xC2, 0x00, 0x00, 0x21]
+
+// Customer and Provider Bridge MMRP address (802.1Q Table 10-1)
+public let CustomerBridgeMMRPGroupAddress: EUI48 = [0x01, 0x80, 0xC2, 0x00, 0x00, 0x20]
 
 // used by MSRP (not forwarded by bridges)
 public let IndividualLANScopeGroupAddress: EUI48 = [0x01, 0x80, 0xC2, 0x00, 0x00, 0x0E]
@@ -55,6 +59,13 @@ public func _isLinkLocal(macAddress: EUI48) -> Bool {
   macAddress[0] == 0x01 && macAddress[1] == 0x80 && macAddress[2] == 0xC2 && macAddress[3] ==
     0x00 &&
     macAddress[4] == 0x00 && macAddress[5] & 0xF0 == 0
+}
+
+// The MVRP/MMRP application group addresses (802.1Q Table 10-1). Non-link-local, so a participant
+// bridge drops the forwarded copy (10.5 b) and mrpd receives them on the per-port raw socket.
+public func _isMRPApplicationGroupAddress(_ macAddress: EUI48) -> Bool {
+  _isEqualMacAddress(macAddress, CustomerBridgeMVRPGroupAddress) ||
+    _isEqualMacAddress(macAddress, CustomerBridgeMMRPGroupAddress)
 }
 
 public func _isEqualMacAddress(_ lhs: EUI48, _ rhs: EUI48) -> Bool {
