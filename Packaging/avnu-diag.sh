@@ -23,11 +23,14 @@ OUT="${1:-/tmp/avnu-diag-$(date -u +%Y%m%d_%H%M%S)}"
 mkdir -p "$OUT"
 echo "capturing to $OUT every ${INTERVAL}s (Ctrl-C to stop)"
 
-grep -q -- '--log-level debug' /proc/"$(pgrep -x mrpd | head -1)"/cmdline 2>/dev/null \
-  || echo "WARNING: mrpd is not at --log-level debug; Talker/Listener/FDB detail will be missing"
+# cmdline is NUL-separated; translate so a two-token flag form matches
+tr '\0' ' ' < /proc/"$(pgrep -x mrpd | head -1)"/cmdline 2>/dev/null \
+  | grep -Eq -- '(-l|--log-level) +(debug|trace)' \
+  || echo "WARNING: mrpd is not at debug/trace log level; Talker/Listener/FDB detail will be missing"
 
-# follow the whole run's journal (mrpd + kernel dsa) in the background
-journalctl -f -o short-precise -u mrpd -k > "$OUT/journal.log" 2>&1 &
+# follow the whole run's journal in the background: mrpd unit OR kernel dsa
+# (-u and -k AND-combine to nothing; '+' ORs the two match groups)
+journalctl -f -o short-precise _SYSTEMD_UNIT=mrpd.service + _TRANSPORT=kernel > "$OUT/journal.log" 2>&1 &
 JPID=$!
 trap 'kill "$JPID" 2>/dev/null; echo; echo "stopped; output in $OUT"' EXIT INT TERM
 
