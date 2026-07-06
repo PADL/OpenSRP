@@ -33,6 +33,8 @@ EnvironmentFile=/etc/default/avb
 #ExecStartPre=/sbin/ip link set br0 type bridge mcast_vlan_snooping 1
 #ExecStartPre=/sbin/bridge vlan set dev br0 vid 1 mcast_querier on
 
+ExecStartPre=/bin/sh -c '/usr/sbin/devlink dev param set "$(/usr/sbin/devlink dev show | head -n1)" name ATU_hash value 3 cmode runtime'
+
 # configure MVRP hook
 ExecStartPre=/usr/sbin/nft add table bridge nat
 ExecStartPre=/usr/sbin/nft add chain bridge nat PREROUTING { type filter hook prerouting priority dstnat; policy accept; }
