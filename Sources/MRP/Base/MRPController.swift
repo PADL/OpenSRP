@@ -62,6 +62,9 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
   // already reflect a change and the delta would come up empty; diffing against
   // this snapshot lets a runtime VLAN add be detected as added, not updated.
   private var _portContextIdentifiers = [P.ID: Set<MAPContextIdentifier>]()
+  // Last-seen MRP-relevant state per port. Like _portContextIdentifiers: the port reads live link
+  // state, so diff against this value snapshot, not a fresh PortMRPState of the stored port.
+  private var _portMRPState = [P.ID: PortMRPState]()
   // last seen spanning-tree status per port, for topology-change (Flush!) detection. This is
   // the role, polled from the STP source (mstpd); the per-port Forwarding *state* used to gate
   // declarations (35.1.3.1) is read synchronously from the netlink port snapshot in the
@@ -272,6 +275,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
 
     try await _applyContextIdentifierChanges(beforeAddingOrUpdating: port, isNewPort: true)
     _ports[port.id] = port
+    _portMRPState[port.id] = PortMRPState(port)
     _portContextIdentifiers[port.id] = port.contextIdentifiers
     await _checkTopologyChange(port: port)
   }
@@ -281,6 +285,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
 
     try await _applyContextIdentifierChanges(beforeRemoving: port)
     _ports[port.id] = nil
+    _portMRPState[port.id] = nil
     _portContextIdentifiers[port.id] = nil
     _stpPortStatus[port.id] = nil
 
@@ -309,13 +314,15 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
   }
 
   func _didUpdate(port: P) async throws {
-    // Ignore netlink no-ops (e.g. statistics refreshes): act only when an MRP-relevant property
-    // changed, so a benign RTM_NEWLINK does not ReDeclare and churn peer registrations.
-    if let previous = _ports[port.id], PortMRPState(previous) == PortMRPState(port) { return }
+    // Act only on a real MRP-relevant change, not a netlink no-op (e.g. stats refresh). Compare
+    // against the last snapshot: re-deriving from the stored port reads the same live cache.
+    let state = PortMRPState(port)
+    if _portMRPState[port.id] == state { return }
     logger.debug("updated port \(port.id): \(port)")
 
     try await _applyContextIdentifierChanges(beforeAddingOrUpdating: port, isNewPort: false)
     _ports[port.id] = port
+    _portMRPState[port.id] = state
     _portContextIdentifiers[port.id] = port.contextIdentifiers
     await _checkTopologyChange(port: port)
   }
