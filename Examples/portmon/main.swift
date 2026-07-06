@@ -52,7 +52,6 @@ actor PortMonitor {
     let bridge = try await B(
       name: CommandLine.arguments.count > 1 ? CommandLine
         .arguments[1] : "br0",
-      netFilterGroup: 10,
       logger: logger
     )
 
