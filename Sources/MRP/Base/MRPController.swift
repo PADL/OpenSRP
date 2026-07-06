@@ -515,8 +515,8 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
     _periodicTimer = Timer(label: "periodictimer") { [weak self] in
       guard let self else { return }
       try await _apply { @Sendable application in
-        // Avnu ProAV Bridge §9.1 disables PeriodicTransmission for MSRP only (10.7.10)
-        guard application.usePeriodicTransmission else { return }
+        // every application gets the 1 s tick: MVRP/MMRP re-transmit (PeriodicTransmission), MSRP
+        // does not (Avnu §9.1 / 10.7.10) but uses it to resample gPTP-derived state
         try await application.periodic(for: nil)
       }
       await _restartPeriodicTimer()

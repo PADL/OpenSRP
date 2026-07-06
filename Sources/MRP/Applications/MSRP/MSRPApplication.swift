@@ -53,7 +53,7 @@ public struct MSRPApplicationFlags: OptionSet, Sendable {
   public static let configureIngressMdb = Self(rawValue: 1 << 7)
 
   public static let defaultFlags =
-    Self([.ignoreAsCapable, .leaveImmediate, .disableFlowControl])
+    Self([.leaveImmediate, .disableFlowControl])
 }
 
 protocol MSRPAwareBridge<P>: Bridge where P: AVBPort {
@@ -149,6 +149,10 @@ struct MSRPPortState<P: AVBPort>: Sendable {
   // reading (the provisional 800 ns over-estimate is never stored). Cleared on flap/STP so it
   // re-samples.
   var portTcMaxLatency: Int?
+  // last-known gPTP asCapable (802.1AS) per port, refreshed on each indication; nil until first
+  // read. A definitive not-asCapable is an SR domain boundary (35.2.1); an unreadable PMC is
+  // unknown, not false, and does not block -- mirroring the provisional latency path.
+  var asCapable: Bool?
   // per-stream reported-latency guarantee first declared on this port (35.2.2.8.6); lives here so
   // it is dropped with the port state on removal.
   var configuredLatency = [MSRPStreamID: UInt32]()
@@ -156,15 +160,29 @@ struct MSRPPortState<P: AVBPort>: Sendable {
   // Talker last applied to the kernel, for idempotent (re)programming and the withdraw sweep.
   fileprivate var reservations = [MSRPStreamID: Reservation]()
 
-  // drop the cached per-hop latency on a link change (flap/STP) so the next recompute re-samples
-  // gPTP meanLinkDelay. Per-stream guarantees survive for the reservation's life (35.2.2.8.6):
+  // drop the cached per-hop latency and asCapable on a link change (flap/STP) so the next recompute
+  // re-samples gPTP. Per-stream guarantees survive for the reservation's life (35.2.2.8.6):
   // a topology-driven latency increase must trip code 7, not silently re-baseline.
   mutating func invalidate() {
     portTcMaxLatency = nil
+    asCapable = nil
   }
 
   func reverseMapSrClassPriority(priority: SRclassPriority) -> SRclassID? {
     srClassPriorityMap.first(where: { $0.value == priority })?.key
+  }
+
+  // Effective SRP domain boundary for the class: the domain/PFC-derived srpDomainBoundaryPort OR
+  // the
+  // asCapable boundary (35.2.1) -- a not-asCapable port is a boundary unless asCapable is ignored.
+  // nil = SRP determined none; the caller picks the default (admission treats nil as non-boundary
+  // via != true, REST reports a boundary via ?? true).
+  func isSrpDomainBoundary(
+    for srClassID: SRclassID,
+    application: MSRPApplication<P>
+  ) -> Bool? {
+    if !application._ignoreAsCapable, asCapable == false { return true }
+    return srpDomainBoundaryPort[srClassID]
   }
 
   mutating func register(streamID: MSRPStreamID) {
@@ -304,9 +322,6 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
   nonisolated var _ignoreAsCapable: Bool { _flags.contains(.ignoreAsCapable) }
   public nonisolated var registrarLeaveImmediate: Bool { _flags.contains(.leaveImmediate) }
 
-  // 5.4.4 the Periodic Transmission state machine (10.7.10) is specifically
-  // excluded from MSRP (Avnu ProAV Bridge §9.1)
-  public nonisolated var usePeriodicTransmission: Bool { false }
   fileprivate nonisolated var _talkerPruning: Bool { _flags.contains(.talkerPruning) }
 
   public init(
@@ -853,8 +868,27 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     }
   }
 
-  public func periodic(for contextIdentifier: MAPContextIdentifier? = nil) async throws {
-    // not invoked: usePeriodicTransmission is false (5.4.4 excludes MSRP)
+  public func periodic(for _: MAPContextIdentifier? = nil) async throws {
+    // MSRP does no PeriodicTransmission (Avnu §9.1); the tick resamples gPTP asCapable, which
+    // changes
+    // with no MRP event -- keeping the cache the recompute and REST view read fresh. On any change,
+    // re-plan every talker: a boundary shift can affect any stream's admission (35.2.1).
+    var changed = false
+    for participant in findParticipants(for: MAPBaseSpanningTreeContext) {
+      if await _updateAsCapable(port: participant.port) { changed = true }
+    }
+    guard changed, !_ignoreAsCapable else { return }
+    apply(for: MAPBaseSpanningTreeContext) { participant in
+      for type in [MSRPAttributeType.talkerAdvertise, .talkerFailed] {
+        for attribute in participant.findAllAttributesUnchecked(
+          attributeType: type.rawValue, matching: .matchAny, isolation: self
+        ) where attribute.isRegistered {
+          if let talker = attribute.attributeValue as? any MSRPTalkerValue {
+            _streamDidUpdate(talker.streamID)
+          }
+        }
+      }
+    }
   }
 }
 
@@ -951,19 +985,23 @@ extension MSRPApplication {
     return lhsEpoch < rhsEpoch
   }
 
-  private func _checkAsCapable(
-    port: P,
-    attributeType: MSRPAttributeType,
-    isJoin: Bool
-  ) async throws {
-    guard !_ignoreAsCapable else { return }
-
-    guard await (try? port.isAsCapable) ?? false else {
-      _logger
-        .trace(
-          "MSRP: ignoring \(isJoin ? "join" : "leave") indication for attribute \(attributeType) as port is not asCapable"
-        )
-      throw MRPError.doNotPropagateAttribute
+  // Refresh the boundary decision's input (consumed by the sync recompute in _makeStreamPlan, which
+  // cannot query PTP) and the REST view. Sampled per indication and on the 1 s periodic() tick,
+  // since
+  // a gPTP asCapable change carries no link event to invalidate a cache. Returns whether it
+  // changed;
+  // an unreadable PMC is unknown, not false, so keep the last-known value (35.2.1).
+  @discardableResult
+  private func _updateAsCapable(port: P) async -> Bool {
+    do {
+      let asCapable = try await port.isAsCapable
+      guard let index = _portStates.index(forKey: port.id) else { return false }
+      let changed = _portStates.values[index].asCapable != asCapable
+      _portStates.values[index].asCapable = asCapable
+      return changed
+    } catch {
+      _logger.trace("MSRP: keeping last-known asCapable for \(port): \(error)")
+      return false
     }
   }
 
@@ -1197,7 +1235,10 @@ extension MSRPApplication {
         )
       }
 
-      guard portState.srpDomainBoundaryPort[srClassID] != true else {
+      // 35.2.4.3: a Talker Advertise propagating out an SR domain boundary port -- domain/PFC or a
+      // not-asCapable egress port (35.2.1) -- is converted to Talker Failed code 8. nil (SRP
+      // determined none) propagates, matching the prior nil-is-non-boundary admission rule.
+      guard portState.isSrpDomainBoundary(for: srClassID, application: self) != true else {
         _logger
           .error("MSRP: port \(port) is a SRP domain boundary port for \(talker.priorityAndRank)")
         throw MSRPFailure(systemID: _systemID, failureCode: .egressPortIsNotAvbCapable)
@@ -1653,7 +1694,7 @@ extension MSRPApplication {
       throw MRPError.doNotPropagateAttribute
     }
 
-    try await _checkAsCapable(port: port, attributeType: attributeType, isJoin: true)
+    await _updateAsCapable(port: port)
 
     switch attributeType {
     case .talkerAdvertise, .talkerFailed:
@@ -1749,6 +1790,8 @@ extension MSRPApplication {
   }
 
   private func _applyPendingStreamUpdates() async {
+    // asCapable is kept fresh by periodic() (1 s) and the per-indication resample, so plan straight
+    // from the cache rather than re-query PTP for every port here (35.2.1).
     while !_pendingStreams.isEmpty {
       let streamID = _pendingStreams.removeFirst()
       let plan = _makeStreamPlan(streamID)
@@ -2148,7 +2191,7 @@ extension MSRPApplication {
       throw MRPError.doNotPropagateAttribute
     }
 
-    try await _checkAsCapable(port: port, attributeType: attributeType, isJoin: false)
+    await _updateAsCapable(port: port)
 
     switch attributeType {
     case .talkerAdvertise:

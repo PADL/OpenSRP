@@ -100,10 +100,6 @@ public protocol Application<P>: Actor, Equatable, Hashable, Sendable {
   // skipping the leavetimer. Avnu ProAV Bridge §9.2 mandates this for MSRP only; default false.
   nonisolated var registrarLeaveImmediate: Bool { get }
 
-  // Whether the per-Participant PeriodicTransmission machine (10.7.10) runs for this application.
-  // Avnu ProAV Bridge §9.1 disables it for MSRP only; MVRP/MMRP keep it (802.1Q default 1s).
-  nonisolated var usePeriodicTransmission: Bool { get }
-
   // Return false to hold the Registrar in MT (no New/Join indication).
   // Re-evaluated on every event, so registration proceeds on a later
   // declaration once it returns true (no replay needed). See 35.1.3.1.

@@ -64,6 +64,13 @@ private final class MRPDaemon: AsyncParsableCommand {
   @Flag(name: .long, help: "Force ports to advertise as AVB capable")
   var forceAvbCapable: Bool = false
 
+  @Flag(
+    name: .long,
+    inversion: .prefixedNo,
+    help: "Ignore gPTP asCapable, do not query PTP (--no-ignore-as-capable enforces 35.2.1)"
+  )
+  var ignoreAsCapable: Bool = true
+
   @Flag(name: .long, help: "Enable MSRP talker pruning")
   var enableTalkerPruning: Bool = false
 
@@ -160,6 +167,7 @@ private final class MRPDaemon: AsyncParsableCommand {
     case nfGroup
     case qDiscHandle
     case forceAvbCapable
+    case ignoreAsCapable
     case enableTalkerPruning
     case leaveImmediate
     case maxFanInPorts
@@ -267,6 +275,7 @@ private final class MRPDaemon: AsyncParsableCommand {
       if enableTalkerPruning { flags.insert(.talkerPruning) }
       if !leaveImmediate { flags.remove(.leaveImmediate) }
       if forceAvbCapable { flags.insert(.forceAvbCapable) }
+      if ignoreAsCapable { flags.insert(.ignoreAsCapable) }
       if configureEgressQueues || configureQueues { flags.insert(.configureEgressQueues) }
       if configureIngressQueues || configureQueues { flags.insert(.configureIngressQueues) }
       if configureIngressMdb { flags.insert(.configureIngressMdb) }
