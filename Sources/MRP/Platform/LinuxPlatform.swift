@@ -611,6 +611,8 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   private let _bridgeName: String
   private var _bridgeIndex: Int = 0
   private var _bridgePort: P?
+  // Cached mstpd control connection, reused across STP-role polls (see getStpPortStatus).
+  private var _mstpClient: MSTPControlClient?
   // Per-port tagged VLANs (VID -> BRIDGE_VLAN_INFO_DYNAMIC), keyed by port ifindex:
   // seeded from the RTM_GETVLAN dump at startup (the libnl bitmaps carry no flags) and
   // kept live by VLAN DB notifications; _rtnl is a frozen snapshot that won't reflect
@@ -747,15 +749,22 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     _portNotificationChannel.eraseToAnyAsyncSequence()
   }
 
-  // Poll mstpd over its control socket for the port's CIST role/state. Soft-fails to nil if
-  // mstpd is absent; a fresh connection per call keeps it robust to mstpd restarts (this is
-  // only invoked on port events, not on the hot path).
+  // Poll mstpd over its control socket for the port's CIST role/state. Soft-fails to nil if mstpd
+  // is absent. _checkTopologyChange now polls this on every port event (to catch role-only STP
+  // transitions the netlink snapshot can't signal), so the connection is cached and reused rather
+  // than reopened per call; a nil result (mstpd restarted / port gone) drops it so the next poll
+  // reconnects.
   public func getStpPortStatus(port: P) async -> STPPortStatus? {
-    guard _bridgeIndex != 0, let client = try? await MSTPControlClient() else { return nil }
-    return await client.cistPortStatus(
+    guard _bridgeIndex != 0 else { return nil }
+    if _mstpClient == nil { _mstpClient = try? await MSTPControlClient() }
+    guard let status = await _mstpClient?.cistPortStatus(
       bridgeIndex: Int32(_bridgeIndex),
       portIndex: Int32(port.id)
-    )?.stpPortStatus
+    )?.stpPortStatus else {
+      _mstpClient = nil
+      return nil
+    }
+    return status
   }
 
   private func _handleTCNotification(_ tcMessage: RTNLTCMessage) async throws {
@@ -1045,6 +1054,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
 
     _bridgePort = nil
     _bridgeIndex = 0
+    _mstpClient = nil
   }
 
   public func shutdown(controller: MRPController<P>) async throws {
