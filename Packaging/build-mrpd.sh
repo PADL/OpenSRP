@@ -120,6 +120,23 @@ install -D -m0644 "$SWIFTMRP_DIR/Configs/mrpd.service" \
 # other arch) gets the correct absolute path without resorting to a soname.
 sed -i "s|LD_PRELOAD=/usr/lib/[^/]*/libjemalloc\.so\.2|LD_PRELOAD=/usr/lib/$CROSS_TRIPLE/libjemalloc.so.2|" \
   "$stage/lib/systemd/system/mrpd.service"
+# swift-backtrace helper — debug builds only. The runtime's crash backtracer is a
+# separate target-arch ELF the cross SDK omits, so a stock build logs "swift-
+# backtrace unavailable". Bundle a static backtracer and point the runtime at it.
+# Cache it once at $WORK_DIR/swift-backtrace-static-$DEB_ARCH (override via
+# SWIFT_BACKTRACE_STATIC): extract usr/libexec/swift/linux/swift-backtrace-static
+# from the target arch's swift.org toolchain tarball.
+if [ "$BUILD_CONFIG" = debug ]; then
+  bt_helper="${SWIFT_BACKTRACE_STATIC:-$WORK_DIR/swift-backtrace-static-$DEB_ARCH}"
+  if [ -f "$bt_helper" ]; then
+    install -D -m0755 "$bt_helper" "$stage/usr/libexec/swift/swift-backtrace"
+    sed -i 's|^Environment=SWIFT_BACKTRACE=.*|Environment=SWIFT_BACKTRACE=enable=yes,demangle=yes,swift-backtrace=/usr/libexec/swift/swift-backtrace|' \
+      "$stage/lib/systemd/system/mrpd.service"
+    msg "bundled swift-backtrace helper from $bt_helper"
+  else
+    warn "swift-backtrace-static not at $bt_helper — backtracer not bundled (set SWIFT_BACKTRACE_STATIC or cache it there)"
+  fi
+fi
 # Constrained-target runtime tuning, layered as a systemd drop-in so the shared
 # Configs/mrpd.service stays the general profile. Squeezes the dirty side
 # further than the committed narenas:2: a single arena, faster decay, and
