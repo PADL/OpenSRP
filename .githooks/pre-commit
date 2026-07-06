@@ -1,0 +1,16 @@
+#!/bin/sh
+# Format staged Swift files under Examples/, Sources/, Tests/ with SwiftFormat
+# (rules from .swiftformat), then re-stage them.
+# Enable per clone: git config core.hooksPath .githooks
+
+command -v swiftformat >/dev/null 2>&1 || {
+	echo "pre-commit: swiftformat not found; skipping Swift formatting" >&2
+	exit 0
+}
+
+files=$(git diff --cached --name-only --diff-filter=ACMR |
+	grep -E '^(Examples|Sources|Tests)/.*\.swift$')
+[ -z "$files" ] && exit 0
+
+printf '%s\n' "$files" | xargs swiftformat || exit 1
+printf '%s\n' "$files" | xargs git add
