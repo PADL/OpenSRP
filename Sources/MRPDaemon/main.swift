@@ -111,9 +111,6 @@ private final class MRPDaemon: AsyncParsableCommand {
   @Option(name: .long, help: "MSRP SR PVID (the VLAN both SR classes declare, 35.2.1.4)")
   var srPVid: UInt16 = SR_PVID.id
 
-  @Flag(name: .long, help: "Statically configure the SR class VLAN on bridge ports")
-  var configureSrVlans: Bool = false
-
   @Option(name: .long, help: "Exclude physical interface (may be specified multiple times)")
   var excludeIface: [String] = []
 
@@ -178,7 +175,6 @@ private final class MRPDaemon: AsyncParsableCommand {
     case excludeIface
     case excludeVlan
     case srPVid
-    case configureSrVlans
     case logLevel
     case enableMMRP
     case enableMVRP
@@ -253,8 +249,7 @@ private final class MRPDaemon: AsyncParsableCommand {
     if enableMVRP {
       _ = try await MVRPApplication(
         controller: controller,
-        vlanExclusions: Set(excludeVlan.map { VLAN(id: $0) }),
-        staticVlans: configureSrVlans && enableMSRP ? [srPVidVLAN] : []
+        vlanExclusions: Set(excludeVlan.map { VLAN(id: $0) })
       )
     }
     if enableMSRP {

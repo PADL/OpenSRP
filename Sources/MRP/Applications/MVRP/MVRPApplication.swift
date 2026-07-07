@@ -66,8 +66,6 @@ public actor MVRPApplication<P: Port>: BaseApplication, BaseApplicationEventObse
   var _participants: [MAPContextIdentifier: Set<Participant<MVRPApplication<P>>>] = [:]
   let _logger: Logger
   let _vlanExclusions: Set<VLAN>
-  // VLANs to statically configure on each port at setup (e.g. the SR class VLANs)
-  let _configuredStaticVlans: Set<VLAN>
   // statically-configured VIDs per port currently held as Registration Fixed (8.8.2).
   // Dynamic (peer-registered) VLANs must never be promoted to Registration Fixed (that
   // would ignore the peer's Leave and could loop propagation); they are excluded via
@@ -82,13 +80,11 @@ public actor MVRPApplication<P: Port>: BaseApplication, BaseApplicationEventObse
 
   public init(
     controller: MRPController<P>,
-    vlanExclusions: Set<VLAN> = [],
-    staticVlans: Set<VLAN> = []
+    vlanExclusions: Set<VLAN> = []
   ) async throws {
     _controller = Weak(controller)
     _logger = controller.logger
     _vlanExclusions = vlanExclusions
-    _configuredStaticVlans = staticVlans.subtracting(vlanExclusions)
     try await controller.register(application: self)
     _vlanNotificationTask = Task { [weak self] in
       guard let self, let controller = self.controller,
@@ -312,9 +308,9 @@ extension MVRPApplication {
     return VLAN(vid: pvid)
   }
 
-  // is the VID one we hold, or are configured to hold, as Registration Fixed on the port?
+  // is the VID one we hold as Registration Fixed on the port?
   private func _isStatic(_ vlan: VLAN, port: P) -> Bool {
-    _configuredStaticVlans.contains(vlan) || _staticVIDs[port.id]?.contains(vlan) == true
+    _staticVIDs[port.id]?.contains(vlan) == true
   }
 }
 
@@ -323,24 +319,6 @@ extension MVRPApplication {
     contextIdentifier: MAPContextIdentifier,
     with context: MAPContext<P>
   ) async throws {
-    // create any configured static VLAN entries (e.g. the SR class VLANs) first, so they
-    // are captured into the static set below and by the VLAN DB notifications
-    if !_configuredStaticVlans.isEmpty,
-       let bridge = controller?.bridge as? any MVRPAwareBridge<P>
-    {
-      // fail-open per VLAN: an entry that already exists (or cannot be added) must not
-      // prevent the remaining VLANs from being configured
-      for port in context {
-        for vlan in _configuredStaticVlans.sorted(by: { $0.vid < $1.vid }) {
-          do {
-            try await bridge.register(vlan: vlan, on: port, static: true)
-          } catch {
-            _logger
-              .error("MVRP: failed to configure static VLAN \(vlan.vid) on port \(port): \(error)")
-          }
-        }
-      }
-    }
     // register each port's statically-configured VLANs (8.8.2) and propagate them (10.3 a)
     for port in context {
       _updateStaticVLANs(port: port)
@@ -419,7 +397,6 @@ extension MVRPApplication {
     var desired = Set(port.vlans.filter { !_vlanExclusions.contains($0) })
     desired.subtract(port.dynamicVlans) // kernel-flagged (also survives our restart)
     desired.subtract(_dynamicVIDs[port.id] ?? []) // ours this run (flagless-kernel fallback)
-    desired.formUnion(_configuredStaticVlans) // ahead of the VLAN DB notifications
     if let pvid = port.pvid, !_vlanExclusions.contains(VLAN(vid: pvid)) {
       desired.insert(VLAN(vid: pvid))
     }
