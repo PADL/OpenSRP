@@ -2805,6 +2805,59 @@ final class MRPTests: XCTestCase {
     _ = controller
   }
 
+  // 10.7.5.2: Flush! fires on a Root/Alternate -> Designated role change (an active-topology
+  // change), rapidly deregistering the port's registrations. Here Alternate -> Designated.
+  func testFlushOnAlternateToDesignatedRoleChange() async throws {
+    let recorder = MRPTestRecorder()
+    let bridge = MockBridge(ports: [MockPort(id: 0)], recorder: recorder)
+    let controller = try await MRPController(
+      bridge: bridge,
+      logger: Logger(label: "com.padl.MRPTests.stp")
+    )
+    let mvrp = try await MVRPApplication(controller: controller)
+    await recorder.setStpStatus(STPPortStatus(role: .alternate, state: .forwarding), port: 0)
+    try await controller._didAdd(port: MockPort(id: 0))
+
+    try await _driveMVRP(mvrp, port: 0, vid: 100, event: .JoinIn)
+    let registered = await _waitFor { await _vlanRegistrarState(mvrp, vid: 100, port: 0) == .IN }
+    XCTAssertTrue(registered, "peer join must register VID 100 (registrar IN)")
+
+    // Alternate -> Designated: Flush! must deregister the registration (leaves IN)
+    await recorder.setStpStatus(STPPortStatus(role: .designated, state: .forwarding), port: 0)
+    try await controller._didUpdate(port: MockPort(id: 0))
+    let flushed = await _waitFor { await _vlanRegistrarState(mvrp, vid: 100, port: 0) != .IN }
+    XCTAssertTrue(flushed, "Alternate->Designated must Flush! (10.7.5.2), deregistering VID 100")
+    _ = controller
+  }
+
+  // 10.7.5.2 negative: a port coming up from disabled/down (a link-flap recovery) into Designated
+  // is NOT a Flush! event -- nothing stale to flush. The registration must survive the flap.
+  func testNoFlushOnLinkFlapRecoveryToDesignated() async throws {
+    let recorder = MRPTestRecorder()
+    let bridge = MockBridge(ports: [MockPort(id: 0)], recorder: recorder)
+    let controller = try await MRPController(
+      bridge: bridge,
+      logger: Logger(label: "com.padl.MRPTests.stp")
+    )
+    let mvrp = try await MVRPApplication(controller: controller)
+    await recorder.setStpStatus(STPPortStatus(role: .designated, state: .forwarding), port: 0)
+    try await controller._didAdd(port: MockPort(id: 0))
+
+    try await _driveMVRP(mvrp, port: 0, vid: 100, event: .JoinIn)
+    let registered = await _waitFor { await _vlanRegistrarState(mvrp, vid: 100, port: 0) == .IN }
+    XCTAssertTrue(registered, "peer join must register VID 100 (registrar IN)")
+
+    // link down (role disabled), then recovery to Designated: the recovery must NOT Flush!
+    await recorder.setStpStatus(STPPortStatus(role: .disabled, state: .disabled), port: 0)
+    try await controller._didUpdate(port: MockPort(id: 0))
+    await recorder.setStpStatus(STPPortStatus(role: .designated, state: .forwarding), port: 0)
+    try await controller._didUpdate(port: MockPort(id: 0))
+    try await Task.sleep(for: .milliseconds(200)) // allow any erroneous flush to land
+    let state = await _vlanRegistrarState(mvrp, vid: 100, port: 0)
+    XCTAssertEqual(state, .IN, "link-flap recovery (disabled->Designated) must not Flush!")
+    _ = controller
+  }
+
   // leaveAllTime == 0 disables periodic LeaveAll; a .startLeaveAllTimer action (peer LeaveAll,
   // Flush) must be a no-op, not trap on Double.random(in: 0..<0).
   func testDisabledLeaveAllTimerDoesNotTrap() {
