@@ -70,6 +70,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
   // applications, so the recompute never takes an actor transition.
   private var _stpPortStatus = [P.ID: STPPortStatus]()
   private var _periodicTimer: Timer?
+  private var _stpPollTimer: Timer?
   private var _taskGroup: ThrowingTaskGroup<(), Error>?
   private let _rxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)>
   private let _portExclusions: Set<String>
@@ -288,6 +289,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
     _portContextIdentifiers[port.id] = nil
     _stpPortStatus[port.id] = nil
 
+    if _ports.isEmpty { _stopStpPollTimer() }
     if timerConfiguration.periodicTime != .zero { _stopPeriodicTimer() }
   }
 
@@ -342,6 +344,9 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
     // the poll suspends: bail if the port was removed meanwhile (avoid resurrecting its
     // cache entry / flushing a gone port). The cache read-modify-write below is await-free.
     guard _ports[port.id] != nil else { return }
+    // mstpd answered, so STP is present: keep polling the role. A role-only change has no netlink
+    // signal, so otherwise its Re-declare! would wait for an unrelated port event (10.7.5.3).
+    _startStpPollTimer()
     let wasDesignated = _stpPortStatus[port.id]?.role == .designated
     _stpPortStatus[port.id] = status
     if status.role == .designated, !wasDesignated {
@@ -550,6 +555,34 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
     logger.debug("controller stopping periodic timer")
     _periodicTimer?.stop()
     _periodicTimer = nil
+  }
+
+  // Poll the STP role of every port on a cadence and act on a transition via _checkTopologyChange.
+  // Only running once mstpd has answered (see _checkTopologyChange), so non-STP bridges don't poll.
+  private func _startStpPollTimer() {
+    guard _stpPollTimer == nil else { return }
+    logger.debug("controller starting STP role poll timer")
+    _stpPollTimer = Timer(label: "stppolltimer") { [weak self] in
+      guard let self else { return }
+      await _pollStpTopology()
+    }
+    _stpPollTimer!.start(interval: timerConfiguration.stpPollTime)
+  }
+
+  private func _pollStpTopology() async {
+    for port in _ports.values {
+      await _checkTopologyChange(port: port)
+    }
+    guard !_ports.isEmpty else {
+      _stpPollTimer = nil
+      return
+    }
+    _stpPollTimer?.start(interval: timerConfiguration.stpPollTime)
+  }
+
+  private func _stopStpPollTimer() {
+    _stpPollTimer?.stop()
+    _stpPollTimer = nil
   }
 
   public func application<T: Application>(for etherType: UInt16) throws -> T {

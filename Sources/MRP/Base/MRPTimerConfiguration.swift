@@ -33,6 +33,10 @@ public struct MRPTimerConfiguration: Sendable {
   public let leaveAllTime: Duration
   public let periodicTime: Duration
 
+  // STP-role poll cadence (no async mstpd notification; a role-only Re-declare! has no netlink
+  // signal, 10.7.5.3). Derived at leaveTime/5 -- a 1Hz poll at the AVNU 5s LeaveTime.
+  public var stpPollTime: Duration { leaveTime / 5 }
+
   public init(
     joinTime: Duration? = nil,
     leaveTime: Duration? = nil,
