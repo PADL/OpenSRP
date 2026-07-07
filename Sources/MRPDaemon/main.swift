@@ -105,8 +105,8 @@ private final class MRPDaemon: AsyncParsableCommand {
   @Flag(name: .long, help: "Install an MDB entry on the Talker's ingress port (secure switch mode)")
   var configureIngressMdb: Bool = false
 
-  @Flag(inversion: .prefixedNo, help: "Flood multicast on bridge ports")
-  var multicastFlooding: Bool = false
+  @Flag(inversion: .prefixedNo, help: "Flood multicast on bridge ports (802.1Q default on)")
+  var multicastFlooding: Bool = true
 
   @Option(name: .long, help: "MSRP SR PVID (the VLAN both SR classes declare, 35.2.1.4)")
   var srPVid: UInt16 = SR_PVID.id
