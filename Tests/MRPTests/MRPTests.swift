@@ -2748,6 +2748,35 @@ final class MRPTests: XCTestCase {
     _ = controller
   }
 
+  // A role-only Designated->Root change emits no netlink port event at all, so nothing calls
+  // _checkTopologyChange reactively -- only the STP-role poll can catch it. Without the poll the
+  // Re-declare! (10.7.5.3) waits for an unrelated port event; here there is none.
+  func testRedeclareOnRoleChangeWithoutPortEvent() async throws {
+    let recorder = MRPTestRecorder()
+    let bridge = MockBridge(ports: [MockPort(id: 0)], recorder: recorder)
+    let controller = try await MRPController(
+      bridge: bridge,
+      logger: Logger(label: "com.padl.MRPTests.stp"),
+      timerConfiguration: MRPTimerConfiguration(
+        leaveTime: .seconds(1),
+        periodicTime: .zero
+      )
+    )
+    let mvrp = try await MVRPApplication(controller: controller)
+    await recorder.setStpStatus(STPPortStatus(role: .designated, state: .forwarding), port: 0)
+    try await controller._didAdd(port: MockPort(id: 0))
+
+    try await _driveMVRP(mvrp, port: 0, vid: 100, event: .JoinIn)
+    let registered = await _waitFor { await _vlanRegistrarState(mvrp, vid: 100, port: 0) == .IN }
+    XCTAssertTrue(registered, "peer join must register VID 100 (registrar IN)")
+
+    // flip the role with NO port event: the poll, not a netlink update, must drive the Re-declare!
+    await recorder.setStpStatus(STPPortStatus(role: .root, state: .forwarding), port: 0)
+    let redeclared = await _waitFor { await _vlanRegistrarState(mvrp, vid: 100, port: 0) == .LV }
+    XCTAssertTrue(redeclared, "the STP-role poll must Re-declare! a role-only change (IN -> LV)")
+    _ = controller
+  }
+
   // The inverse guard: a benign port update with no STP role change (still Designated) must NOT
   // Re-declare! and move a registered attribute to LV -- Re-declare! is topology-scoped (10.7.5.3).
   func testBenignPortUpdateDoesNotRedeclare() async throws {
