@@ -40,9 +40,8 @@ public struct MRPFlags: OptionSet, Sendable {
   public static let forceFullParticipant = Self(rawValue: 1 << 0)
   public static let multicastFlooding = Self(rawValue: 1 << 1)
 
-  // SRP is ineffective when multicast is flooded, so flooding is off by default
-  // (mrpd manages membership via MMRP/MVRP/MSRP -> MDB). Enable it only on
-  // switches that cannot forward registered multicast without flooding.
+  // Daemon defaults flooding ON (802.1Q). --no-multicast-flooding for SRP: flooded
+  // SR frames bypass CBS queueing and boundary priority regeneration.
   public static let defaultFlags: Self = []
 }
 
