@@ -2218,7 +2218,7 @@ extension MSRPApplication {
       guard let domain = portState.getDomain(for: srClassID, defaultSRPVid: _srPVid) else {
         _logger
           .warning(
-            "MSRP: not declaring domain for SR class \(srClassID) as no priority mapping found"
+            "MSRP: port \(participant.port) not declaring domain for SR class \(srClassID) as no priority mapping found"
           )
         return nil
       }
@@ -2228,7 +2228,7 @@ extension MSRPApplication {
     }
 
     guard let domain = toDeclare else { return }
-    _logger.info("MSRP: declaring domain \(domain)")
+    _logger.info("MSRP: port \(participant.port) declaring domain \(domain)")
     try participant.join(
       attributeType: MSRPAttributeType.domain.rawValue,
       attributeValue: domain,
