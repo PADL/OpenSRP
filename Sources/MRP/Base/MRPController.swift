@@ -347,14 +347,16 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
     // mstpd answered, so STP is present: keep polling the role. A role-only change has no netlink
     // signal, so otherwise its Re-declare! would wait for an unrelated port event (10.7.5.3).
     _startStpPollTimer()
-    let wasDesignated = _stpPortStatus[port.id]?.role == .designated
+    let previousRole = _stpPortStatus[port.id]?.role
     _stpPortStatus[port.id] = status
-    if status.role == .designated, !wasDesignated {
+    // 10.7.5.2: Flush! only on Root/Alternate -> Designated. A port coming up from disabled/down
+    // (or first seen) has nothing stale to flush, so don't churn registrations on link flap.
+    if status.role == .designated, previousRole == .root || previousRole == .alternate {
       logger.debug("MRP: port \(port.id) became STP Designated (state \(status.state)); flushing")
       await _apply { application in
         try? await application.flush(for: MAPBaseSpanningTreeContext, port: port)
       }
-    } else if wasDesignated, status.role == .root || status.role == .alternate {
+    } else if previousRole == .designated, status.role == .root || status.role == .alternate {
       logger
         .debug("MRP: port \(port.id) left STP Designated for \(status.role); redeclaring")
       await _apply { application in
