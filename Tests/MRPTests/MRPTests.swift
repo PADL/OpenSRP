@@ -139,7 +139,6 @@ actor MRPTestRecorder {
 
   private(set) var vlanRegister = [(vlan: VLAN, port: Int)]()
   private(set) var vlanDeregister = [(vlan: VLAN, port: Int)]()
-  private(set) var staticVlanAdd = [(vlan: VLAN, port: Int)]()
   private(set) var txPackets = [(port: Int, payload: [UInt8])]()
   private(set) var stpStatusQueries = [Int]()
   private var stpStatuses = [Int: STPPortStatus]()
@@ -219,10 +218,6 @@ actor MRPTestRecorder {
 
   func recordVLANDeregister(vlan: VLAN, port: Int) {
     vlanDeregister.append((vlan, port))
-  }
-
-  func recordStaticVlanAdd(vlan: VLAN, port: Int) {
-    staticVlanAdd.append((vlan, port))
   }
 }
 
@@ -638,14 +633,11 @@ extension MockBridge: MVRPAwareBridge {
   }
 
   func register(vlan: VLAN, on port: P, static isStatic: Bool) async throws {
-    if isStatic {
-      await recorder.recordStaticVlanAdd(vlan: vlan, port: port.id)
-    } else {
-      if await recorder.shouldFailVlanRegistration(vlan.vid) {
-        throw MRPError.internalError // simulate a kernel FDB-full rejection
-      }
-      await recorder.recordVLANRegister(vlan: vlan, port: port.id)
+    guard !isStatic else { return } // static VLANs preexist in the kernel; nothing to record
+    if await recorder.shouldFailVlanRegistration(vlan.vid) {
+      throw MRPError.internalError // simulate a kernel FDB-full rejection
     }
+    await recorder.recordVLANRegister(vlan: vlan, port: port.id)
   }
 
   func deregister(vlan: VLAN, from port: P) async throws {
@@ -3154,8 +3146,7 @@ final class MRPTests: XCTestCase {
     exclusions: Set<VLAN> = [],
     pvid: UInt16? = nil,
     vlans: Set<UInt16> = [2],
-    dynamicVlans: Set<UInt16> = [],
-    staticVlans: Set<VLAN> = []
+    dynamicVlans: Set<UInt16> = []
   )
     async throws -> (MRPController<MockPort>, MVRPApplication<MockPort>, MRPTestRecorder)
   {
@@ -3171,8 +3162,7 @@ final class MRPTests: XCTestCase {
     )
     let mvrp = try await MVRPApplication(
       controller: controller,
-      vlanExclusions: exclusions,
-      staticVlans: staticVlans
+      vlanExclusions: exclusions
     )
     try await mvrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
     return (controller, mvrp, recorder)
@@ -3552,24 +3542,16 @@ final class MRPTests: XCTestCase {
     _ = controller
   }
 
-  // Configured static VLANs (e.g. the SR class VLANs) are added to the bridge on every
-  // port at setup and held as Registration Fixed.
-  func testMVRPConfiguredStaticVlansAddedAndFixed() async throws {
-    let (controller, mvrp, recorder) = try await _makeMVRP(
-      portIDs: [0, 1],
-      staticVlans: [VLAN(vid: 2), VLAN(vid: 3)]
-    )
-    for port in [0, 1] {
-      for vid in [UInt16(2), 3] {
-        let added = await recorder.staticVlanAdd
-          .contains { $0.vlan.vid == vid && $0.port == port }
-        XCTAssertTrue(added, "VID \(vid) must be added to the bridge on port \(port)")
-      }
+  // Per-port static VLANs (8.8.2) are held Registration Fixed and declared out the
+  // other ports (10.3 a).
+  func testMVRPStaticVlansRegisteredFixedAndDeclared() async throws {
+    let (controller, mvrp, _) = try await _makeMVRP(portIDs: [0, 1], vlans: [2, 3])
+    for vid in [UInt16(2), 3] {
+      let registered = await _isVLANRegistered(mvrp, vid: vid, port: 0)
+      XCTAssertTrue(registered, "static VID \(vid) must be Registration Fixed")
+      let declared = await _isVLANDeclared(mvrp, vid: vid, port: 1)
+      XCTAssertTrue(declared, "static VID \(vid) must be declared on the other port")
     }
-    let registered = await _isVLANRegistered(mvrp, vid: 3, port: 0)
-    XCTAssertTrue(registered, "configured static VID 3 must be Registration Fixed")
-    let declared = await _isVLANDeclared(mvrp, vid: 3, port: 1)
-    XCTAssertTrue(declared, "configured static VID 3 must be declared on the other port")
     _ = controller
   }
 
@@ -3580,9 +3562,7 @@ final class MRPTests: XCTestCase {
   // (never send In/Empty/Leave) also forced sJ_ -> sJ, so any other attribute's tx opportunity
   // dragged a duplicate JoinIn for every static VLAN onto the wire (observed on the DUT).
   func testMVRPStaticVlanQuietDoesNotReemitOnUnrelatedTxOpportunity() async throws {
-    let (controller, mvrp, recorder) = try await _makeMVRP(
-      portIDs: [0, 1], staticVlans: [VLAN(vid: 2)]
-    )
+    let (controller, mvrp, recorder) = try await _makeMVRP(portIDs: [0, 1])
     // static VID 2 declares on port 1 and settles to QA (quiet)
     _ = await _waitFor { await _isVLANDeclared(mvrp, vid: 2, port: 1) }
     _ = await _waitFor { await _vlanJoinCount(recorder, mvrp, port: 1, vid: 2) >= 1 }
@@ -3600,20 +3580,6 @@ final class MRPTests: XCTestCase {
       after, before,
       "a quiet static VID must not re-emit JoinIn on an unrelated tx opportunity (10.7.6.3)"
     )
-    _ = controller
-  }
-
-  // --exclude-vlan wins over configured static VLANs.
-  func testMVRPConfiguredStaticVlansRespectExclusions() async throws {
-    let (controller, mvrp, recorder) = try await _makeMVRP(
-      portIDs: [0, 1],
-      exclusions: [VLAN(vid: 3)],
-      staticVlans: [VLAN(vid: 2), VLAN(vid: 3)]
-    )
-    let added3 = await recorder.staticVlanAdd.contains { $0.vlan.vid == 3 }
-    XCTAssertFalse(added3, "excluded VID 3 must not be added to the bridge")
-    let registered3 = await _isVLANRegistered(mvrp, vid: 3, port: 0)
-    XCTAssertFalse(registered3, "excluded VID 3 must not be registered")
     _ = controller
   }
 

@@ -43,7 +43,7 @@ ExecStartPre=/usr/sbin/nft add rule bridge nat PREROUTING meta ibrname $BR ether
 ExecStartPre=/bin/sh -c 'for ETH in $$INTERFACES; do for GRP in $$GROUPS; do bridge mdb add dev "$$BR" port "$$ETH" grp "$$GRP" permanent || true; done; done'
 
 # --configure-ingress-mdb: secure-switch mode -- the ingress port also requires a DRE to admit an SR stream to the AVB queues
-ExecStart=/usr/sbin/mrpd --enable-srp -b $BR --configure-egress-queues --configure-sr-vlans --configure-ingress-mdb $MRPD_OPTS
+ExecStart=/usr/sbin/mrpd --enable-srp -b $BR --configure-egress-queues --configure-ingress-mdb $MRPD_OPTS
 
 # unconfigure MVRP hook
 ExecStopPost=-/usr/sbin/nft delete table bridge nat
