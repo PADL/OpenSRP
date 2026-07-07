@@ -3427,6 +3427,34 @@ final class MRPTests: XCTestCase {
     _ = controller
   }
 
+  // Dynamic (peer-registered) VID: once every peer has left and each Registrar leavetimer
+  // has expired, the MAP-propagated declaration must be withdrawn (Lv) on the other ports
+  // (10.3 b), not kept declaring (JoinMt) indefinitely.
+  func testMVRPDynamicVLANWithdrawnAfterAllPeersLeave() async throws {
+    let vid: UInt16 = 100 // not in the default static set (vlans: [2]) -> purely dynamic
+    let (controller, mvrp, recorder) = try await _makeMVRP(portIDs: [0, 1, 2])
+
+    // two peers register VID 100; MAP propagates a declaration to the third port
+    try await _driveMVRP(mvrp, port: 0, vid: vid, event: .JoinIn)
+    try await _driveMVRP(mvrp, port: 1, vid: vid, event: .JoinIn)
+    let declared = await _waitFor { await _isVLANDeclared(mvrp, vid: vid, port: 2) }
+    XCTAssertTrue(declared, "VID \(vid) must be declared on port 2 via MAP propagation")
+
+    // both peers leave; the leavetimer (leaveTime 1s) expires each Registrar to MT
+    try await _driveMVRP(mvrp, port: 0, vid: vid, event: .Lv)
+    try await _driveMVRP(mvrp, port: 1, vid: vid, event: .Lv)
+
+    // with no registration left anywhere, the propagated declaration must be withdrawn
+    let withdrawn = await _waitFor { await !_isVLANDeclared(mvrp, vid: vid, port: 2) }
+    XCTAssertTrue(
+      withdrawn,
+      "VID \(vid) must be withdrawn on port 2 after all peers leave (10.3 b)"
+    )
+    let lvEmitted = await _transmittedVLANEvents(recorder, mvrp, port: 2, vid: vid).contains(.Lv)
+    XCTAssertTrue(lvEmitted, "an Lv event must be transmitted on port 2 when the VID is withdrawn")
+    _ = controller
+  }
+
   // MAP leave propagation is refcounted (10.3 b): a withdrawal reaches a port only when no
   // other port still holds a registration for the attribute.
   func testMVRPAdministrativeWithdrawIsRefcounted() async throws {

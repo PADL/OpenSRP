@@ -201,13 +201,15 @@ extension BaseApplication {
       fallthrough
     case .application:
       return true // FIXME: check whether we should propagate application withdrawals?
+    case .leaveTimer:
+      // a Registrar leavetimer expiry is a MAD_Leave.indication that MAP must propagate
+      // (10.3 b); the refcount in _propagateLeaveIndicated still gates the actual withdrawal
+      return true
     case .internal:
       fallthrough // don't need to propagate this because application calls all participants
     case .map:
       fallthrough
     case .leaveAll:
-      fallthrough
-    case .leaveTimer:
       fallthrough
     case .leaveAllTimer:
       fallthrough
