@@ -170,6 +170,12 @@ actor MRPTestRecorder {
     failVlanRegistrationVids.contains(vid)
   }
 
+  // (port, VID) pairs whose dynamic FDB was flushed on a New indication (11.2.5)
+  private(set) var flushedDynamicFdb = [(port: Int, vid: UInt16)]()
+  func recordFlushDynamicFdb(vlan: VLAN, port: Int) {
+    flushedDynamicFdb.append((port: port, vid: vlan.vid))
+  }
+
   // ports whose credit-based-shaper program MockBridge should reject (simulate a transient error)
   private var failCbsPorts = Set<Int>()
 
@@ -642,6 +648,10 @@ extension MockBridge: MVRPAwareBridge {
 
   func deregister(vlan: VLAN, from port: P) async throws {
     await recorder.recordVLANDeregister(vlan: vlan, port: port.id)
+  }
+
+  func flushDynamicFdb(vlan: VLAN, on port: P) async throws {
+    await recorder.recordFlushDynamicFdb(vlan: vlan, port: port.id)
   }
 }
 
@@ -3219,6 +3229,42 @@ final class MRPTests: XCTestCase {
     XCTAssertTrue(
       stillRegistered,
       "VID 16 registered by a New after a LeaveAll must not be aged out by a stale leaveTimer"
+    )
+    _ = controller
+  }
+
+  // 11.2.5: a "new" declaration flushes the dynamic (learned) FDB entries for that VID on the
+  // receiving Port (MAD_Join.indication) AND every Port it propagates to (MAD_Join.request) --
+  // not other VIDs, and a plain (non-New) Join flushes nothing.
+  func testNewIndicationFlushesDynamicFdbForVidOnly() async throws {
+    let (controller, mvrp, recorder) = try await _makeMVRP(portIDs: [0, 1])
+
+    // a plain JoinIn (not New) must not flush the FDB
+    try await _driveMVRP(mvrp, port: 0, vid: 200, event: .JoinIn)
+    try await Task.sleep(for: .milliseconds(100))
+    let afterJoin = await recorder.flushedDynamicFdb
+    XCTAssertTrue(afterJoin.isEmpty, "a non-New Join must not flush the FDB (11.2.5)")
+
+    // a New for VID 100 on port 0 must flush VID 100 on both the receiving port and the propagation
+    // target port 1 -- and nothing for any other VID
+    try await _driveMVRP(mvrp, port: 0, vid: 100, event: .New)
+    let flushed = await _waitFor { await recorder.flushedDynamicFdb.count >= 2 }
+    XCTAssertTrue(
+      flushed,
+      "a New must flush the dynamic FDB for its VID on all context ports (11.2.5)"
+    )
+    let entries = await recorder.flushedDynamicFdb
+    XCTAssertTrue(
+      entries.contains { $0.port == 0 && $0.vid == 100 },
+      "New must flush the receiving port (port 0, VID 100) -- MAD_Join.indication"
+    )
+    XCTAssertTrue(
+      entries.contains { $0.port == 1 && $0.vid == 100 },
+      "New must flush the propagation target (port 1, VID 100) -- MAD_Join.request"
+    )
+    XCTAssertFalse(
+      entries.contains { $0.vid != 100 },
+      "New for VID 100 must flush the appropriate VLAN only, not other VIDs"
     )
     _ = controller
   }

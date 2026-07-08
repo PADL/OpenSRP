@@ -1249,6 +1249,18 @@ extension LinuxBridge: MVRPAwareBridge {
   func deregister(vlan: VLAN, from port: P) async throws {
     try await port._remove(vlan: vlan)
   }
+
+  // 11.2.5: remove the dynamic (learned) filtering entries for this Port and VID so they re-learn
+  // after the topology change that raised the New. Our own entries are NUD_PERMANENT and are left.
+  func flushDynamicFdb(vlan: VLAN, on port: P) async throws {
+    guard let rtnl = _bridgePort?._rtnl as? RTNLLinkBridge else { return }
+    for try await neigh in try await _nlLinkSocket.getNeighbors(family: sa_family_t(AF_BRIDGE)) {
+      guard neigh.ifIndex == port._rtnl.index, neigh.vlanID == Int(vlan.vid),
+            neigh.state & Int(NUD_PERMANENT) == 0, let mac = neigh.linkLayerAddress
+      else { continue }
+      try await rtnl.remove(link: port._rtnl, fdbEntry: mac, vlan: vlan.vid, socket: _nlLinkSocket)
+    }
+  }
 }
 
 private extension SRClassPriorityMap {

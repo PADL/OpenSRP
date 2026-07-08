@@ -33,6 +33,8 @@ protocol MVRPAwareBridge<P>: Bridge where P: Port {
   // are administratively configured (e.g. the SR class VLANs) and held Registration Fixed
   func register(vlan: VLAN, on port: P, static: Bool) async throws
   func deregister(vlan: VLAN, from port: P) async throws
+  // 11.2.5: remove dynamic (learned) filtering entries for a Port and VID on a New declaration
+  func flushDynamicFdb(vlan: VLAN, on port: P) async throws
 }
 
 public actor MVRPApplication<P: Port>: BaseApplication, BaseApplicationEventObserver, Sendable,
@@ -244,10 +246,6 @@ extension MVRPApplication {
         .debug(
           "MVRP: join indication from port \(port) VID \(vlan.vid) isNew \(isNew) source \(eventSource)"
         )
-      // No per-VID FDB flush on New: the kernel bridge/DSA already flushes the affected port's
-      // FDB on an STP topology change, and mstpd doesn't signal tcDetected to us, so there is
-      // nothing for MVRP to flush here.
-      //
       // 11.2.3.2.2: if there is no room in the FDB the registration fails and is not propagated.
       // Record the dynamic entry only after the kernel accepts it, so a failed add doesn't leave a
       // phantom VID that a later Leave would try to delete.
@@ -259,6 +257,13 @@ extension MVRPApplication {
         throw MRPError.doNotPropagateAttribute
       }
       _dynamicVIDs[port.id, default: []].insert(vlan)
+      // 11.2.5: a New flushes the dynamic FDB for this VID on the receiving Port and every Port it
+      // propagates to as a MAD_Join.request (all context ports), so entries re-learn. VID-scoped.
+      if isNew {
+        await apply(for: contextIdentifier) { participant in
+          _ = try? await bridge.flushDynamicFdb(vlan: vlan, on: participant.port)
+        }
+      }
     }
   }
 
