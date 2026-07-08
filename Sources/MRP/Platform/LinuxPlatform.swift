@@ -425,11 +425,12 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
     return state.linkSettings.0.duplex == DUPLEX_FULL || state.flags & IFF_POINTOPOINT != 0
   }
 
-  // A bridge member's BR_STATE_*; non-members (no master) are always Forwarding. With STP
-  // disabled the kernel reports member ports as Forwarding, so gating is a no-op then. This
-  // is a synchronous read of the cached netlink link object — no actor transition.
-  public var stpPortState: STPPortState {
-    guard _rtnl.master != 0, let brport = _rtnl as? RTNLLinkBridge else { return .forwarding }
+  // A bridge member's BR_STATE_*; non-members (no master) are always Forwarding. nil when this
+  // snapshot came from an AF_UNSPEC notification carrying no bridge-port state: the caller keeps
+  // the last-known state rather than assuming Forwarding. Synchronous read of the cached link.
+  public var stpPortState: STPPortState? {
+    guard _rtnl.master != 0 else { return .forwarding }
+    guard let brport = _rtnl as? RTNLLinkBridge else { return nil }
     switch brport.bridgePortState {
     case 1: return .listening
     case 2: return .learning
