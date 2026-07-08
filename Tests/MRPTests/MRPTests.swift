@@ -3835,6 +3835,28 @@ final class MRPTests: XCTestCase {
     _ = controller
   }
 
+  // A not-enabled port (link down / not AVB-capable) has no gPTP peer: the periodic asCapable
+  // resample must leave asCapable nil (REST collapses nil to false), not a stale PMC read.
+  func testNotEnabledPortKeepsAsCapableNil() async throws {
+    let recorder = MRPTestRecorder()
+    // half-duplex => not AVB-capable => msrpPortEnabledStatus false; MockPort.isAsCapable is true
+    let port = MockPort(id: 0, isFullDuplex: false)
+    let bridge = MockBridge(ports: [port, MockPort(id: 1)], recorder: recorder)
+    let controller = try await MRPController(
+      bridge: bridge,
+      logger: Logger(label: "com.padl.MRPTests.asCapable")
+    )
+    let msrp = try await MSRPApplication(controller: controller)
+    try await controller._didAdd(port: port)
+    try await controller._didAdd(port: MockPort(id: 1))
+
+    // the 1 s tick resamples gPTP asCapable; a not-enabled port must not adopt the stale true
+    try await msrp.periodic(for: nil)
+    let asCapable = try await msrp.withPortState(port: port) { $0.asCapable }
+    XCTAssertNil(asCapable, "a not-enabled port must keep asCapable nil, not a stale PMC true")
+    _ = controller
+  }
+
   // 35.2.2.9.3/.4: an end station (single port) adopts its neighbour's SRclassPriority and
   // SRclassVID rather than treating a difference as a domain boundary.
   func testEndStationAdoptsNeighbourSRClassPriorityAndVID() async throws {
