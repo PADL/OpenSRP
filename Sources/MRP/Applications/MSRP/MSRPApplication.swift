@@ -1497,6 +1497,9 @@ extension MSRPApplication {
       )
     }
 
+    // a port removed during the register/deregister awaits was pruned from the cache by
+    // onContextRemoved; don't resurrect it from the pre-await snapshot (its MDB entry is gone)
+    programmed.formIntersection(_portStates.keys)
     _reservedGroupPorts[streamID] = programmed.isEmpty ? nil : GroupReservation(
       params: params, ports: programmed
     )
