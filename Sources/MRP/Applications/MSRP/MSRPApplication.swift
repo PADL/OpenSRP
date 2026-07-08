@@ -1021,9 +1021,12 @@ extension MSRPApplication {
   // an unreadable PMC is unknown, not false, so keep the last-known value (35.2.1).
   @discardableResult
   private func _updateAsCapable(port: P) async -> Bool {
+    guard let index = _portStates.index(forKey: port.id) else { return false }
+    // Not-enabled (link down / not AVB-capable): no gPTP peer. Leave asCapable unsampled (nil, set
+    // by invalidate on the link change) not a stale PMC read; REST/admission treat nil as false.
+    guard _portStates.values[index].msrpPortEnabledStatus else { return false }
     do {
       let asCapable = try await port.isAsCapable
-      guard let index = _portStates.index(forKey: port.id) else { return false }
       let changed = _portStates.values[index].asCapable != asCapable
       _portStates.values[index].asCapable = asCapable
       return changed
