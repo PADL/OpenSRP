@@ -6411,8 +6411,11 @@ extension MRPTests {
       await _declaredTalkerFailureCode(msrp, streamID, port: 1) == .reportedLatencyHasChanged
     }
     XCTAssertTrue(failed, "an upstream latency increase must declare Talker Failed with code 7")
-    let advertise = await _declaredTalkerAdvertise(msrp, streamID, port: 1)
-    XCTAssertNil(advertise, "the Talker Advertise must no longer be declared once failed")
+    // the Advertise leave and the Failed join are separate async events; poll rather than one-shot
+    let advertiseGone = await _waitFor {
+      await _declaredTalkerAdvertise(msrp, streamID, port: 1) == nil
+    }
+    XCTAssertTrue(advertiseGone, "the Talker Advertise must no longer be declared once failed")
     _ = controller
   }
 
