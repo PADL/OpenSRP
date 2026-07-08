@@ -197,8 +197,6 @@ extension BaseApplication {
       fallthrough
     case .peer:
       fallthrough
-    case .peerChanged:
-      fallthrough
     case .application:
       return true // FIXME: check whether we should propagate application withdrawals?
     case .leaveTimer:

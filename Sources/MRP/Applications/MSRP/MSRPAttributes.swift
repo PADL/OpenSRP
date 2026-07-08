@@ -105,16 +105,6 @@ extension MSRPTalkerValue {
       systemID: failure.systemID, failureCode: failure.failureCode
     )
   }
-
-  // 35.2.2.8: the FirstValue fields MSRP forbids changing for an existing StreamID, excluding
-  // the per-hop AccumulatedLatency and Failed-only fields (so an Advertise and a Failed compare
-  // on identity alone, regardless of concrete declaration type)
-  func hasSameImmutableFields(as other: any MSRPTalkerValue) -> Bool {
-    streamID == other.streamID &&
-      dataFrameParameters == other.dataFrameParameters &&
-      tSpec == other.tSpec &&
-      priorityAndRank == other.priorityAndRank
-  }
 }
 
 struct MSRPTalkerAdvertiseValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equatable, Hashable {
@@ -160,6 +150,14 @@ struct MSRPTalkerAdvertiseValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equ
       priorityAndRank: MSRPPriorityAndRank(),
       accumulatedLatency: 0
     )
+  }
+
+  // identity excludes AccumulatedLatency (and a Failed's FailureInformation): a re-declaration with
+  // the same immutable FirstValue updates in place, a changed one coexists as a conflict (35.2.2.8)
+  func isEqualIdentity(to other: any Value) -> Bool {
+    guard let other = other as? any MSRPTalkerValue else { return false }
+    return streamID == other.streamID && dataFrameParameters == other.dataFrameParameters &&
+      tSpec == other.tSpec && priorityAndRank == other.priorityAndRank
   }
 
   func makeValue(relativeTo index: UInt64) throws -> Self {
@@ -230,6 +228,14 @@ struct MSRPTalkerFailedValue: MSRPTalkerValue, MSRPStreamIDRepresentable, Equata
     )
   }
 
+  // identity excludes AccumulatedLatency (and a Failed's FailureInformation): a re-declaration with
+  // the same immutable FirstValue updates in place, a changed one coexists as a conflict (35.2.2.8)
+  func isEqualIdentity(to other: any Value) -> Bool {
+    guard let other = other as? any MSRPTalkerValue else { return false }
+    return streamID == other.streamID && dataFrameParameters == other.dataFrameParameters &&
+      tSpec == other.tSpec && priorityAndRank == other.priorityAndRank
+  }
+
   func makeValue(relativeTo index: UInt64) throws -> Self {
     try Self(
       streamID: streamID.makeValue(relativeTo: index),
@@ -265,6 +271,8 @@ struct MSRPListenerValue: Value, Equatable, MSRPStreamIDRepresentable {
   init() {
     self.init(streamID: 0)
   }
+
+  func isEqualIdentity(to other: any Value) -> Bool { other.index == index }
 
   func makeValue(relativeTo index: UInt64) throws -> Self {
     try Self(streamID: streamID.makeValue(relativeTo: index))
@@ -315,6 +323,13 @@ struct MSRPDomainValue: Value, Equatable {
 
   init() throws {
     self.init(srClassID: .B, srClassPriority: .EE, srClassVID: SR_PVID.vid)
+  }
+
+  // identity is the whole declaration -- SRclassID + SRclassPriority + SRclassVID -- so a neighbour
+  // declaring a different priority for a class coexists as a separate registration (35.2.1.4 h)
+  func isEqualIdentity(to other: any Value) -> Bool {
+    guard let other = other as? MSRPDomainValue else { return false }
+    return self == other
   }
 
   func makeValue(relativeTo index: UInt64) throws -> Self {

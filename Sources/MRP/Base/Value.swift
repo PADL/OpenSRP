@@ -25,6 +25,10 @@ public protocol Value: SerDes, Equatable {
   var index: UInt64 { get }
 
   func makeValue(relativeTo index: UInt64) throws -> Self
+
+  // True when two values share a MAD Applicant/Registrar slot: same index and immutable fields,
+  // excluding mutable payload (Talker latency / FailureInformation). A differing identity coexists.
+  func isEqualIdentity(to other: any Value) -> Bool
 }
 
 struct AnyValue: Value, Equatable, CustomStringConvertible {
@@ -52,6 +56,10 @@ struct AnyValue: Value, Equatable, CustomStringConvertible {
 
   func makeValue(relativeTo index: UInt64) throws -> Self {
     try Self(_value.makeValue(relativeTo: index))
+  }
+
+  func isEqualIdentity(to other: any Value) -> Bool {
+    _value.isEqualIdentity(to: other)
   }
 
   init(parsing _: inout ParserSpan) throws {

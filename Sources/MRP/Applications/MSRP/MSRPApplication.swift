@@ -303,10 +303,9 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
   private var _pendingStreams = OrderedSet<MSRPStreamID>()
   private var _streamUpdateTask: Task<(), Never>?
   // 35.2.2.8: streams whose registered FirstValue a peer tried to change; each stays Talker Failed
-  // (code 16) until its talker withdraws (cleared in _withdrawStream). Kept as an explicit set
-  // because the conflict cannot be re-derived from the store: a coexisting egress failure or an
-  // already-Failed stream would otherwise erase or never record the marker.
-  private var _firstValueViolations = Set<MSRPStreamID>()
+  // (code 16) until its talker withdraws (cleared in _withdrawStream). Keyed per ingress port so a
+  // clean declaration of the same StreamID on another port cannot clear a genuine conflict.
+  private var _firstValueViolations = [MSRPStreamID: Set<P.ID>]()
   // 10.3 a): propagate a declaration as New when it was received New (or its ingress port had a
   // topology change). Per stream, the ingress ports pending New propagation; consumed once the
   // recompute emits the propagated declaration, so a later refresh is a plain Join (one-shot).
@@ -660,16 +659,10 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
       _portStates.removeValue(forKey: port.id)
     }
     // a violation (code 16) whose talker registration vanishes with its port sees no withdraw or
-    // revert to clear it: sweep those so a clean future re-declaration is not failed forever
-    _firstValueViolations = _firstValueViolations.filter { streamID in
-      var registeredElsewhere = false
-      apply(for: MAPBaseSpanningTreeContext) { participant in
-        guard !vanishedPortIDs.contains(participant.port.id) else { return }
-        if _findTalkerRegistration(for: streamID, participant: participant) != nil {
-          registeredElsewhere = true
-        }
-      }
-      return registeredElsewhere
+    // revert to clear it: drop the vanished ports so a clean future re-declaration is not failed
+    for streamID in Array(_firstValueViolations.keys) {
+      _firstValueViolations[streamID]?.subtract(vanishedPortIDs)
+      if _firstValueViolations[streamID]?.isEmpty ?? true { _firstValueViolations[streamID] = nil }
     }
     // the kernel drops MDB entries on a vanished port; forget any group membership we tracked on
     // one so the cache does not go stale (a stale port would suppress a later re-add)
@@ -1224,7 +1217,7 @@ extension MSRPApplication {
       if let existingTalkerRegistration = _findTalkerRegistration(
         for: talker.streamID,
         participant: participant
-      ), !existingTalkerRegistration.hasSameImmutableFields(as: talker) {
+      ), !existingTalkerRegistration.isEqualIdentity(to: talker) {
         _logger
           .error(
             "MSRP: stream \(talker.streamID) is already registered on port \(port) with a different FirstValue"
@@ -1641,6 +1634,61 @@ extension MSRPApplication {
     }
   }
 
+  // 35.2.1.4 h): a boundary if the class is declared with no peer Domain registration (h.1) or any
+  // carries a different priority (h.2). Own live status (non-AVB/PFC/asCapable) applied elsewhere.
+  private func _recomputeSrpDomainBoundary(
+    participant: Participant<MSRPApplication>, port: P, srClassID: SRclassID
+  ) throws {
+    try withPortState(port: port) { portState in
+      guard let localPriority = portState.srClassPriorityMap[srClassID] else {
+        // the port does not support this class (35.2.1.4 h.3): treat it as a boundary
+        portState.srpDomainBoundaryPort[srClassID] = true
+        return
+      }
+      var priorities = Set<SRclassPriority>()
+      for (_, value) in participant.findAttributes(
+        attributeType: MSRPAttributeType.domain.rawValue, matching: .matchAny
+      ) {
+        if let d = value as? MSRPDomainValue, d.srClassID == srClassID {
+          priorities.insert(d.srClassPriority)
+        }
+      }
+      portState.srpDomainBoundaryPort[srClassID] =
+        priorities.isEmpty || priorities.contains { $0 != localPriority }
+    }
+  }
+
+  // 35.2.2.8: true when any registered Talker declaration for the stream (either type) differs from
+  // `value` in an immutable FirstValue field -- a same-type change or an Advertise<->Failed flip.
+  private func _talkerFirstValueConflicts(
+    on participant: Participant<MSRPApplication>, with value: any MSRPTalkerValue
+  ) -> Bool {
+    for type in [MSRPAttributeType.talkerAdvertise, .talkerFailed] {
+      for (_, registered) in participant.findAttributes(
+        attributeType: type.rawValue, matching: .matchAnyIndex(value.streamID.index)
+      ) {
+        if let registered = registered as? any MSRPTalkerValue,
+           !registered.isEqualIdentity(to: value) { return true }
+      }
+    }
+    return false
+  }
+
+  // a peer changing its Domain re-declares the new value without a Leave (35.2.4), so the old
+  // registration lingers until ageout; drop it so a superseded priority can't hold a boundary (h).
+  private func _supersedeStaleDomains(
+    on participant: Participant<MSRPApplication>, keeping domain: MSRPDomainValue
+  ) {
+    for (_, value) in participant.findAttributes(
+      attributeType: MSRPAttributeType.domain.rawValue, matching: .matchAnyIndex(domain.index)
+    ) {
+      guard let stale = value as? MSRPDomainValue, stale != domain else { continue }
+      try? participant.deregister(
+        attributeType: MSRPAttributeType.domain.rawValue, attributeValue: stale, eventSource: .peer
+      )
+    }
+  }
+
   func onJoinIndication(
     contextIdentifier: MAPContextIdentifier,
     port: P,
@@ -1676,39 +1724,28 @@ extension MSRPApplication {
         throw MRPError.doNotPropagateAttribute
       }
       let ingress = try findParticipant(for: contextIdentifier, port: port)
-      // 35.2.2.8: .peerChanged means the peer re-declared this StreamID with a value differing from
-      // the retained (index-matched) one. A changed FirstValue fails the stream (code 16); an
-      // unchanged one (only AccumulatedLatency differs) is a benign latency update.
-      if eventSource == .peerChanged {
-        // inspect the retained registration once, in place:
-        ingress.updateRegisteredValue(
-          attributeType: attributeType.rawValue,
-          matching: .matchAnyIndex(talkerValue.streamID.index)
-        ) { current in
-          guard let existing = current as? any MSRPTalkerValue else { return nil }
-          if !existing.hasSameImmutableFields(as: talkerValue) {
-            // a forbidden FirstValue change: fail the stream (code 16) until the talker withdraws,
-            // keeping the retained value (35.2.2.8: a talker must withdraw before changing)
-            _logger
-              .error(
-                "MSRP: stream \(talkerValue.streamID) FirstValue changed on \(port); failing (35.2.2.8)"
-              )
-            _firstValueViolations.insert(talkerValue.streamID)
-            return nil
-          }
-          // FirstValue unchanged but some other field did (AccumulatedLatency, or a Talker Failed's
-          // FailureInformation): adopt the peer's value in place. The peer is declaring matching
-          // immutable fields again, so any prior FirstValue violation is resolved (35.2.2.8).
-          _firstValueViolations.remove(talkerValue.streamID)
-          return talkerValue
-        }
-      } else if eventSource == .peer {
-        // mutual exclusion: clear the opposite talker registration on the source port
-        _deregisterOppositeTalkerRegistration(
-          participant: ingress,
-          declarationType: talkerValue.declarationType!,
-          streamID: talkerValue.streamID
+      // 35.2.2.8: a changed immutable FirstValue is forbidden -- reject the newcomer, keep the
+      // original registration, and fail the stream (code 16) until the talker withdraws it.
+      if _talkerFirstValueConflicts(on: ingress, with: talkerValue) {
+        _logger
+          .error(
+            "MSRP: stream \(talkerValue.streamID) FirstValue conflict on \(port); failing (35.2.2.8)"
+          )
+        _firstValueViolations[talkerValue.streamID, default: []].insert(ingress.port.id)
+        try? ingress.deregister(
+          attributeType: attributeType.rawValue, attributeValue: talkerValue, eventSource: .peer
         )
+      } else {
+        _firstValueViolations[talkerValue.streamID]?.remove(ingress.port.id)
+        if eventSource == .peer {
+          // mutual exclusion: a clean Advertise<->Failed transition drops the opposite type
+          // (35.2.6)
+          _deregisterOppositeTalkerRegistration(
+            participant: ingress,
+            declarationType: talkerValue.declarationType!,
+            streamID: talkerValue.streamID
+          )
+        }
       }
       // 10.3 a): remember a received New so the recompute propagates it as New (not JoinMt)
       if isNew { _receivedNew[talkerValue.streamID, default: []].insert(port.id) }
@@ -1719,36 +1756,26 @@ extension MSRPApplication {
       _streamDidUpdate(listenerStreamID)
     case .domain:
       let domain = (attributeValue as! MSRPDomainValue)
-      // adopt a peer's changed Domain payload into the retained registration (the index is the
-      // srClassID alone): otherwise every subsequent refresh re-detects the change, and a later
-      // registrar re-indication delivers the stale value and flips the boundary state back
-      if eventSource == .peerChanged {
-        let ingress = try findParticipant(for: contextIdentifier, port: port)
-        ingress.updateRegisteredValue(
-          attributeType: attributeType.rawValue,
-          matching: .matchAnyIndex(domain.index)
-        ) { _ in domain }
-      }
       let isEndStation = await controller?.isEndStation ?? false
-      try withPortState(port: port) { portState in
-        if isEndStation {
+      if isEndStation {
+        try withPortState(port: port) { portState in
           // 35.2.2.9.3/.4: an end station adopts its neighbour's SRclassPriority and SRclassVID,
           // joining the attached network's SR domain -- so it is not a peer boundary (PFC on the
           // adopted priority is caught live by isSrpDomainBoundary).
           portState.srClassPriorityMap[domain.srClassID] = domain.srClassPriority
           portState.srpClassVID[domain.srClassID] = VLAN(vid: domain.srClassVID)
           portState.srpDomainBoundaryPort[domain.srClassID] = false
-        } else {
-          // a bridge keeps its management-configured SRclassPriority: a neighbour declaring a
-          // different priority marks a domain boundary (35.2.1.4 h②); PFC is caught live
-          let srClassPriority = portState.srClassPriorityMap[domain.srClassID]
-          let isSrpDomainBoundaryPort = srClassPriority != domain.srClassPriority
-          _logger
-            .debug(
-              "MSRP: port \(port) srClassID \(domain.srClassID) local srClassPriority \(String(describing: srClassPriority)) peer srClassPriority \(domain.srClassPriority): \(isSrpDomainBoundaryPort ? "is" : "not") a domain boundary port"
-            )
-          portState.srpDomainBoundaryPort[domain.srClassID] = isSrpDomainBoundaryPort
         }
+      } else {
+        let ingress = try findParticipant(for: contextIdentifier, port: port)
+        // on a point-to-point link a peer priority change re-declares without a Leave, so supersede
+        // the stale registration; on shared media keep coexisting peers (the derive handles many)
+        if port.isPointToPoint { _supersedeStaleDomains(on: ingress, keeping: domain) }
+        try _recomputeSrpDomainBoundary(
+          participant: ingress,
+          port: port,
+          srClassID: domain.srClassID
+        )
       }
     }
     throw MRPError.doNotPropagateAttribute
@@ -1963,8 +1990,8 @@ extension MSRPApplication {
       // guarantee.
       var failure = failure
       // 35.2.2.8: a peer changed a FirstValue field of this registered stream; it stays Failed
-      // (code 16) until the talker withdraws and re-declares cleanly.
-      if _firstValueViolations.contains(streamID) {
+      // (code 16, recorded in onJoinIndication) until the talker withdraws and re-declares cleanly.
+      if _firstValueViolations[streamID]?.contains(boundTalker.0.port.id) == true {
         failure = MSRPFailure(
           systemID: _systemID, failureCode: .changeInFirstValueForRegisteredStreamID
         )
@@ -2103,7 +2130,7 @@ extension MSRPApplication {
     // the Talker is gone: drop all group MDB entries (egress + secure-switch ingress admission)
     await _updateGroupReservations(streamID: streamID, params: nil, desired: [:])
     // 35.2.2.8: the talker withdrew, so a subsequent re-declaration starts clean (clears code 16)
-    _firstValueViolations.remove(streamID)
+    _firstValueViolations[streamID] = nil
 
     for (portID, talker) in _reservationsToWithdraw(streamID, keeping: []) {
       if let participant = _participant(for: portID) {
@@ -2205,11 +2232,21 @@ extension MSRPApplication {
       _streamDidUpdate((attributeValue as! any MSRPStreamIDRepresentable).streamID)
     case .domain:
       let domain = (attributeValue as! MSRPDomainValue)
-      try withPortState(port: port) { portState in
-        // 35.2.1.4(h): with the peer's Domain registration withdrawn, the port declares a Domain
-        // for the class but no longer has a registration for it, so it is again a boundary port
-        // (not "unknown"/core -- a nil here reads as non-boundary in _canBridgeTalker).
-        portState.srpDomainBoundaryPort[domain.srClassID] = true
+      let ingress = try findParticipant(for: contextIdentifier, port: port)
+      if await controller?.isEndStation == true {
+        // 35.2.2.9: revert to a boundary only if no Domain for the class remains adopted; a peer
+        // priority change withdraws the old value but leaves the new one registered (in-domain)
+        let stillAdopted = ingress.findAttributes(
+          attributeType: MSRPAttributeType.domain.rawValue, matching: .matchAnyIndex(domain.index)
+        ).contains { ($0.1 as? MSRPDomainValue)?.srClassID == domain.srClassID }
+        try withPortState(port: port) { $0.srpDomainBoundaryPort[domain.srClassID] = !stillAdopted }
+      } else {
+        // a bridge re-derives the boundary with this registration now withdrawn (35.2.1.4 h)
+        try _recomputeSrpDomainBoundary(
+          participant: ingress,
+          port: port,
+          srClassID: domain.srClassID
+        )
       }
     }
 
@@ -2224,7 +2261,10 @@ extension MSRPApplication {
     // local per-port announcement. Re-declare only when the value actually changed, since a port
     // event can fire many context updates and the Domain is declared New (not
     // Applicant-suppressed).
-    let toDeclare: MSRPDomainValue? = try withPortState(port: participant.port) { portState in
+    let toDeclare: (
+      MSRPDomainValue?,
+      MSRPDomainValue
+    )? = try withPortState(port: participant.port) { portState in
       guard let domain = portState.getDomain(for: srClassID, defaultSRPVid: _srPVid) else {
         _logger
           .warning(
@@ -2232,12 +2272,22 @@ extension MSRPApplication {
           )
         return nil
       }
-      guard portState.declaredDomains[srClassID] != domain else { return nil }
+      let previous = portState.declaredDomains[srClassID]
+      guard previous != domain else { return nil }
       portState.declaredDomains[srClassID] = domain
-      return domain
+      return (previous, domain)
     }
 
-    guard let domain = toDeclare else { return }
+    guard let (previous, domain) = toDeclare else { return }
+    // join() keys on identity, so a changed priority/VID would orphan the old value: withdraw the
+    // superseded declaration first (35.2.4).
+    if let previous {
+      try? participant.leave(
+        attributeType: MSRPAttributeType.domain.rawValue,
+        attributeValue: previous,
+        eventSource: .application
+      )
+    }
     _logger.info("MSRP: port \(participant.port) declaring domain \(domain)")
     try participant.join(
       attributeType: MSRPAttributeType.domain.rawValue,

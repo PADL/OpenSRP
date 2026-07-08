@@ -186,6 +186,8 @@ public struct MSRPStreamID: Sendable, ExpressibleByIntegerLiteral, ExpressibleBy
     id = try UInt64(parsing: &input, storedAsBigEndian: UInt64.self)
   }
 
+  public func isEqualIdentity(to other: any Value) -> Bool { other.index == index }
+
   public func makeValue(relativeTo index: UInt64) throws -> Self {
     // a peer can encode a FirstValue + NumberOfValues that overruns the 64-bit range
     // (10.8.2.8 d); reject it rather than trap on reconstruction
@@ -328,6 +330,8 @@ public struct MSRPDataFrameParameters: Value, Equatable, Hashable, CustomStringC
     // set VLAN identifier to zero for correct Null value encoding
     try! self.init(destinationAddress: UInt64(0).asEUI48(), vlanIdentifier: VLAN(vid: 0))
   }
+
+  public func isEqualIdentity(to other: any Value) -> Bool { other.index == index }
 
   public func makeValue(relativeTo index: UInt64) throws -> Self {
     let destinationAddress = try (UInt64(eui48: destinationAddress) + index).asEUI48()

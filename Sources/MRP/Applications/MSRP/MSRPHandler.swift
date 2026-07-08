@@ -145,12 +145,16 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
       domainBoundaryPort = portState.isSrpDomainBoundary(
         for: srClassID, application: application
       ) ?? true
-      let domainState = await participant.findAllAttributes(
+      // conflicting priorities coexist per class: applicantState reflects our own declared domain,
+      // registrarState any registration for the class (a peer, possibly at a different priority)
+      let domainAttrs = await participant.findAllAttributes(
         attributeType: MSRPAttributeType.domain.rawValue,
         matching: .matchAny
-      ).first { ($0.attributeValue as? MSRPDomainValue)?.srClassID == srClassID }
-      _applicantState = domainState.map { String(describing: $0.applicantState) } ?? "VO"
-      _registrarState = domainState?.registrarState.map { String(describing: $0) } ?? "MT"
+      ).filter { ($0.attributeValue as? MSRPDomainValue)?.srClassID == srClassID }
+      let ownDeclared = domainAttrs.first { ($0.attributeValue as? MSRPDomainValue) == domain }
+      let anyRegistered = domainAttrs.first(where: \.isRegistered)
+      _applicantState = ownDeclared.map { String(describing: $0.applicantState) } ?? "VO"
+      _registrarState = anyRegistered?.registrarState.map { String(describing: $0) } ?? "MT"
       vid = domain.srClassVID
       self.srClassID = srClassID.rawValue
       let priority = portState.srClassPriorityMap[srClassID]?.rawValue ?? 0

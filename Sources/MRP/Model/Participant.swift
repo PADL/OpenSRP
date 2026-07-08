@@ -671,29 +671,18 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
             .debug(
               "\(self): \(eventSource) declared attribute \(attribute) with new subtype \(attributeSubtype); replacing"
             )
-          try? attribute.willReplaceSubtype(eventSource: eventSource)
+          try? attribute.willReplace(eventSource: eventSource)
           attribute.attributeSubtype = attributeSubtype
         }
 
-        // 35.2.2.8: index matching keeps the existing (immutable) value, so
-        // surface the changed value the peer sent to the application (which
-        // compares it against the registered value) as .peerChanged,
-        // distinct from the registrar's re-indication of the retained value
-        // below, which stays .peer.
-        if attributeEvent.protocolEvent.indicatesRegistration, let application,
+        // a same-identity payload change (Talker latency / FailureInfo) resets the Registrar (leave
+        // suppressed), then adopts the new value so the rJoinIn re-indicates it via Join
+        if attributeEvent.protocolEvent.indicatesRegistration,
            let received = try? vectorAttribute.firstValue.value.makeValue(relativeTo: UInt64(i)),
            attribute.value != received.eraseToAny()
         {
-          let contextIdentifier = contextIdentifier
-          let port = port
-          let attributeType = message.attributeType
-          Task(on: _queue) { @Sendable _ in
-            try await application.joinIndicated(
-              contextIdentifier: contextIdentifier, port: port, attributeType: attributeType,
-              attributeSubtype: attributeSubtype, attributeValue: received, isNew: false,
-              eventSource: .peerChanged
-            )
-          }
+          try? attribute.willReplace(eventSource: eventSource)
+          attribute.updateValue(received)
         }
 
         try _handleAttributeValue(
@@ -834,23 +823,6 @@ public extension Participant {
     ) }
   }
 
-  // Find the registered attribute(s) matching the filter in a single lookup and pass each current
-  // value to `transform`; if it returns a replacement (necessarily the same index), apply it in
-  // place -- the registrar is untouched. No-op if none match or the closure returns nil. Lets the
-  // caller inspect and update the value without a separate findAttribute pass.
-  func updateRegisteredValue(
-    attributeType: AttributeType,
-    matching filter: AttributeValueFilter,
-    _ transform: (_ current: any Value) -> (any Value)?
-  ) {
-    _assertIsolatedToApplication()
-    for attribute in _findRegisteredAttributes(attributeType: attributeType, matching: filter) {
-      if let replacement = transform(attribute.unwrappedValue) {
-        attribute.updateValue(replacement)
-      }
-    }
-  }
-
   // A Flush! event signals to the Registrar state machine that there is a
   // need to rapidly deregister information on the Port associated with the
   // state machine as a result of a topology change that has occurred in the
@@ -888,7 +860,7 @@ public extension Participant {
     let attribute = try _findOrCreateAttribute(
       attributeType: attributeType,
       attributeSubtype: attributeSubtype,
-      matching: .matchIndex(attributeValue), // don't match on subtype, we want to replace it
+      matching: .matchIdentity(attributeValue), // don't match on subtype, we want to replace it
       createIfMissing: true
     )
 
@@ -903,7 +875,7 @@ public extension Participant {
         "\(self): \(eventSource) declared attribute \(attribute) with new subtype \(attributeSubtype); replacing"
       )
 
-      try? attribute.willReplaceSubtype(eventSource: eventSource)
+      try? attribute.willReplace(eventSource: eventSource)
       attribute.attributeSubtype = attributeSubtype
     }
 
@@ -923,7 +895,7 @@ public extension Participant {
     let attribute = try _findOrCreateAttribute(
       attributeType: attributeType,
       attributeSubtype: attributeSubtype,
-      matching: .matchIndex(attributeValue),
+      matching: .matchIdentity(attributeValue),
       createIfMissing: false
     )
 
@@ -942,7 +914,7 @@ public extension Participant {
     let attribute = try _findOrCreateAttribute(
       attributeType: attributeType,
       attributeSubtype: nil,
-      matching: .matchIndex(attributeValue),
+      matching: .matchIdentity(attributeValue),
       createIfMissing: false
     )
 
@@ -970,7 +942,7 @@ public extension Participant {
     _ = try _findOrCreateAttribute(
       attributeType: attributeType,
       attributeSubtype: nil,
-      matching: .matchIndex(attributeValue),
+      matching: .matchIdentity(attributeValue),
       createIfMissing: true,
       administrativelyRegistered: true
     )
@@ -987,7 +959,7 @@ public extension Participant {
     let attribute = try _findOrCreateAttribute(
       attributeType: attributeType,
       attributeSubtype: nil,
-      matching: .matchIndex(attributeValue),
+      matching: .matchIdentity(attributeValue),
       createIfMissing: false
     )
     guard attribute.isAdministrativelyRegistered else { return }
@@ -1074,13 +1046,12 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
 {
   typealias P = Participant<A>
 
-  // don't match subtype on comparison, we don't want to emit PDUs with
-  // multiple subtype values (at least, for MSRP). We only match the index
-  // because we can only have one value for each (attributeType, index).
+  // Equality is by identity; hash() keys on index only, so same-index different-identity values
+  // (changed Talker fields, a different Domain priority) coexist as hash-collision peers.
   static func == (lhs: _AttributeValue<A>, rhs: _AttributeValue<A>) -> Bool {
     lhs.matches(
       attributeType: rhs.attributeType,
-      matching: .matchIndex(rhs.unwrappedValue)
+      matching: .matchIdentity(rhs.unwrappedValue)
     )
   }
 
@@ -1233,10 +1204,10 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
         return self.index == index
       case let .matchIndex(value):
         return index == value.index
-      case let .matchEqual(value):
-        return self.value == value.eraseToAny()
+      case let .matchIdentity(value):
+        return unwrappedValue.isEqualIdentity(to: value)
       case .matchRelative(let (value, offset)):
-        return try index == value.makeValue(relativeTo: offset).index
+        return try unwrappedValue.isEqualIdentity(to: value.makeValue(relativeTo: offset))
       }
     } catch {
       return false
@@ -1434,7 +1405,7 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
   }
 
   // called only when replacing attribute; suppresses GC and leave indication
-  fileprivate func willReplaceSubtype(eventSource: EventSource) throws {
+  fileprivate func willReplace(eventSource: EventSource) throws {
     try handle(
       protocolEvent: .rLvNow,
       eventSource: eventSource,
@@ -1454,7 +1425,7 @@ private extension AttributeValueFilter {
         return nil
       case let .matchIndex(value):
         fallthrough
-      case let .matchEqual(value):
+      case let .matchIdentity(value):
         return value
       case .matchRelative(let (value, index)):
         return try value.makeValue(relativeTo: index)
