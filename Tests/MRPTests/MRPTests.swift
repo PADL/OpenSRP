@@ -3921,8 +3921,10 @@ final class MRPTests: XCTestCase {
     let msrp = try await MSRPApplication(controller: controller)
     try await msrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
     let port = MockPort(id: 0)
-    let boundaryA = try await msrp.withPortState(port: port) { $0.srpDomainBoundaryPort[.A] }
-    let boundaryB = try await msrp.withPortState(port: port) { $0.srpDomainBoundaryPort[.B] }
+    let boundaryA = try await msrp
+      .withPortState(port: port) { $0.isSrpDomainBoundary(for: .A, application: msrp) }
+    let boundaryB = try await msrp
+      .withPortState(port: port) { $0.isSrpDomainBoundary(for: .B, application: msrp) }
     XCTAssertEqual(
       boundaryA,
       true,
@@ -3949,8 +3951,79 @@ final class MRPTests: XCTestCase {
     let enabled = try await msrp.withPortState(port: MockPort(id: 0)) { $0.msrpPortEnabledStatus }
     XCTAssertFalse(enabled, "a high-MTU port must have MSRP disabled (not AVB capable)")
     let boundary = try await msrp
-      .withPortState(port: MockPort(id: 0)) { $0.srpDomainBoundaryPort[.A] }
+      .withPortState(port: MockPort(id: 0)) { $0.isSrpDomainBoundary(for: .A, application: msrp) }
     XCTAssertEqual(boundary, true, "a non-AVB port must be an SRP domain boundary port")
+    _ = controller
+  }
+
+  // Decomposition invariant: our own boundary status (PFC / non-AVB medium) is derived live in
+  // isSrpDomainBoundary, so a peer declaring a *matching* Domain -- which drives the peer map to
+  // non-boundary -- cannot clear it. This is the deeper cause of the BA.c.1.4 regression.
+  private func _makeBoundaryMSRP(_ port0: MockPort) async throws
+    -> (MRPController<MockPort>, MSRPApplication<MockPort>)
+  {
+    let bridge = MockBridge(ports: [port0, MockPort(id: 1)], recorder: MRPTestRecorder())
+    let controller = try await MRPController(
+      bridge: bridge, logger: Logger(label: "com.padl.MRPTests.boundary")
+    )
+    let msrp = try await MSRPApplication(controller: controller)
+    try await msrp.didAdd(
+      contextIdentifier: MAPBaseSpanningTreeContext,
+      with: [port0, MockPort(id: 1)]
+    )
+    return (controller, msrp)
+  }
+
+  private func _receiveMatchingDomainA(
+    _ msrp: MSRPApplication<MockPort>,
+    port: MockPort
+  ) async throws {
+    do {
+      try await msrp.onJoinIndication(
+        contextIdentifier: MAPBaseSpanningTreeContext, port: port,
+        attributeType: MSRPAttributeType.domain.rawValue, attributeSubtype: nil,
+        attributeValue: MSRPDomainValue(
+          srClassID: .A,
+          srClassPriority: .CA,
+          srClassVID: SR_PVID.vid
+        ),
+        isNew: true, eventSource: .peer
+      )
+    } catch MRPError.doNotPropagateAttribute {}
+  }
+
+  func testPFCBoundarySurvivesMatchingDomain() async throws {
+    let (controller, msrp) = try await _makeBoundaryMSRP(MockPort(
+      id: 0,
+      pfcEnabledPriorities: [.CA]
+    ))
+    let port = MockPort(id: 0)
+    try await _receiveMatchingDomainA(msrp, port: port)
+
+    let boundary = try await msrp
+      .withPortState(port: port) { $0.isSrpDomainBoundary(for: .A, application: msrp) }
+    XCTAssertEqual(
+      boundary,
+      true,
+      "PFC keeps the port a boundary even when the peer Domain matches"
+    )
+    let peerMap = try await msrp.withPortState(port: port) { $0.srpDomainBoundaryPort[.A] }
+    XCTAssertEqual(peerMap, false, "the peer map alone is non-boundary on a matching Domain")
+    _ = controller
+  }
+
+  func testNonAvbBoundarySurvivesMatchingDomain() async throws {
+    let (controller, msrp) = try await _makeBoundaryMSRP(MockPort(id: 0, mtu: 9000))
+    let port = MockPort(id: 0)
+    try await _receiveMatchingDomainA(msrp, port: port)
+
+    let boundary = try await msrp
+      .withPortState(port: port) { $0.isSrpDomainBoundary(for: .A, application: msrp) }
+    XCTAssertEqual(
+      boundary,
+      true,
+      "a non-AVB port stays a boundary even when the peer Domain matches"
+    )
     _ = controller
   }
 
@@ -3989,6 +4062,15 @@ final class MRPTests: XCTestCase {
     let enabledAfter = try await msrp
       .withPortState(port: MockPort(id: 0)) { $0.msrpPortEnabledStatus }
     XCTAssertFalse(enabledAfter, "a renegotiated half-duplex port must have MSRP disabled")
+
+    // the port is now non-AVB, so it must read as an SRP domain boundary (35.2.4.3) even though its
+    // cached boundary map -- set at creation when it was AVB-capable -- was never re-derived
+    let boundaryAfter = try await msrp
+      .withPortState(port: MockPort(id: 0)) { $0.isSrpDomainBoundary(for: .A, application: msrp) }
+    XCTAssertEqual(
+      boundaryAfter, true,
+      "a renegotiated non-AVB port must be an SRP domain boundary (drives Talker Advertise -> Failed)"
+    )
     _ = controller
   }
 

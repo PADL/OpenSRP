@@ -174,16 +174,20 @@ struct MSRPPortState<P: AVBPort>: Sendable {
     srClassPriorityMap.first(where: { $0.value == priority })?.key
   }
 
-  // Effective SRP domain boundary for the class: the domain/PFC-derived srpDomainBoundaryPort OR
-  // the
-  // asCapable boundary (35.2.1) -- a not-asCapable port is a boundary unless asCapable is ignored.
-  // nil = SRP determined none; the caller picks the default (admission treats nil as non-boundary
-  // via != true, REST reports a boundary via ?? true).
+  // Effective SRP domain boundary: our own live status (non-AVB medium / PFC priority / not-
+  // asCapable -- none cached) OR the peer's cached Domain relationship. nil = none determined;
+  // admission treats nil as non-boundary (!= true), REST reports a boundary (?? true).
   func isSrpDomainBoundary(
     for srClassID: SRclassID,
     application: MSRPApplication<P>
   ) -> Bool? {
+    // our own status (802.1BA §6.4 / 34.5 / 35.2.1), derived live so a link change can't stale it
+    if !msrpPortEnabledStatus { return true }
+    if let priority = srClassPriorityMap[srClassID], pfcEnabledPriorities.contains(priority) {
+      return true
+    }
     if !application._ignoreAsCapable, asCapable == false { return true }
+    // the peer's Domain relationship only (35.2.1.4 h① no registration / h② priority differs)
     return srpDomainBoundaryPort[srClassID]
   }
 
@@ -221,7 +225,7 @@ struct MSRPPortState<P: AVBPort>: Sendable {
     stpPortState = port.stpPortState
     srpDomainBoundaryPort = .init(uniqueKeysWithValues: application._allSRClassIDs.map { (
       $0,
-      !isAvbCapable
+      false // peer-derived only; our own status is live in isSrpDomainBoundary
     ) })
     srpClassVID = .init(uniqueKeysWithValues: application._allSRClassIDs.map { (
       $0,
@@ -502,13 +506,10 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
       if let srClassPriorityMap = srClassPriorityMap[port.id] {
         portState.srClassPriorityMap = srClassPriorityMap
       }
-      // 802.1Q 34.5/35.2.1.4: an SR class whose priority has PFC enabled (mutually exclusive with
-      // the credit-based shaper) makes this an SRP domain boundary port for that class
+      // 34.5: an SR class whose priority has PFC enabled is a boundary port; that check is live in
+      // isSrpDomainBoundary, so here we only need to hold the priority set
       if let pfc = pfcEnabledPriorities[port.id] {
         portState.pfcEnabledPriorities = pfc
-        for (srClassID, priority) in portState.srClassPriorityMap where pfc.contains(priority) {
-          portState.srpDomainBoundaryPort[srClassID] = true
-        }
       }
       _portStates[port.id] = portState
     }
@@ -1724,18 +1725,16 @@ extension MSRPApplication {
       try withPortState(port: port) { portState in
         if isEndStation {
           // 35.2.2.9.3/.4: an end station adopts its neighbour's SRclassPriority and SRclassVID,
-          // joining the attached network's SR domain -- so it is not a domain boundary port
-          // (unless PFC on the adopted priority forbids the credit-based shaper, 34.5).
+          // joining the attached network's SR domain -- so it is not a peer boundary (PFC on the
+          // adopted priority is caught live by isSrpDomainBoundary).
           portState.srClassPriorityMap[domain.srClassID] = domain.srClassPriority
           portState.srpClassVID[domain.srClassID] = VLAN(vid: domain.srClassVID)
-          portState.srpDomainBoundaryPort[domain.srClassID] =
-            portState.pfcEnabledPriorities.contains(domain.srClassPriority)
+          portState.srpDomainBoundaryPort[domain.srClassID] = false
         } else {
           // a bridge keeps its management-configured SRclassPriority: a neighbour declaring a
-          // different priority (or PFC on the local priority) marks a domain boundary (35.2.1.4)
+          // different priority marks a domain boundary (35.2.1.4 h②); PFC is caught live
           let srClassPriority = portState.srClassPriorityMap[domain.srClassID]
-          let isSrpDomainBoundaryPort = srClassPriority != domain.srClassPriority ||
-            srClassPriority.map { portState.pfcEnabledPriorities.contains($0) } ?? false
+          let isSrpDomainBoundaryPort = srClassPriority != domain.srClassPriority
           _logger
             .debug(
               "MSRP: port \(port) srClassID \(domain.srClassID) local srClassPriority \(String(describing: srClassPriority)) peer srClassPriority \(domain.srClassPriority): \(isSrpDomainBoundaryPort ? "is" : "not") a domain boundary port"
