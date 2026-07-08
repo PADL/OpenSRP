@@ -21,9 +21,9 @@ public enum AttributeValueFilter: Sendable {
   case matchAnyIndex(UInt64)
   // match any value whose index matches the provided value
   case matchIndex(any Value)
-  // match value which matches exactly
-  case matchEqual(any Value)
-  // match value which matches exactly, relative to provided index
+  // match value with the same attribute identity (index + immutable fields, per Value)
+  case matchIdentity(any Value)
+  // match value with the same attribute identity, relative to provided index
   case matchRelative((any Value, UInt64))
 }
 

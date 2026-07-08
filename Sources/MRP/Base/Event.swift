@@ -100,9 +100,6 @@ public enum EventSource: Sendable, Equatable {
   case periodicTimer
   // event source was a remote peer
   case peer
-  // a remote peer re-declared an already-registered index with a changed value (35.2.2.8): distinct
-  // from .peer so it is told apart from the registrar's re-indication of the retained value
-  case peerChanged
   // event source was explicit administrative control (e.g. TSN endpoint)
   case `internal`
   // event source was transitive via MAP function

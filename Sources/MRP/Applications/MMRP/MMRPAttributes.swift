@@ -51,6 +51,8 @@ public enum MMRPServiceRequirementValue: UInt8, Value, Equatable, Hashable {
     self = .allGroups
   }
 
+  public func isEqualIdentity(to other: any Value) -> Bool { other.index == index }
+
   public func makeValue(relativeTo index: UInt64) throws -> Self {
     guard let value = Self(rawValue: rawValue + UInt8(index)) else {
       throw MRPError.invalidAttributeValue
@@ -87,6 +89,8 @@ struct MMRPMACValue: Value, Equatable, Hashable {
   init() {
     _macAddress = 0
   }
+
+  func isEqualIdentity(to other: any Value) -> Bool { other.index == index }
 
   func makeValue(relativeTo index: UInt64) throws -> Self {
     // reject a FirstValue + NumberOfValues that overruns 48 bits (10.8.2.8 d) rather than

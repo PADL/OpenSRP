@@ -46,6 +46,8 @@ extension VLAN: Value {
     self.init(vid: 0)
   }
 
+  public func isEqualIdentity(to other: any Value) -> Bool { other.index == index }
+
   public func makeValue(relativeTo index: UInt64) throws -> Self {
     let newVid = UInt64(vid) + index
     guard newVid <= 0xFFF else { throw MRPError.invalidAttributeValue }

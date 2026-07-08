@@ -1166,10 +1166,10 @@ final class MRPTests: XCTestCase {
     XCTAssertTrue(av1.matches(attributeType: nil, matching: .matchAny))
     XCTAssertFalse(av1.matches(attributeType: 2, matching: .matchAny))
 
-    // Test matchEqual
-    XCTAssertTrue(av1.matches(attributeType: 1, matching: .matchEqual(vlan1)))
-    XCTAssertFalse(av1.matches(attributeType: 1, matching: .matchEqual(vlan2)))
-    XCTAssertFalse(av1.matches(attributeType: 2, matching: .matchEqual(vlan1)))
+    // Test matchIdentity
+    XCTAssertTrue(av1.matches(attributeType: 1, matching: .matchIdentity(vlan1)))
+    XCTAssertFalse(av1.matches(attributeType: 1, matching: .matchIdentity(vlan2)))
+    XCTAssertFalse(av1.matches(attributeType: 2, matching: .matchIdentity(vlan1)))
 
     // Test matchAnyIndex
     XCTAssertTrue(av1.matches(attributeType: 1, matching: .matchAnyIndex(vlan1.index)))
@@ -3801,36 +3801,29 @@ final class MRPTests: XCTestCase {
     let (controller, msrp, _) = try await _makeBridgeMSRP(portIDs: [0, 1]) // >= 2 ports = a bridge
     let port = MockPort(id: 0)
 
-    // a received Domain indication is consumed locally and never propagated to MAP (it throws
-    // doNotPropagateAttribute); drive it directly and swallow that expected signal
+    @Sendable
+    func boundaryIs(_ expected: Bool) async -> Bool {
+      await (try? msrp.withPortState(port: port) { $0.srpDomainBoundaryPort[.A] }) == expected
+    }
     func receiveDomain(priority: SRclassPriority) async throws {
-      do {
-        try await msrp.onJoinIndication(
-          contextIdentifier: MAPBaseSpanningTreeContext,
-          port: port,
-          attributeType: MSRPAttributeType.domain.rawValue,
-          attributeSubtype: nil,
-          attributeValue: MSRPDomainValue(
-            srClassID: .A, srClassPriority: priority, srClassVID: SR_PVID.vid
-          ),
-          isNew: true,
-          eventSource: .peer
-        )
-      } catch MRPError.doNotPropagateAttribute {}
+      try await _drive(
+        msrp, port: 0, attributeType: .domain,
+        value: MSRPDomainValue(srClassID: .A, srClassPriority: priority, srClassVID: SR_PVID.vid),
+        event: .JoinIn
+      )
     }
 
-    // class A's local priority is CA (DefaultSRClassPriorityMap): a peer declaring CA matches,
+    // class A's local priority is CA (DefaultSRClassPriorityMap): a peer registering CA matches,
     // so the port stays a core (non-boundary) port for class A
     try await receiveDomain(priority: .CA)
-    let matched = try await msrp.withPortState(port: port) { $0.srpDomainBoundaryPort[.A] }
-    XCTAssertEqual(matched, false, "a matching SRclassPriority must leave the port a core port")
+    let matched = await _waitFor { await boundaryIs(false) }
+    XCTAssertTrue(matched, "a matching SRclassPriority must leave the port a core port")
 
-    // a peer declaring EE (class B's priority) on class A mismatches CA -> boundary port
+    // a coexisting peer registration of EE (class B's priority) mismatches CA -> boundary (h.2)
     try await receiveDomain(priority: .EE)
-    let mismatched = try await msrp.withPortState(port: port) { $0.srpDomainBoundaryPort[.A] }
-    XCTAssertEqual(
-      mismatched, true,
-      "a mismatched SRclassPriority must mark the port an SRP domain boundary port"
+    let mismatched = await _waitFor { await boundaryIs(true) }
+    XCTAssertTrue(
+      mismatched, "a mismatched SRclassPriority must mark the port an SRP domain boundary port"
     )
     _ = controller
   }
@@ -3882,10 +3875,67 @@ final class MRPTests: XCTestCase {
   // 35.2.1.4(h): withdrawing the peer's Domain registration returns the port to boundary state
   // (a leave must not leave it "core" -- previously it was cleared to nil, read as non-boundary).
   func testDomainLeaveRestoresBoundaryPort() async throws {
-    let (controller, msrp, _) = try await _makeBridgeMSRP(portIDs: [0, 1]) // >= 2 ports = a bridge
+    // short leaveTime so the withdrawn registration ages IN -> LV -> MT within the test
+    let (controller, msrp, _) = try await _makeBridgeMSRP(portIDs: [0, 1], leaveTime: .seconds(1))
     let port = MockPort(id: 0)
     let domain = MSRPDomainValue(srClassID: .A, srClassPriority: .CA, srClassVID: SR_PVID.vid)
 
+    @Sendable
+    func boundaryIs(_ expected: Bool) async -> Bool {
+      await (try? msrp.withPortState(port: port) { $0.srpDomainBoundaryPort[.A] }) == expected
+    }
+
+    try await _drive(msrp, port: 0, attributeType: .domain, value: domain, event: .JoinIn)
+    let core = await _waitFor { await boundaryIs(false) }
+    XCTAssertTrue(core, "a matching Domain registration makes the port a core port")
+
+    // rLv -> LV -> leaveTimer -> MT: once no registration remains, the port is a boundary (h.1)
+    try await _drive(msrp, port: 0, attributeType: .domain, value: domain, event: .Lv)
+    let boundary = await _waitFor(timeoutMs: 4000) { await boundaryIs(true) }
+    XCTAssertTrue(boundary, "withdrawing the Domain returns the port to boundary state")
+    _ = controller
+  }
+
+  // 35.2.1.4 h)/35.2.4: a peer changing its Domain priority re-declares the new value without a
+  // Leave, so the old registration lingers until ageout. The stale priority must be superseded --
+  // it must not hold the port at a boundary after the peer now matches (no flap on a legit change).
+  func testDomainPriorityChangeSupersedesStaleRegistration() async throws {
+    let (controller, msrp, _) = try await _makeBridgeMSRP(portIDs: [0, 1]) // >= 2 ports = a bridge
+    let port = MockPort(id: 0)
+    @Sendable
+    func boundaryIs(_ expected: Bool) async -> Bool {
+      await (try? msrp.withPortState(port: port) { $0.srpDomainBoundaryPort[.A] }) == expected
+    }
+    // local class-A priority is CA; the peer first declares a mismatching EE -> boundary
+    try await _drive(
+      msrp, port: 0, attributeType: .domain,
+      value: MSRPDomainValue(srClassID: .A, srClassPriority: .EE, srClassVID: SR_PVID.vid),
+      event: .JoinIn
+    )
+    let boundary = await _waitFor { await boundaryIs(true) }
+    XCTAssertTrue(boundary, "a mismatching peer Domain marks the port a boundary")
+
+    // the peer changes to the matching CA without a Leave; the stale EE must be superseded so the
+    // port returns to core immediately, not flap until EE ages out
+    try await _drive(
+      msrp, port: 0, attributeType: .domain,
+      value: MSRPDomainValue(srClassID: .A, srClassPriority: .CA, srClassVID: SR_PVID.vid),
+      event: .JoinIn
+    )
+    let core = await _waitFor { await boundaryIs(false) }
+    XCTAssertTrue(
+      core,
+      "a matching re-declaration supersedes the stale priority and clears the boundary"
+    )
+    _ = controller
+  }
+
+  // 35.2.2.9: an end station adopts its neighbour's SR domain (not a boundary); when the neighbour
+  // withdraws that Domain the end station must revert to a boundary, not keep streaming into it.
+  func testEndStationDomainLeaveRevertsToBoundary() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0]) // 1 port => end station
+    let port = MockPort(id: 0)
+    let domain = MSRPDomainValue(srClassID: .A, srClassPriority: .VI, srClassVID: 3)
     do {
       try await msrp.onJoinIndication(
         contextIdentifier: MAPBaseSpanningTreeContext, port: port,
@@ -3893,8 +3943,12 @@ final class MRPTests: XCTestCase {
         attributeValue: domain, isNew: true, eventSource: .peer
       )
     } catch MRPError.doNotPropagateAttribute {}
-    let core = try await msrp.withPortState(port: port) { $0.srpDomainBoundaryPort[.A] }
-    XCTAssertEqual(core, false, "a matching Domain registration makes the port a core port")
+    let adopted = try await msrp.withPortState(port: port) { $0.srpDomainBoundaryPort[.A] }
+    XCTAssertEqual(
+      adopted,
+      false,
+      "an end station that adopted the neighbour domain is not a boundary"
+    )
 
     do {
       try await msrp.onLeaveIndication(
@@ -3903,8 +3957,108 @@ final class MRPTests: XCTestCase {
         attributeValue: domain, eventSource: .peer
       )
     } catch MRPError.doNotPropagateAttribute {}
-    let boundary = try await msrp.withPortState(port: port) { $0.srpDomainBoundaryPort[.A] }
-    XCTAssertEqual(boundary, true, "withdrawing the Domain returns the port to boundary state")
+    let reverted = try await msrp.withPortState(port: port) { $0.srpDomainBoundaryPort[.A] }
+    XCTAssertEqual(
+      reverted,
+      true,
+      "an end station reverts to boundary when the adopted domain is withdrawn"
+    )
+    _ = controller
+  }
+
+  // 35.2.2.9/35.2.4: a neighbour changing its Domain priority re-declares without a Leave, so the
+  // old registration ages out while the new one is still adopted; the end station must NOT revert
+  // to
+  // a boundary on that stale leave (it would drop a still-valid stream).
+  func testEndStationDomainPriorityChangeKeepsAdoption() async throws {
+    // 1 port => end station; short leaveTime so the superseded registration ages out in-test
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0], leaveTime: .seconds(1))
+    let port = MockPort(id: 0)
+    @Sendable
+    func boundaryIs(_ expected: Bool) async -> Bool {
+      await (try? msrp.withPortState(port: port) { $0.srpDomainBoundaryPort[.A] }) == expected
+    }
+
+    // adopt the neighbour's class-A domain at VI, then the neighbour changes it to VO (no Leave):
+    // both coexist as registrations until the old one ages out
+    try await _drive(
+      msrp,
+      port: 0,
+      attributeType: .domain,
+      value: MSRPDomainValue(srClassID: .A, srClassPriority: .VI, srClassVID: 3),
+      event: .JoinIn
+    )
+    try await _drive(
+      msrp,
+      port: 0,
+      attributeType: .domain,
+      value: MSRPDomainValue(srClassID: .A, srClassPriority: .VO, srClassVID: 3),
+      event: .JoinIn
+    )
+    let adopted = await _waitFor { await boundaryIs(false) }
+    XCTAssertTrue(adopted, "an end station adopts the neighbour's domain (not a boundary)")
+
+    // withdraw the old VI value: it ages IN -> LV -> MT (~leaveTime), but VO remains adopted. Wait
+    // long enough for the stale leave to fire; a regression would flip the port to a boundary.
+    try await _drive(
+      msrp,
+      port: 0,
+      attributeType: .domain,
+      value: MSRPDomainValue(srClassID: .A, srClassPriority: .VI, srClassVID: 3),
+      event: .Lv
+    )
+    let flippedToBoundary = await _waitFor(timeoutMs: 4000) { await boundaryIs(true) }
+    XCTAssertFalse(
+      flippedToBoundary, "a superseded-priority leave must not drop the still-adopted domain"
+    )
+    _ = controller
+  }
+
+  // 35.2.2.8: a forbidden FirstValue change disguised as an Advertise->Failed type flip (a Failed
+  // carrying different immutable fields) must fail the stream (code 16), keeping the original.
+  func testTalkerFailedWithChangedFirstValueIsRejected() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0002)
+    let advertise = _talkerAdvertise(streamID)
+    try await _drive(
+      msrp,
+      port: 0,
+      attributeType: .talkerAdvertise,
+      value: advertise,
+      event: .JoinIn
+    )
+    let propagated = await _waitFor { await _isDeclared(msrp, .talkerAdvertise, streamID, port: 1) }
+    XCTAssertTrue(propagated, "the original advertise must propagate")
+
+    // Talker Failed for the same stream but with a changed maxFrameSize: the flip must not smuggle
+    // the forbidden FirstValue change past mutual exclusion
+    let failedChanged = MSRPTalkerFailedValue(
+      streamID: streamID, dataFrameParameters: advertise.dataFrameParameters,
+      tSpec: MSRPTSpec(maxFrameSize: 256, maxIntervalFrames: 1),
+      priorityAndRank: advertise.priorityAndRank, accumulatedLatency: advertise.accumulatedLatency,
+      systemID: MSRPSystemID(id: 0x1234), failureCode: .insufficientBandwidth
+    )
+    try await _drive(
+      msrp,
+      port: 0,
+      attributeType: .talkerFailed,
+      value: failedChanged,
+      event: .JoinIn
+    )
+    let failed = await _waitFor {
+      await _declaredTalkerFailureCode(msrp, streamID, port: 1)
+        == .changeInFirstValueForRegisteredStreamID
+    }
+    XCTAssertTrue(
+      failed,
+      "a FirstValue change hidden in a type flip must fail the stream (code 16)"
+    )
+    if let egressFailed = await _declaredTalkerFailed(msrp, streamID, port: 1) {
+      XCTAssertTrue(
+        egressFailed.isEqualIdentity(to: advertise),
+        "the Failed declaration must carry the original FirstValue"
+      )
+    }
     _ = controller
   }
 
@@ -5172,7 +5326,7 @@ private final class AttributeValue<A: Application>: @unchecked Sendable, Equatab
   static func == (lhs: AttributeValue<A>, rhs: AttributeValue<A>) -> Bool {
     lhs.matches(
       attributeType: rhs.attributeType,
-      matching: .matchEqual(rhs.unwrappedValue)
+      matching: .matchIdentity(rhs.unwrappedValue)
     )
   }
 
@@ -5209,10 +5363,10 @@ private final class AttributeValue<A: Application>: @unchecked Sendable, Equatab
         return self.index == index
       case let .matchIndex(value):
         return index == value.index
-      case let .matchEqual(value):
-        return self.value == value.eraseToAny()
+      case let .matchIdentity(value):
+        return self.value.isEqualIdentity(to: value)
       case .matchRelative(let (value, offset)):
-        return try self.value == value.makeValue(relativeTo: offset).eraseToAny()
+        return try self.value.isEqualIdentity(to: value.makeValue(relativeTo: offset))
       }
     } catch {
       return false
@@ -5268,7 +5422,8 @@ extension MRPTests {
   private func _makeRecomputeMSRP(
     portIDs: [Int],
     flags: MSRPApplicationFlags = .defaultFlags,
-    portTcMaxLatency: [Int: Int] = [:]
+    portTcMaxLatency: [Int: Int] = [:],
+    leaveTime: Duration? = nil
   ) async throws
     -> (MRPController<MockPort>, MSRPApplication<MockPort>, MRPTestRecorder)
   {
@@ -5277,7 +5432,8 @@ extension MRPTests {
     let bridge = MockBridge(ports: ports, recorder: recorder)
     let controller = try await MRPController(
       bridge: bridge,
-      logger: Logger(label: "com.padl.MRPTests.recompute")
+      logger: Logger(label: "com.padl.MRPTests.recompute"),
+      timerConfiguration: MRPTimerConfiguration(leaveTime: leaveTime)
     )
     let msrp = try await MSRPApplication(
       controller: controller,
@@ -5290,7 +5446,7 @@ extension MRPTests {
   // Like _makeRecomputeMSRP but seeds the controller's ports through the real port-add path, so
   // controller.isEndStation is false (>= 2 ports = a bridge). _makeRecomputeMSRP leaves the
   // controller's port set empty, which reads as an end station.
-  private func _makeBridgeMSRP(portIDs: [Int]) async throws
+  private func _makeBridgeMSRP(portIDs: [Int], leaveTime: Duration? = nil) async throws
     -> (MRPController<MockPort>, MSRPApplication<MockPort>, MRPTestRecorder)
   {
     let recorder = MRPTestRecorder()
@@ -5298,7 +5454,8 @@ extension MRPTests {
     let bridge = MockBridge(ports: ports, recorder: recorder)
     let controller = try await MRPController(
       bridge: bridge,
-      logger: Logger(label: "com.padl.MRPTests.bridge")
+      logger: Logger(label: "com.padl.MRPTests.bridge"),
+      timerConfiguration: MRPTimerConfiguration(leaveTime: leaveTime)
     )
     let msrp = try await MSRPApplication(controller: controller)
     for port in ports {
@@ -6019,7 +6176,10 @@ extension MRPTests {
       streamID: streamID,
       dataFrameParameters: MSRPDataFrameParameters(destinationAddress: dest, vlanIdentifier: 2),
       tSpec: MSRPTSpec(maxFrameSize: 64, maxIntervalFrames: 1),
-      priorityAndRank: MSRPPriorityAndRank(dataFramePriority: .CA, rank: true),
+      // immutable FirstValue fields (incl. PriorityAndRank) must match _talkerAdvertise: a bridge
+      // preserves them across an Advertise->Failed transition, only the type/FailureInformation
+      // change
+      priorityAndRank: MSRPPriorityAndRank(dataFramePriority: .CA, rank: false),
       accumulatedLatency: 1000,
       systemID: MSRPSystemID(id: 0x1234),
       failureCode: failureCode
@@ -8066,7 +8226,7 @@ extension MRPTests {
     // the Failed declaration carries the original (kept) FirstValue, not the changed one
     if let egressFailed = await _declaredTalkerFailed(msrp, streamID, port: 1) {
       XCTAssertTrue(
-        egressFailed.hasSameImmutableFields(as: original),
+        egressFailed.isEqualIdentity(to: original),
         "\(field): the Failed declaration must carry the original FirstValue", line: line
       )
     }
@@ -8151,7 +8311,7 @@ extension MRPTests {
     let egress = await _declaredTalkerAdvertise(msrp, streamID, port: 1)
     XCTAssertNotNil(egress, "the stream must remain advertised")
     if let egress {
-      XCTAssertTrue(egress.hasSameImmutableFields(as: original))
+      XCTAssertTrue(egress.isEqualIdentity(to: original))
     }
     _ = controller
   }
