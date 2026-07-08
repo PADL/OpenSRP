@@ -302,7 +302,10 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
         .withPortState(port: port) { $0.asCapable }).flatMap { $0 }
       self.asCapable = asCapable ?? false
       transmitRate = await (try? application._getTransmitRate(for: participant)) ?? 0
-      forwarding = application._ignoreAsCapable || asCapable != false
+      // spanning-tree Forwarding state (an MSTP query), not AVB admission: a blocked port
+      // propagates nothing regardless of asCapable
+      forwarding = await (try? application
+        .withPortState(port: port) { $0.isForwarding }) ?? false
     }
   }
 
