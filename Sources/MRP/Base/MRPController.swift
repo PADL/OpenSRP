@@ -297,7 +297,7 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
   // statistics refresh) can be told apart from a real carrier/STP/VLAN/link change.
   private struct PortMRPState: Equatable {
     let isOperational, isEnabled, isPointToPoint: Bool
-    let stpPortState: STPPortState
+    let stpPortState: STPPortState?
     let pvid: UInt16?
     let vlans: Set<VLAN>
     let mtu, linkSpeed: UInt

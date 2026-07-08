@@ -222,7 +222,7 @@ struct MSRPPortState<P: AVBPort>: Sendable {
   init(application: MSRPApplication<P>, port: P) throws {
     let isAvbCapable = port.isAvbCapable || application._forceAvbCapable
     msrpPortEnabledStatus = isAvbCapable
-    stpPortState = port.stpPortState
+    stpPortState = port.stpPortState ?? .forwarding
     srpDomainBoundaryPort = .init(uniqueKeysWithValues: application._allSRClassIDs.map { (
       $0,
       false // peer-derived only; our own status is live in isSrpDomainBoundary
@@ -573,9 +573,11 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     var stpChanged = false
     for port in context {
       guard let index = _portStates.index(forKey: port.id) else { continue }
-      if _portStates.values[index].stpPortState != port.stpPortState {
-        _logger.info("MSRP: port \(port) spanning-tree state now \(port.stpPortState)")
-        _portStates.values[index].stpPortState = port.stpPortState
+      // nil = an AF_UNSPEC snapshot with no bridge-port state; keep the last-known STP state
+      guard let stpPortState = port.stpPortState else { continue }
+      if _portStates.values[index].stpPortState != stpPortState {
+        _logger.info("MSRP: port \(port) spanning-tree state now \(stpPortState)")
+        _portStates.values[index].stpPortState = stpPortState
         _portStates.values[index].invalidate()
         _tcDetected.insert(port.id) // 10.3 a): declarations propagated from this port are New
         stpChanged = true

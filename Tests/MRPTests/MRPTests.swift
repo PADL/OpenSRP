@@ -30,7 +30,7 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
   AVBPort
 {
   var id: Int
-  var stpPortState: STPPortState =
+  var stpPortState: STPPortState? =
     .forwarding // equality/hash are by id only, so a re-add can flip this
 
   static func == (lhs: MockPort, rhs: MockPort) -> Bool {
