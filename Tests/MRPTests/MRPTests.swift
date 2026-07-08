@@ -6137,8 +6137,10 @@ extension MRPTests {
     try await _setStpStates(msrp, portIDs: [0, 1], [1: .blocking])
     let withdrawn = await _waitFor { await recorder.fdbDeregister.count > deregBefore }
     XCTAssertTrue(withdrawn, "a blocked port must withdraw its reservation (35.1.3.1)")
-    let stillDeclared = await _isDeclared(msrp, .talkerAdvertise, streamID, port: 1)
-    XCTAssertFalse(stillDeclared, "a blocked port must not propagate the talker declaration")
+    // the declaration withdrawal is a distinct effect from the FDB deregister, so poll for it
+    let undeclared = await _waitFor { await !_isDeclared(msrp, .talkerAdvertise, streamID, port: 1)
+    }
+    XCTAssertTrue(undeclared, "a blocked port must not propagate the talker declaration")
 
     // restore Forwarding -> the surviving talker reprograms the reservation
     let regBefore = await recorder.fdbRegister.count
@@ -6868,9 +6870,11 @@ extension MRPTests {
     try await _setStpStates(msrp, portIDs: [0, 1], [0: .blocking])
     let withdrawn = await _waitFor { await recorder.fdbDeregister.count > deregBefore }
     XCTAssertTrue(withdrawn, "blocking the talker source must withdraw the egress reservation")
-    let stillDeclared = await _isDeclared(msrp, .talkerAdvertise, streamID, port: 1)
-    XCTAssertFalse(
-      stillDeclared,
+    // the declaration withdrawal is a distinct effect from the FDB deregister, so poll for it
+    let undeclared = await _waitFor { await !_isDeclared(msrp, .talkerAdvertise, streamID, port: 1)
+    }
+    XCTAssertTrue(
+      undeclared,
       "blocking the talker source must withdraw the propagated declaration"
     )
 
