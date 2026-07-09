@@ -630,6 +630,8 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
 
   fileprivate let _nlLinkSocket: NLSocket
   private let _nlQDiscHandle: UInt16?
+  // Per-port AVB mode via devlink; nil if the devlink genl family is absent.
+  private let _devlink: RTNLDevlink?
   private var _nlLinkMonitorTask: Task<(), Error>!
   private let _bridgeName: String
   private var _bridgeIndex: Int = 0
@@ -653,6 +655,10 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   // Authoritative link-volatile per-port state (flags + ethtool settings) by ifindex, so a stale
   // Port value copy reads current duplex/speed. Refreshed at startup and on each link notification.
   let _portLinkState = Mutex<[Int: LinuxPortLinkState]>([:])
+  // devlink port (bus/dev/port_index) by netdev ifindex, initialised once at startup so the
+  // AVB config write addresses the port directly rather than dumping ports in the fast path
+  // (async netlink there has bitten us before). Static for DSA switch ports.
+  private var _devlinkPortByIfIndex = [Int: RTNLDevlinkPort]()
   private let _portNotificationChannel = AsyncChannel<PortNotification<P>>()
   private let _rxPacketsChannel = AsyncThrowingChannel<(P.ID, IEEE802Packet), Error>()
   private var _linkLocalRegistrations = Set<FilterRegistration>()
@@ -692,6 +698,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     _bridgeName = name
     _nlLinkSocket = try NLSocket(protocol: NETLINK_ROUTE)
     _nlQDiscHandle = qDiscHandle
+    _devlink = try? RTNLDevlink()
     _pmc = try await PTPManagementClient(path: ptpManagementClientSocketPath)
     _portExclusions = portExclusions
     _logger = logger
@@ -1037,6 +1044,8 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
       if numTXQueues > 0 { _portNumTXQueues.withLock { $0[link.index] = numTXQueues } }
     }
 
+    await _initDevlinkPortCache()
+
     let ports = try await _getMemberPorts()
     for port in ports {
       _updatePortLinkState(port._rtnl)
@@ -1266,7 +1275,85 @@ private extension SRClassPriorityMap {
   }
 }
 
+extension LinuxBridge {
+  // Marvell mv88e6xxx per-port AVB config (PORT_AVB_CFG); names match the
+  // datasheet. avbMode is the admission model; the flags are policy bits.
+  struct MarvellAVBPortConfig: Sendable {
+    enum Mode: UInt16, Sendable {
+      case legacy = 0x0000
+      case standard = 0x4000
+      case enhanced = 0x8000
+      case secure = 0xC000
+    }
+
+    struct Flags: OptionSet, Sendable {
+      let rawValue: UInt16
+      static let avbOverride = Flags(rawValue: 0x2000)
+      static let filterBadAvb = Flags(rawValue: 0x1000)
+      static let avbTunnel = Flags(rawValue: 0x0800)
+      // 6341-only: with filterBadAvb alone, bad-AVB frames are kept out of AVB
+      // egress ports but still egress non-AVB ports; discardBadAvb blocks all.
+      static let discardBadAvb = Flags(rawValue: 0x0400)
+    }
+
+    var avbMode: Mode
+    var flags: Flags = []
+    var rawValue: UInt16 { avbMode.rawValue | flags.rawValue }
+  }
+
+  // Initialise _devlinkPortByIfIndex from a one-shot port dump; a no-op without devlink.
+  private func _initDevlinkPortCache() async {
+    guard let devlink = _devlink, let ports = try? await devlink.ports() else { return }
+    for port in ports {
+      if let ifIndex = port.netdevIfIndex { _devlinkPortByIfIndex[Int(ifIndex)] = port }
+    }
+  }
+
+  // Write the per-port AVB config via the mv88e6xxx "avb_cfg" devlink param, addressing the
+  // port through the startup-initialised cache (refreshed once on a miss to self-heal).
+  private func _setAVBPortConfig(on port: P, _ config: MarvellAVBPortConfig) async throws {
+    guard let devlink = _devlink else { throw Errno.notSupported }
+    if _devlinkPortByIfIndex[port._rtnl.index] == nil { await _initDevlinkPortCache() }
+    guard let dlport = _devlinkPortByIfIndex[port._rtnl.index] else {
+      throw Errno.noSuchAddressOrDevice
+    }
+    try await devlink.setPortParam(
+      busName: dlport.busName,
+      devName: dlport.devName,
+      portIndex: dlport.portIndex,
+      name: "avb_cfg",
+      u16Value: config.rawValue
+    )
+  }
+}
+
 extension LinuxBridge: MSRPAwareBridge {
+  // Per-port AVB admission control via the mv88e6xxx devlink mode: secure (checks
+  // the ingress reservation) or enhanced. filterBadAvb is a single per-port bit
+  // (all SR classes), so enable it only when every SR class the port supports is
+  // in the filter set, else a boundary class would be dropped, not regenerated.
+  func configureFiltering(
+    on port: P, type: MSRPFilteringType, requireIngressFdbEntry: Bool, filter: Set<SRclassID>
+  ) async throws {
+    switch type {
+    case .marvell:
+      let supported = ((try? await getSRClassPriorityMap(port: port)) ?? nil)
+        .map { Set($0.keys) } ?? []
+      var config = MarvellAVBPortConfig(avbMode: requireIngressFdbEntry ? .secure : .enhanced)
+      if !supported.isEmpty, supported.isSubset(of: filter) {
+        config.flags.insert(.filterBadAvb)
+      }
+      try await _setAVBPortConfig(on: port, config)
+    }
+  }
+
+  func unconfigureFiltering(on port: P, type: MSRPFilteringType) async throws {
+    switch type {
+    case .marvell:
+      try await _setAVBPortConfig(on: port, .init(avbMode: .legacy))
+    }
+  }
+
   // Compute the legacy (TC0) queue count and base offset for a port, shared by the egress
   // (MQPRIO) and ingress (DCBNL) queue configuration so both derive identical mappings.
   private func _legacyQueueParams(

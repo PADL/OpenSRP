@@ -42,6 +42,8 @@ extension Logger.Level: @retroactive ExpressibleByArgument {
   }
 }
 
+extension MSRPFilteringType: ExpressibleByArgument {}
+
 @main
 private final class MRPDaemon: AsyncParsableCommand {
   typealias P = LinuxPort
@@ -104,6 +106,12 @@ private final class MRPDaemon: AsyncParsableCommand {
 
   @Flag(name: .long, help: "Install an MDB entry on the Talker's ingress port (secure switch mode)")
   var configureIngressMdb: Bool = false
+
+  @Option(
+    name: .long,
+    help: "Per-port AVB admission-control mechanism (\(MSRPFilteringType.allCases.map(\.rawValue).joined(separator: ", ")))"
+  )
+  var configureFiltering: MSRPFilteringType? = nil
 
   @Flag(inversion: .prefixedNo, help: "Flood multicast on bridge ports (802.1Q default on)")
   var multicastFlooding: Bool = true
@@ -172,6 +180,7 @@ private final class MRPDaemon: AsyncParsableCommand {
     case configureIngressQueues
     case configureQueues
     case configureIngressMdb
+    case configureFiltering
     case excludeIface
     case excludeVlan
     case srPVid
@@ -276,7 +285,8 @@ private final class MRPDaemon: AsyncParsableCommand {
         maxFanInPorts: maxFanInPorts,
         srPVid: srPVidVLAN,
         queues: queues,
-        deltaBandwidths: deltaBandwidths.isEmpty ? nil : deltaBandwidths
+        deltaBandwidths: deltaBandwidths.isEmpty ? nil : deltaBandwidths,
+        filtering: configureFiltering
       )
     }
 

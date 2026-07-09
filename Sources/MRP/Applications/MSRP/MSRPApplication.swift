@@ -56,7 +56,21 @@ public struct MSRPApplicationFlags: OptionSet, Sendable {
     Self([.leaveImmediate, .disableFlowControl])
 }
 
+// Per-port admission control: restrict the AVB traffic classes to reserved
+// streams. Mechanism is platform-specific; the bridge dispatches on the type.
+public enum MSRPFilteringType: String, Sendable, CaseIterable {
+  case marvell
+}
+
 protocol MSRPAwareBridge<P>: Bridge where P: AVBPort {
+  // Set per-port admission control via the given mechanism; requireIngressFdbEntry
+  // picks the mode that checks the ingress reservation entry, `filter` is the set
+  // of SR classes whose un-reserved frames to drop (§6, once in the domain).
+  func configureFiltering(
+    on port: P, type: MSRPFilteringType, requireIngressFdbEntry: Bool, filter: Set<SRclassID>
+  ) async throws
+  func unconfigureFiltering(on port: P, type: MSRPFilteringType) async throws
+
   func configureEgressQueues(
     port: P,
     srClassPriorityMap: SRClassPriorityMap,
@@ -267,6 +281,7 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
   let _deltaBandwidths: [SRclassID: Int]
   let _maxTalkerAttributes: Int
   let _flags: MSRPApplicationFlags
+  let _filtering: MSRPFilteringType?
 
   fileprivate let _maxFanInPorts: Int
   fileprivate let _maxSRClass: SRclassID
@@ -314,6 +329,9 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
   // forced New (10.3 a). Approximates tcDetected (13.25); cleared once the recompute drains.
   private var _tcDetected = Set<P.ID>()
   private var _reservedGroupPorts: [MSRPStreamID: GroupReservation] = [:]
+  // ports whose per-port SR admission filter (§6) state is currently applied; the
+  // last SR-class set written, so a recompute re-writes only on a change.
+  private var _portFilterApplied = [P.ID: Set<SRclassID>]()
 
   // Convenience accessors for flags
   fileprivate nonisolated var _forceAvbCapable: Bool { _flags.contains(.forceAvbCapable) }
@@ -333,6 +351,8 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     _flags.contains(.configureIngressMdb)
   }
 
+  fileprivate nonisolated var _configureFiltering: Bool { _filtering != nil }
+
   nonisolated var _ignoreAsCapable: Bool { _flags.contains(.ignoreAsCapable) }
   public nonisolated var registrarLeaveImmediate: Bool { _flags.contains(.leaveImmediate) }
 
@@ -347,11 +367,13 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     maxSRClass: SRclassID = .B,
     queues: [SRclassID: UInt] = [.A: 4, .B: 3],
     deltaBandwidths: [SRclassID: Int]? = nil,
-    maxTalkerAttributes: Int = 150
+    maxTalkerAttributes: Int = 150,
+    filtering: MSRPFilteringType? = nil
   ) async throws {
     _controller = Weak(controller)
     _logger = controller.logger
     _flags = flags
+    _filtering = filtering
     _maxFanInPorts = maxFanInPorts
     _latencyMaxFrameSize = latencyMaxFrameSize
     _srPVid = srPVid
@@ -431,6 +453,9 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     bridge: any MSRPAwareBridge<P>
   ) async throws -> SRClassPriorityMap? {
     guard port.isAvbCapable || _forceAvbCapable else { return nil }
+    // Per-port admission control before queues so it is up first; the in-domain
+    // filter is added later once the port is in the domain (§6).
+    await _applyPortFiltering(port: port, bridge: bridge)
     if _configureEgressQueues || _configureIngressQueues {
       if _configureEgressQueues {
         // best-effort unconfigure (a fresh port has no mqprio to remove); it must not abort the
@@ -468,6 +493,46 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     } else {
       _logger.warning("MSRP: forcing port \(port) to advertise as AVB capable")
       return DefaultSRClassPriorityMap
+    }
+  }
+
+  // §6 / Table 6-5: the SR classes for which this port is in the SR domain --
+  // non-boundary with a matching peer Domain registered -- so a bridge may drop
+  // their un-reserved frames. A boundary class is excluded (it regenerates).
+  private func _portInDomainSRClasses(port: P) -> Set<SRclassID> {
+    guard let participant = try? findParticipant(for: MAPBaseSpanningTreeContext, port: port),
+          let portState = try? withPortState(port: port, { $0 }) else { return [] }
+    var result = Set<SRclassID>()
+    for srClassID in _allSRClassIDs {
+      guard portState.isSrpDomainBoundary(for: srClassID, application: self) == false,
+            let local = portState.srClassPriorityMap[srClassID] else { continue }
+      // require a positively registered matching peer Domain (guards the optimistic
+      // srpDomainBoundaryPort default of false before any recompute has run)
+      for (_, value) in participant.findAttributes(
+        attributeType: MSRPAttributeType.domain.rawValue, matching: .matchAny
+      ) {
+        if let d = value as? MSRPDomainValue, d.srClassID == srClassID, d.srClassPriority == local {
+          result.insert(srClassID)
+          break
+        }
+      }
+    }
+    return result
+  }
+
+  // Apply (or re-apply) a port's admission control and the §6 in-domain filter,
+  // only when the filter state changed, so a recompute is a no-op on no change.
+  private func _applyPortFiltering(port: P, bridge: any MSRPAwareBridge<P>) async {
+    guard let _filtering else { return }
+    let filter = _portInDomainSRClasses(port: port)
+    guard _portFilterApplied[port.id] != filter else { return }
+    do {
+      try await bridge.configureFiltering(
+        on: port, type: _filtering, requireIngressFdbEntry: _configureIngressMdb, filter: filter
+      )
+      _portFilterApplied[port.id] = filter
+    } catch {
+      _logger.error("MSRP: failed to set admission control on port \(port): \(error)")
     }
   }
 
@@ -624,7 +689,7 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
   ) async throws {
     guard contextIdentifier == MAPBaseSpanningTreeContext else { return }
 
-    if _configureEgressQueues || _configureIngressQueues,
+    if _configureEgressQueues || _configureIngressQueues || _configureFiltering,
        let bridge = (controller?.bridge as? any MSRPAwareBridge<P>)
     {
       for port in context {
@@ -649,6 +714,14 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
               .error("MSRP: failed to unconfigure ingress queues for port \(port): \(error)")
           }
         }
+        // Reset the port's admission control, after the queues are gone.
+        if let _filtering {
+          do {
+            try await bridge.unconfigureFiltering(on: port, type: _filtering)
+          } catch {
+            _logger.error("MSRP: failed to reset admission control on port \(port): \(error)")
+          }
+        }
       }
     }
 
@@ -657,6 +730,8 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
       _logger.debug("MSRP: port \(port) disappeared, removing")
       // this also drops the port's cached reservations so a later re-add reprograms the hardware
       _portStates.removeValue(forKey: port.id)
+      // forget the applied filter state so a re-added port is reprogrammed
+      _portFilterApplied.removeValue(forKey: port.id)
     }
     // a violation (code 16) whose talker registration vanishes with its port sees no withdraw or
     // revert to clear it: drop the vanished ports so a clean future re-declaration is not failed
@@ -1773,6 +1848,9 @@ extension MSRPApplication {
           port: port,
           srClassID: domain.srClassID
         )
+        if let bridge = controller?.bridge as? any MSRPAwareBridge<P> {
+          await _applyPortFiltering(port: port, bridge: bridge)
+        }
       }
     }
     throw MRPError.doNotPropagateAttribute
@@ -2247,6 +2325,9 @@ extension MSRPApplication {
           port: port,
           srClassID: domain.srClassID
         )
+        if let bridge = controller?.bridge as? any MSRPAwareBridge<P> {
+          await _applyPortFiltering(port: port, bridge: bridge)
+        }
       }
     }
 
