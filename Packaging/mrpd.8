@@ -196,9 +196,11 @@ Install
 .BR tc (8)
 cls_flower ingress rules on the port's
 .B clsact
-qdisc that drop SR-priority frames lacking a dynamic reservation, for use with a
-software (non-offloaded) bridge. Requires a kernel with cls_flower and the
-dynamic-reservation match key.
+qdisc, for use with a software (non-offloaded) bridge: on in-domain ports drop
+SR-priority frames lacking a dynamic reservation, and on boundary ports
+regenerate SR-priority frames to priority 0. Requires a kernel with cls_flower
+and the dynamic-reservation match key; boundary regeneration acts on the
+in-payload VLAN tag only.
 .RE
 .PP
 A class is filtered only once the port has joined that SR class's domain. Ports

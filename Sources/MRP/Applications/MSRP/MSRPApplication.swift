@@ -64,11 +64,13 @@ public enum MSRPFilteringType: String, Sendable, CaseIterable {
 }
 
 protocol MSRPAwareBridge<P>: Bridge where P: AVBPort {
-  // Set per-port admission control via the given mechanism; requireIngressFdbEntry
-  // picks the mode that checks the ingress reservation entry, `filter` is the set
-  // of SR classes whose un-reserved frames to drop (§6, once in the domain).
+  // Set per-port admission control via the given mechanism; requireIngressFdbEntry picks the
+  // mode that checks the ingress reservation entry. `filter` is the set of in-domain SR classes
+  // whose un-reserved frames to drop (§6); `regenerate` is the set of boundary SR classes whose
+  // frames have their priority regenerated to 0 (Table 6-5). Some mechanisms regenerate in HW.
   func configureFiltering(
-    on port: P, type: MSRPFilteringType, requireIngressFdbEntry: Bool, filter: Set<SRclassID>
+    on port: P, type: MSRPFilteringType, requireIngressFdbEntry: Bool,
+    filter: Set<SRclassID>, regenerate: Set<SRclassID>
   ) async throws
   func unconfigureFiltering(on port: P, type: MSRPFilteringType) async throws
 
@@ -330,9 +332,14 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
   // forced New (10.3 a). Approximates tcDetected (13.25); cleared once the recompute drains.
   private var _tcDetected = Set<P.ID>()
   private var _reservedGroupPorts: [MSRPStreamID: GroupReservation] = [:]
-  // ports whose per-port SR admission filter (§6) state is currently applied; the
-  // last SR-class set written, so a recompute re-writes only on a change.
-  private var _portFilterApplied = [P.ID: Set<SRclassID>]()
+  // ports whose per-port SR admission state is currently applied: the last (drop, regenerate)
+  // SR-class sets written, so a recompute re-writes only on a change.
+  private struct PortAdmissionState: Equatable {
+    var filter: Set<SRclassID>
+    var regenerate: Set<SRclassID>
+  }
+
+  private var _portFilterApplied = [P.ID: PortAdmissionState]()
 
   // Convenience accessors for flags
   fileprivate nonisolated var _forceAvbCapable: Bool { _flags.contains(.forceAvbCapable) }
@@ -521,17 +528,34 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     return result
   }
 
-  // Apply (or re-apply) a port's admission control and the §6 in-domain filter,
-  // only when the filter state changed, so a recompute is a no-op on no change.
+  // Table 6-5 / §6.9.4: SR classes for which this port is a confirmed SR domain boundary, so a
+  // bridge regenerates their frames' priority to 0. Needs a local priority to match against.
+  private func _portBoundarySRClasses(port: P) -> Set<SRclassID> {
+    guard let portState = try? withPortState(port: port, { $0 }) else { return [] }
+    var result = Set<SRclassID>()
+    for srClassID in _allSRClassIDs {
+      guard portState.isSrpDomainBoundary(for: srClassID, application: self) == true,
+            portState.srClassPriorityMap[srClassID] != nil else { continue }
+      result.insert(srClassID)
+    }
+    return result
+  }
+
+  // Apply (or re-apply) a port's admission control -- the §6 in-domain drop set and the
+  // boundary regeneration set -- only when either changed, so a recompute is a no-op otherwise.
   private func _applyPortFiltering(port: P, bridge: any MSRPAwareBridge<P>) async {
     guard let _filtering else { return }
-    let filter = _portInDomainSRClasses(port: port)
-    guard _portFilterApplied[port.id] != filter else { return }
+    let state = PortAdmissionState(
+      filter: _portInDomainSRClasses(port: port),
+      regenerate: _portBoundarySRClasses(port: port)
+    )
+    guard _portFilterApplied[port.id] != state else { return }
     do {
       try await bridge.configureFiltering(
-        on: port, type: _filtering, requireIngressFdbEntry: _configureIngressMdb, filter: filter
+        on: port, type: _filtering, requireIngressFdbEntry: _configureIngressMdb,
+        filter: state.filter, regenerate: state.regenerate
       )
-      _portFilterApplied[port.id] = filter
+      _portFilterApplied[port.id] = state
     } catch {
       _logger.error("MSRP: failed to set admission control on port \(port): \(error)")
     }

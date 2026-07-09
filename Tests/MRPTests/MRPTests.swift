@@ -556,7 +556,8 @@ struct MockBridge: MRP.Bridge, CustomStringConvertible {
 
 extension MockBridge: MSRPAwareBridge {
   func configureFiltering(
-    on port: P, type: MSRPFilteringType, requireIngressFdbEntry: Bool, filter: Set<SRclassID>
+    on port: P, type: MSRPFilteringType, requireIngressFdbEntry: Bool,
+    filter: Set<SRclassID>, regenerate: Set<SRclassID>
   ) async throws {}
   func unconfigureFiltering(on port: P, type: MSRPFilteringType) async throws {}
 
