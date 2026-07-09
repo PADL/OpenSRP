@@ -870,7 +870,9 @@ public extension Participant {
       try _handleAttributeValue(attribute, protocolEvent: .periodic, eventSource: eventSource)
     }
 
-    if !isNew, let attributeSubtype, attribute.attributeSubtype != attributeSubtype { _logger
+    // apply a changed subtype even when re-declaring New: an existing attribute (e.g. a merged
+    // listener propagated during a topology change) must not emit New carrying the stale subtype.
+    if let attributeSubtype, attribute.attributeSubtype != attributeSubtype { _logger
       .debug(
         "\(self): \(eventSource) declared attribute \(attribute) with new subtype \(attributeSubtype); replacing"
       )
