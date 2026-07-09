@@ -5661,6 +5661,44 @@ extension MRPTests {
     _ = controller
   }
 
+  // 35.2.6: a peer that re-declares a Listener with a changed FourPackedEvent (subtype) via a New
+  // message -- an imperfect endpoint, or 10.3 New-marking on a topology change -- must have the
+  // change applied on receive, else the toward-talker declaration latches the stale subtype (a
+  // flowing stream stuck reporting Ready Failed). Receive-side twin of the join()-side ee3022f fix.
+  func testMSRPListenerSubtypeChangeViaNewIsApplied() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0001)
+
+    // talker on port 0, a single listener on port 1
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .JoinIn
+    )
+    // the listener first declares Ready Failed (as an imperfect single listener might)
+    try await _drive(
+      msrp, port: 1, attributeType: .listener, value: MSRPListenerValue(streamID: streamID),
+      event: .JoinIn, subtype: .readyFailed
+    )
+    let sawReadyFailed = await _waitFor {
+      await _declaredListenerSubtype(msrp, streamID, port: 0) == .readyFailed
+    }
+    XCTAssertTrue(sawReadyFailed, "toward-talker declaration should start at readyFailed")
+
+    // recovery arrives as a New message with a changed subtype for the already-registered stream
+    try await _drive(
+      msrp, port: 1, attributeType: .listener, value: MSRPListenerValue(streamID: streamID),
+      event: .New, subtype: .ready
+    )
+    let recovered = await _waitFor {
+      await _declaredListenerSubtype(msrp, streamID, port: 0) == .ready
+    }
+    XCTAssertTrue(
+      recovered,
+      "a New re-declaration with a changed subtype must update the propagated declaration (35.2.6), not latch readyFailed"
+    )
+    _ = controller
+  }
+
   // re-running the recompute with unchanged registrations must not touch the kernel.
   func testRecomputeIdempotentReapply() async throws {
     let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0, 1])
