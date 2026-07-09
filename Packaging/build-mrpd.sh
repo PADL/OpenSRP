@@ -187,10 +187,11 @@ msg "mrpd shared-library dependencies (NEEDED) — verify these exist on target:
 
 # Runtime deps from the binary's NEEDED libs (see objdump output above) plus
 # nftables + iproute2, which are invoked from mrpd.service (nft, bridge).
-# libcurl4t64 is only pulled in by the REST API (FoundationNetworking under
-# static linking), so the minimal build omits it.
-deps="libc6, libstdc++6, libgcc-s1, liburing2, libsystemd0, libnl-3-200, libnl-route-3-200, libnl-nf-3-200, nftables, iproute2, python3, python3-requests, libjemalloc2"
-[ -n "${CONSTRAINED:-}" ] || deps="libcurl4t64, $deps"
+# python3 is needed by atu-snapshot in both builds. libcurl4t64 (REST API via
+# FoundationNetworking) and python3-requests (the mrp CLI) are REST-only, so
+# the minimal build, which ships neither the REST server nor mrp, omits them.
+deps="libc6, libstdc++6, libgcc-s1, liburing2, libsystemd0, libnl-3-200, libnl-route-3-200, libnl-nf-3-200, nftables, iproute2, python3, libjemalloc2"
+[ -n "${CONSTRAINED:-}" ] || deps="libcurl4t64, python3-requests, $deps"
 build_deb "$PKG" "$VER" "$stage" "$deps" \
   "OpenSRP MRP/MVRP/MSRP daemon (mrpd) with portmon and pmctool helpers" \
   mrpd.service avb.target
