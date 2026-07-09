@@ -686,6 +686,8 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   // exactly once, on the first/last member port. See configureIngressQueues(port:...).
   private var _ingressQueuePorts = Set<P.ID>()
   private var _ingressMappingIsGlobal = false
+  // SR classes with a cls_flower ingress rule installed per port: drop (filter) and regen sets.
+  private var _flowerClasses = [P.ID: (filter: Set<SRclassID>, regenerate: Set<SRclassID>)]()
   private let _logger: Logger
 
   public init(
@@ -1333,10 +1335,12 @@ extension LinuxBridge: MSRPAwareBridge {
   // (all SR classes), so enable it only when every SR class the port supports is
   // in the filter set, else a boundary class would be dropped, not regenerated.
   func configureFiltering(
-    on port: P, type: MSRPFilteringType, requireIngressFdbEntry: Bool, filter: Set<SRclassID>
+    on port: P, type: MSRPFilteringType, requireIngressFdbEntry: Bool,
+    filter: Set<SRclassID>, regenerate: Set<SRclassID>
   ) async throws {
     switch type {
     case .marvell:
+      // regenerate is ignored: the mv88e6xxx regenerates non-reserved SR frames in HW.
       let supported = ((try? await getSRClassPriorityMap(port: port)) ?? nil)
         .map { Set($0.keys) } ?? []
       var config = MarvellAVBPortConfig(avbMode: requireIngressFdbEntry ? .secure : .enhanced)
@@ -1344,6 +1348,8 @@ extension LinuxBridge: MSRPAwareBridge {
         config.flags.insert(.filterBadAvb)
       }
       try await _setAVBPortConfig(on: port, config)
+    case .tcflower:
+      try await _configureFlowerFiltering(on: port, filter: filter, regenerate: regenerate)
     }
   }
 
@@ -1351,7 +1357,62 @@ extension LinuxBridge: MSRPAwareBridge {
     switch type {
     case .marvell:
       try await _setAVBPortConfig(on: port, .init(avbMode: .legacy))
+    case .tcflower:
+      // removing the clsact qdisc tears down every attached ingress filter at once
+      if let classes = _flowerClasses[port.id], !classes.filter.isEmpty || !classes.regenerate.isEmpty {
+        try? await port._rtnl.removeClsActQDisc(socket: _nlLinkSocket)
+      }
+      _flowerClasses.removeValue(forKey: port.id)
     }
+  }
+
+  // Stable, non-overlapping flower priorities per SR class for the drop and regen rules.
+  private func _flowerDropPriority(_ srClassID: SRclassID) -> UInt16 {
+    0xB000 | UInt16(srClassID.rawValue)
+  }
+
+  private func _flowerRegenPriority(_ srClassID: SRclassID) -> UInt16 {
+    0xC000 | UInt16(srClassID.rawValue)
+  }
+
+  // Install/remove cls_flower ingress rules: drop un-reserved SR frames of each in-domain class
+  // (§6), regenerate to priority 0 the SR frames of each boundary class (Table 6-5). Adds are
+  // idempotent (addOrUpdate) and removes tolerate an already-gone rule, so a re-apply after a
+  // partial failure converges rather than wedging on EEXIST/ENOENT.
+  private func _configureFlowerFiltering(
+    on port: P, filter: Set<SRclassID>, regenerate: Set<SRclassID>
+  ) async throws {
+    let priorityMap = ((try? await getSRClassPriorityMap(port: port)) ?? nil) ?? [:]
+    let current = _flowerClasses[port.id] ?? (filter: [], regenerate: [])
+    let hadAny = !current.filter.isEmpty || !current.regenerate.isEmpty
+    if (!filter.isEmpty || !regenerate.isEmpty), !hadAny {
+      try await port._rtnl.addClsActQDisc(socket: _nlLinkSocket)
+    }
+    for srClassID in filter.subtracting(current.filter) {
+      guard let priority = priorityMap[srClassID] else { continue }
+      try await port._rtnl.addFlowerDynamicReservationDrop(
+        vlanPriority: priority.rawValue, priority: _flowerDropPriority(srClassID),
+        socket: _nlLinkSocket
+      )
+    }
+    for srClassID in current.filter.subtracting(filter) {
+      try? await port._rtnl.removeFlowerFilter(
+        priority: _flowerDropPriority(srClassID), socket: _nlLinkSocket
+      )
+    }
+    for srClassID in regenerate.subtracting(current.regenerate) {
+      guard let priority = priorityMap[srClassID] else { continue }
+      try await port._rtnl.addFlowerPriorityRegen(
+        vlanPriority: priority.rawValue, priority: _flowerRegenPriority(srClassID),
+        socket: _nlLinkSocket
+      )
+    }
+    for srClassID in current.regenerate.subtracting(regenerate) {
+      try? await port._rtnl.removeFlowerFilter(
+        priority: _flowerRegenPriority(srClassID), socket: _nlLinkSocket
+      )
+    }
+    _flowerClasses[port.id] = (filter: filter, regenerate: regenerate)
   }
 
   // Compute the legacy (TC0) queue count and base offset for a port, shared by the egress
