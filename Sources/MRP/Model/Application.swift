@@ -218,6 +218,10 @@ extension Application {
   }
 
   func rx(packet: IEEE802Packet, from port: P) throws {
+    // An MRPDU is by definition addressed to the application group address
+    // (802.1Q §10.5 a, §11.2.3.1.3); our EtherType-only BPF snoop over-captures
+    // frames a real bridge's MRP entity would never see, so drop the rest.
+    guard _isEqualMacAddress(packet.destMacAddress, groupAddress) else { return }
     let pdu = try packet.payload.withParserSpan { input in
       try MRPDU(parsing: &input, application: self)
     }
