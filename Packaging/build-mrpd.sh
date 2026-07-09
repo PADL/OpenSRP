@@ -113,6 +113,11 @@ else
     "${CROSS_COMPILE}strip" --strip-unneeded "$stage/$b"
   done
 fi
+# Manual page — install gzipped so `man mrpd` finds it in section 8.
+gzip -9 -n -c "$SWIFTMRP_DIR/Packaging/mrpd.8" \
+  > "$WORK_DIR/mrpd.8.gz"
+install -D -m0644 "$WORK_DIR/mrpd.8.gz" \
+  "$stage/usr/share/man/man8/mrpd.8.gz"
 install -D -m0644 "$SWIFTMRP_DIR/Configs/mrpd.service" \
   "$stage/lib/systemd/system/mrpd.service"
 # Pin the jemalloc LD_PRELOAD multiarch dir to the target arch. The committed

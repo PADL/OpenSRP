@@ -1,0 +1,280 @@
+.\" Copyright (c) 2024 PADL Software Pty Ltd
+.\" Licensed under the Apache License, Version 2.0
+.TH MRPD 8 "2026-07-09" "OpenSRP" "System Manager's Manual"
+.SH NAME
+mrpd \- Multiple Registration Protocol / Stream Reservation Protocol daemon
+.SH SYNOPSIS
+.B mrpd
+.B \-b
+.I bridge
+.RB [ \-\-enable\-srp ]
+.RB [ \-\-enable\-mmrp ]
+.RB [ \-\-enable\-mvrp ]
+.RB [ \-\-enable\-msrp ]
+.RI [ options ]
+.SH DESCRIPTION
+.B mrpd
+(OpenSRP) is an implementation of the IEEE 802.1Q Stream Reservation Protocol
+(SRP) suite: the Multiple MAC Registration Protocol (MMRP), the Multiple VLAN
+Registration Protocol (MVRP) and the Multiple Stream Reservation Protocol
+(MSRP). These protocols are applications of the generalized Multiple
+Registration Protocol (MRP, 802.1Q clause 10) and are used in AVB/TSN networks
+to coordinate multicast group membership, VLAN membership and stream bandwidth
+reservations amongst Ethernet bridges.
+.PP
+.B mrpd
+runs on a Linux bridge and drives the standard kernel interfaces: it installs
+forwarding database (FDB/MDB) entries for registered groups and streams,
+manages VLAN membership, and adjusts the Credit Based Shaper (CBS) traffic
+control parameters dynamically as reservations come and go (when no streams are
+reserved the
+.B cbs
+qdisc is replaced by the default
+.BR pfifo_fast ).
+It acts as the sole MRP entity on the bridge, running the applicant, registrar
+and attribute\-propagation state machines itself on behalf of every managed
+port.
+.PP
+At least one application protocol must be enabled (see
+.B APPLICATION PROTOCOLS
+below); enabling none leaves the daemon idle. A master bridge interface
+.RB ( \-b )
+is required.
+.PP
+.B mrpd
+integrates with
+.BR systemd :
+when run as a service it logs to the journal and issues readiness/stop
+notifications; otherwise it logs to standard error. It shuts down gracefully on
+.B SIGTERM
+and
+.BR SIGINT .
+.SH APPLICATION PROTOCOLS
+.TP
+.B \-\-enable\-srp
+Convenience switch enabling the full Stream Reservation Protocol suite: it
+turns on MVRP and MSRP (and turns MMRP off). This is the normal way to run the
+daemon for AVB/TSN.
+.TP
+.B \-\-enable\-mmrp
+Enable the Multiple MAC Registration Protocol (multicast group registration).
+.TP
+.B \-\-enable\-mvrp
+Enable the Multiple VLAN Registration Protocol (VLAN membership registration).
+.TP
+.B \-\-enable\-msrp
+Enable the Multiple Stream Reservation Protocol (stream bandwidth reservation).
+MSRP relies on MVRP for VLAN propagation, so it is normally enabled alongside
+it (as
+.B \-\-enable\-srp
+does).
+.SH OPTIONS
+.SS General
+.TP
+.BI \-b ", " \-\-bridge\-interface " name"
+Master bridge interface name (required), e.g.
+.BR br0 .
+.TP
+.BI \-q ", " \-\-q\-disc\-handle " handle"
+Root qdisc handle used when installing traffic control queues. Default
+.BR 0x9000 .
+.TP
+.BI \-\-exclude\-iface " name"
+Exclude a physical interface from MRP processing. May be given more than once.
+.TP
+.BI \-\-exclude\-vlan " vid"
+Exclude a VLAN from MVRP declaration/propagation. May be given more than once.
+.TP
+.BI \-l ", " \-\-log\-level " level"
+Logging verbosity: one of
+.BR trace ", " debug ", " info ", " notice ", " warning ", " error ", " critical .
+Default
+.BR info .
+.TP
+.B \-h ", " \-\-help
+Print a usage summary and exit.
+.TP
+.B \-\-version
+Print the version and exit.
+.SS gPTP / AVB capability
+.TP
+.B \-\-ignore\-as\-capable ", " \-\-no\-ignore\-as\-capable
+Whether to ignore the gPTP
+.I asCapable
+status of a port (and skip querying PTP for it). Enabled by default; pass
+.B \-\-no\-ignore\-as\-capable
+to enforce 802.1Q 35.2.1, gating MSRP participation on a port that is gPTP
+capable. See also
+.BR \-\-pmc\-uds\-path .
+.TP
+.B \-\-force\-avb\-capable
+Force all ports to advertise as AVB capable regardless of their actual
+capability.
+.SS PTP management client
+.TP
+.BI \-\-pmc\-uds\-path " path"
+UNIX domain socket path of the PTP management client, used to query per\-port
+.I asCapable
+state from the local gPTP daemon (e.g.
+.BR ptp4l ).
+Relevant only when
+.B \-\-no\-ignore\-as\-capable
+is in effect.
+.SS MSRP behaviour
+.TP
+.B \-\-enable\-talker\-pruning
+Enable MSRP talker pruning: do not propagate a Talker declaration out ports on
+which no matching Listener has registered.
+.TP
+.B \-\-leave\-immediate ", " \-\-no\-leave\-immediate
+Whether the registrar leaves immediately on a received Leave, rather than
+waiting for the LeaveTimer to expire. Enabled by default per Avnu ProAV Bridge
+Specification section 9.2; pass
+.B \-\-no\-leave\-immediate
+to restore the standard 802.1Q leave timing.
+.TP
+.BI \-\-max\-fan\-in\-ports " n"
+Maximum number of MSRP fan\-in ports (ports from which Talker declarations may
+be accepted).
+.B 0
+(the default) means no limit.
+.TP
+.BI \-\-sr\-p\-vid " vid"
+The SR PVID: the single VLAN that both SR classes declare in their MSRP Domain
+(802.1Q 35.2.1.4). Default
+.BR 2 .
+.SS Traffic class queues and bandwidth
+.TP
+.BI \-\-class\-a\-qdisc\-handle " n"
+Egress queue (qdisc handle) for SR class A traffic. Default
+.BR 4 .
+.TP
+.BI \-\-class\-b\-qdisc\-handle " n"
+Egress queue (qdisc handle) for SR class B traffic. Default
+.BR 3 .
+.TP
+.BI \-\-class\-a\-delta\-bandwidth " percent"
+SR class A delta bandwidth, as a percentage. If unset, an implementation
+default is used.
+.TP
+.BI \-\-class\-b\-delta\-bandwidth " percent"
+SR class B delta bandwidth, as a percentage. If unset, an implementation
+default is used.
+.TP
+.B \-\-configure\-egress\-queues
+Automatically configure the MQPRIO egress queues.
+.TP
+.B \-\-configure\-ingress\-queues
+Automatically configure the DCBNL ingress queue (PCP) mapping.
+.TP
+.B \-\-configure\-queues
+Automatically configure both ingress and egress queues (equivalent to giving
+both of the two options above).
+.TP
+.B \-\-configure\-ingress\-mdb
+Install an MDB entry on the Talker's ingress port. This enables "secure switch"
+mode, where the ingress port also requires a dynamic reservation entry to admit
+an SR stream to the AVB queues.
+.SS Bridging
+.TP
+.B \-\-multicast\-flooding ", " \-\-no\-multicast\-flooding
+Whether to flood multicast on bridge ports. Enabled by default (the 802.1Q
+default); pass
+.B \-\-no\-multicast\-flooding
+to disable flooding so that only registered groups are forwarded.
+.SS MRP timers
+All timer intervals are given in seconds (fractional values are accepted).
+.TP
+.BI \-\-join\-time " seconds"
+MRP JoinTime interval. Default
+.BR 0.2 .
+.TP
+.BI \-\-leave\-time " seconds"
+MRP LeaveTime interval. Default
+.BR 5.0 .
+.TP
+.BI \-\-leave\-all\-time " seconds"
+MRP LeaveAllTime interval. Default
+.BR 10.0 .
+.TP
+.BI \-\-periodic\-time " seconds"
+MRP PeriodicTransmission interval;
+.B 0
+disables periodic transmission. Default
+.BR 1.0 .
+Enabled by default for robust interoperability with peers using a short
+LeaveTime (802.1Q 10.7.2).
+.SS REST management (optional)
+.TP
+.BI \-r ", " \-\-rest\-server\-port " port"
+TCP port for the built\-in REST management HTTP server. Available only when
+.B mrpd
+was built with the
+.B RestAPI
+trait; if absent, the REST server is not compiled in.
+.SH USAGE NOTES
+.B mrpd
+expects the bridge, its member interfaces, VLANs and base traffic control
+qdiscs to be configured beforehand with standard tools such as
+.BR ip (8),
+.BR bridge (8)
+and
+.BR tc (8).
+A pre\-routing
+.BR nftables (8)
+hook is required so that MMRP/MVRP frames (destination
+.B 01:80:c2:00:00:20
+and
+.BR 01:80:c2:00:00:21 )
+are intercepted rather than flooded by the bridge, allowing
+.B mrpd
+to propagate them itself.
+.PP
+Do not run a second MVRP applicant against a bridge port managed by
+.BR mrpd :
+neither the Linux in\-kernel 8021q MVRP applicant stacked over a managed port,
+nor a separate MVRP daemon. The kernel applicant remains the correct way for a
+Linux
+.I end station
+(a peer on the far end of a link) to declare membership toward the bridge.
+.SH SIGNALS
+.TP
+.B SIGTERM ", " SIGINT
+Initiate a graceful shutdown (deregister and tear down state).
+.SH FILES
+.TP
+.I /etc/default/avb
+Default environment file read by the
+.B systemd
+service unit (bridge name, interface/group lists and
+.B MRPD_OPTS
+extra options).
+.SH EXAMPLES
+Run the full SRP suite on bridge
+.BR br0 ,
+configuring egress queues and secure\-switch ingress MDB entries:
+.PP
+.RS 4
+.nf
+mrpd --enable-srp -b br0 --configure-egress-queues --configure-ingress-mdb
+.fi
+.RE
+.PP
+Run MVRP only, excluding the management VLAN and an uplink interface:
+.PP
+.RS 4
+.nf
+mrpd --enable-mvrp -b br0 --exclude-vlan 1 --exclude-iface eth0
+.fi
+.RE
+.SH SEE ALSO
+.BR bridge (8),
+.BR ip (8),
+.BR tc (8),
+.BR nft (8),
+.BR ptp4l (8)
+.PP
+IEEE Std 802.1Q (clauses 10, 11, 35), IEEE Std 802.1BA, and the Avnu ProAV
+Bridge Specification.
+.SH AUTHORS
+PADL Software Pty Ltd.
