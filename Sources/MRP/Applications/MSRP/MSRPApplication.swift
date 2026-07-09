@@ -750,13 +750,17 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     attributeValue: some Value,
     on port: P
   ) -> Bool {
-    guard attributeType == MSRPAttributeType.talkerAdvertise.rawValue ||
-      attributeType == MSRPAttributeType.talkerFailed.rawValue,
-      let talker = attributeValue as? any MSRPTalkerValue
-    else {
+    switch MSRPAttributeType(rawValue: attributeType) {
+    case .talkerAdvertise, .talkerFailed:
+      guard let talker = attributeValue as? any MSRPTalkerValue else { return true }
+      // 35.1.3.1: the stream's SR-class VLAN must be present on the port.
+      guard port.vlans.contains(talker.dataFrameParameters.vlanIdentifier) else { return false }
+      // Avnu ProAV §9.3: hold the Registrar MT once the global Talker limit is reached, so the
+      // additional stream is ignored (never registered). Same actor as the Participant.
+      return assumeIsolated { $0._isTalkerRegistrationPermitted(streamID: talker.streamID) }
+    default:
       return true
     }
-    return port.vlans.contains(talker.dataFrameParameters.vlanIdentifier)
   }
 
   // On receipt of a REGISTER_STREAM.request the MSRP Participant shall issue a
@@ -1716,13 +1720,6 @@ extension MSRPApplication {
     switch attributeType {
     case .talkerAdvertise, .talkerFailed:
       let talkerValue = (attributeValue as! any MSRPTalkerValue)
-      guard await !_isMaxTalkerAttributesRegistered else {
-        _logger
-          .info(
-            "MSRP: ignoring talker \(talkerValue.streamID) on \(port): max talker attributes registered"
-          )
-        throw MRPError.doNotPropagateAttribute
-      }
       let ingress = try findParticipant(for: contextIdentifier, port: port)
       // 35.2.2.8: a changed immutable FirstValue is forbidden -- reject the newcomer, keep the
       // original registration, and fail the stream (code 16) until the talker withdraws it.
@@ -2311,31 +2308,23 @@ extension MSRPApplication {
     }
   }
 
-  private var _numberOfRegisteredTalkerAttributes: Int {
-    get async {
-      var numberOfTalkerAttributes = 0
-
-      apply { participant in
-        numberOfTalkerAttributes += participant.findAttributes(
-          attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
-          matching: .matchAny
-        ).count
-
-        numberOfTalkerAttributes += participant.findAttributes(
-          attributeType: MSRPAttributeType.talkerFailed.rawValue,
-          matching: .matchAny
-        ).count
+  // Avnu ProAV §9.3: cap registered Talker streams globally across all ports. Consulted before the
+  // Registrar records a stream (via isRegistrationAllowed), so an over-limit stream is never
+  // registered. An already-registered stream is always permitted (a re-declaration, or an
+  // Advertise<->Failed change, must not be forbidden); the pair is one stream, not two.
+  func _isTalkerRegistrationPermitted(streamID: MSRPStreamID) -> Bool {
+    guard _maxTalkerAttributes > 0 else { return true }
+    var streamIDs = Set<MSRPStreamID>()
+    apply { participant in
+      for type in [MSRPAttributeType.talkerAdvertise, MSRPAttributeType.talkerFailed] {
+        for (_, value) in participant.findAttributes(
+          attributeType: type.rawValue, matching: .matchAny
+        ) {
+          if let talker = value as? any MSRPTalkerValue { streamIDs.insert(talker.streamID) }
+        }
       }
-
-      return numberOfTalkerAttributes
     }
-  }
-
-  private var _isMaxTalkerAttributesRegistered: Bool {
-    get async {
-      guard _maxTalkerAttributes > 0 else { return false }
-      return await _numberOfRegisteredTalkerAttributes >= _maxTalkerAttributes
-    }
+    return streamIDs.contains(streamID) || streamIDs.count < _maxTalkerAttributes
   }
 }
 
