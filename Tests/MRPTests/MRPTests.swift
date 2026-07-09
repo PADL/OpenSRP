@@ -426,6 +426,21 @@ private func _isDeclared(
   ).contains(where: \.isDeclared)
 }
 
+// whether a Talker (Advertise or Failed) is registered (Registrar IN/LV) for a stream on a port
+private func _isTalkerRegistered(
+  _ msrp: MSRPApplication<MockPort>, _ streamID: MSRPStreamID, port: Int
+) async -> Bool {
+  guard let participant = try? await msrp.findParticipant(port: MockPort(id: port))
+  else { return false }
+  for type in [MSRPAttributeType.talkerAdvertise, MSRPAttributeType.talkerFailed] {
+    let registered = await participant.findAllAttributes(
+      attributeType: type.rawValue, matching: .matchAnyIndex(streamID.id)
+    ).contains { $0.registrarState?.isRegistered ?? false }
+    if registered { return true }
+  }
+  return false
+}
+
 // the subtype of the declared listener attribute for a stream on a port (nil if none declared)
 private func _declaredListenerSubtype(
   _ msrp: MSRPApplication<MockPort>, _ streamID: MSRPStreamID, port: Int
@@ -5423,7 +5438,8 @@ extension MRPTests {
     portIDs: [Int],
     flags: MSRPApplicationFlags = .defaultFlags,
     portTcMaxLatency: [Int: Int] = [:],
-    leaveTime: Duration? = nil
+    leaveTime: Duration? = nil,
+    maxTalkerAttributes: Int = 150
   ) async throws
     -> (MRPController<MockPort>, MSRPApplication<MockPort>, MRPTestRecorder)
   {
@@ -5437,7 +5453,8 @@ extension MRPTests {
     )
     let msrp = try await MSRPApplication(
       controller: controller,
-      flags: flags
+      flags: flags,
+      maxTalkerAttributes: maxTalkerAttributes
     )
     try await msrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
     return (controller, msrp, recorder)
@@ -5546,6 +5563,53 @@ extension MRPTests {
       waited += 10
     }
     return await condition()
+  }
+
+  // Avnu ProAV §9.3: at most maxTalkerAttributes Talker streams may be registered, aggregated
+  // across all ports; an additional stream once at the limit is ignored (never registered), and a
+  // slot frees for it when an existing stream leaves.
+  func testTalkerRegistrationLimitIsGlobalAcrossPorts() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(
+      portIDs: [0, 1, 2], maxTalkerAttributes: 2
+    )
+    let a = MSRPStreamID(0x0001_0000_0000_0001)
+    let b = MSRPStreamID(0x0001_0000_0000_0002)
+    let c = MSRPStreamID(0x0001_0000_0000_0003)
+
+    // two streams on two different ports fill the global budget
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise, value: _talkerAdvertise(a), event: .JoinIn
+    )
+    try await _drive(
+      msrp, port: 1, attributeType: .talkerAdvertise, value: _talkerAdvertise(b), event: .JoinIn
+    )
+    let bothRegistered = await _waitFor {
+      let ra = await _isTalkerRegistered(msrp, a, port: 0)
+      let rb = await _isTalkerRegistered(msrp, b, port: 1)
+      return ra && rb
+    }
+    XCTAssertTrue(bothRegistered, "the first two Talker streams should register")
+
+    // a third stream on a third port exceeds the global limit -> ignored (Registrar held MT)
+    try await _drive(
+      msrp, port: 2, attributeType: .talkerAdvertise, value: _talkerAdvertise(c), event: .JoinIn
+    )
+    let cRegistered = await _waitFor(timeoutMs: 500) { await _isTalkerRegistered(msrp, c, port: 2) }
+    XCTAssertFalse(cRegistered, "a Talker stream over the global limit must not be registered")
+
+    // withdrawing one frees a slot; the previously-ignored stream registers on re-declaration
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise, value: _talkerAdvertise(a), event: .Lv
+    )
+    let aGone = await _waitFor { await !_isTalkerRegistered(msrp, a, port: 0) }
+    XCTAssertTrue(aGone, "the withdrawn stream should deregister")
+
+    try await _drive(
+      msrp, port: 2, attributeType: .talkerAdvertise, value: _talkerAdvertise(c), event: .JoinIn
+    )
+    let cNow = await _waitFor { await _isTalkerRegistered(msrp, c, port: 2) }
+    XCTAssertTrue(cNow, "a slot freed by the leave should admit the previously-ignored stream")
+    _ = controller
   }
 
   // talker on one port + a Ready listener on another -> reservation programmed on the
