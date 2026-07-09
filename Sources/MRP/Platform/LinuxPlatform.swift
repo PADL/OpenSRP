@@ -686,6 +686,8 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   // exactly once, on the first/last member port. See configureIngressQueues(port:...).
   private var _ingressQueuePorts = Set<P.ID>()
   private var _ingressMappingIsGlobal = false
+  // SR classes for which a cls_flower ingress drop rule is currently installed, per port.
+  private var _flowerClasses = [P.ID: Set<SRclassID>]()
   private let _logger: Logger
 
   public init(
@@ -1344,6 +1346,8 @@ extension LinuxBridge: MSRPAwareBridge {
         config.flags.insert(.filterBadAvb)
       }
       try await _setAVBPortConfig(on: port, config)
+    case .tcflower:
+      try await _configureFlowerFiltering(on: port, filter: filter)
     }
   }
 
@@ -1351,7 +1355,42 @@ extension LinuxBridge: MSRPAwareBridge {
     switch type {
     case .marvell:
       try await _setAVBPortConfig(on: port, .init(avbMode: .legacy))
+    case .tcflower:
+      // removing the clsact qdisc tears down every attached ingress filter at once
+      if let classes = _flowerClasses[port.id], !classes.isEmpty {
+        try? await port._rtnl.removeClsActQDisc(socket: _nlLinkSocket)
+      }
+      _flowerClasses.removeValue(forKey: port.id)
     }
+  }
+
+  // A stable flower filter priority per SR class, so a rule can be added/removed by class.
+  private func _flowerFilterPriority(_ srClassID: SRclassID) -> UInt16 {
+    0xB000 | UInt16(srClassID.rawValue)
+  }
+
+  // Install/remove cls_flower ingress drop rules to match the in-domain `filter` set: each
+  // class's SR-priority frames without a dynamic reservation FDB hit are dropped (ProAV §6).
+  private func _configureFlowerFiltering(on port: P, filter: Set<SRclassID>) async throws {
+    let priorityMap = ((try? await getSRClassPriorityMap(port: port)) ?? nil) ?? [:]
+    let current = _flowerClasses[port.id] ?? []
+    if !filter.isEmpty, current.isEmpty {
+      try await port._rtnl.addClsActQDisc(socket: _nlLinkSocket)
+    }
+    for srClassID in filter.subtracting(current) {
+      guard let priority = priorityMap[srClassID] else { continue }
+      try await port._rtnl.addFlowerDynamicReservationDrop(
+        vlanPriority: priority.rawValue,
+        priority: _flowerFilterPriority(srClassID),
+        socket: _nlLinkSocket
+      )
+    }
+    for srClassID in current.subtracting(filter) {
+      try await port._rtnl.removeFlowerFilter(
+        priority: _flowerFilterPriority(srClassID), socket: _nlLinkSocket
+      )
+    }
+    _flowerClasses[port.id] = filter
   }
 
   // Compute the legacy (TC0) queue count and base offset for a port, shared by the egress

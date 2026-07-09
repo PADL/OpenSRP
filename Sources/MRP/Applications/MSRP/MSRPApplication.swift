@@ -60,6 +60,7 @@ public struct MSRPApplicationFlags: OptionSet, Sendable {
 // streams. Mechanism is platform-specific; the bridge dispatches on the type.
 public enum MSRPFilteringType: String, Sendable, CaseIterable {
   case marvell
+  case tcflower
 }
 
 protocol MSRPAwareBridge<P>: Bridge where P: AVBPort {
