@@ -178,17 +178,33 @@ an SR stream to the AVB queues.
 .TP
 .BI \-\-configure\-filtering " type"
 Enable per-port AVB admission control on each AVB-capable bridge port, using the
-given switch-specific mechanism. The only supported
+given mechanism. Two
 .I type
-is
-.BR marvell ,
-which sets the mv88e6xxx per-port AVB ingress mode through the
+values are supported.
+.RS
+.TP
+.B marvell
+Set the mv88e6xxx per-port AVB ingress mode through the
 .B avb_cfg
 devlink parameter: secure mode when
 .B \-\-configure\-ingress\-mdb
 is also given, otherwise enhanced (reservation-checked) mode. Ports are returned
-to the default legacy mode on teardown. Ports left unconfigured keep the switch
-default.
+to the default legacy mode on teardown.
+.TP
+.B tcflower
+Install
+.BR tc (8)
+cls_flower ingress rules on the port's
+.B clsact
+qdisc, for use with a software (non-offloaded) bridge: on in-domain ports drop
+SR-priority frames lacking a dynamic reservation, and on boundary ports
+regenerate SR-priority frames to priority 0. Requires a kernel with cls_flower
+and the dynamic-reservation match key; boundary regeneration acts on the
+in-payload VLAN tag only.
+.RE
+.PP
+A class is filtered only once the port has joined that SR class's domain. Ports
+left unconfigured keep the switch default.
 .SS Bridging
 .TP
 .B \-\-multicast\-flooding ", " \-\-no\-multicast\-flooding
