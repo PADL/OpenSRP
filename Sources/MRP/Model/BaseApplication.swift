@@ -216,6 +216,13 @@ extension BaseApplication {
     }
   }
 
+  // 10.3: MAP propagates only across the set of Ports whose Port State (8.4) is
+  // Forwarding, both for the source and each destination. nil (no bridge-port
+  // state) is treated as Forwarding so non-STP setups are unaffected.
+  private func _isForwarding(_ port: P) -> Bool {
+    port.stpPortState.map { $0 == .forwarding } ?? true
+  }
+
   private func _propagateJoinIndicated(
     contextIdentifier: MAPContextIdentifier,
     port: P,
@@ -226,8 +233,9 @@ extension BaseApplication {
     eventSource: EventSource
   ) throws {
     guard shouldPropagate(eventSource: eventSource) else { return }
+    guard _isForwarding(port) else { return } // 10.3: ingress not in Forwarding set
     try apply(for: contextIdentifier) { participant in
-      guard participant.port != port else { return }
+      guard participant.port != port, _isForwarding(participant.port) else { return }
       try participant.join(
         attributeType: attributeType,
         attributeSubtype: attributeSubtype,
@@ -283,9 +291,10 @@ extension BaseApplication {
     eventSource: EventSource
   ) throws {
     guard shouldPropagate(eventSource: eventSource) else { return }
+    guard _isForwarding(port) else { return } // 10.3: ingress not in Forwarding set
     let participants = findParticipants(for: contextIdentifier)
     try apply(for: contextIdentifier) { participant in
-      guard participant.port != port else { return }
+      guard participant.port != port, _isForwarding(participant.port) else { return }
       // 10.3 b): propagate a Leave to a port if and only if no registration for the
       // attribute now exists on any other port excluding it
       let isRegisteredElsewhere = participants.contains {
