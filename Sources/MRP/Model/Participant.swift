@@ -661,10 +661,9 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
           createIfMissing: true
         ) else { continue }
 
-        // if a Bridge receives a MSRP JoinIn/JoinMt message with a different
-        // attribute subtype, it should behave as if a rLv! event with immediate
-        // leavetimer expiration was received.
-        if attributeEvent.protocolEvent == .rJoinIn || attributeEvent.protocolEvent == .rJoinMt,
+        // 35.2.6: a re-registration with a changed FourPackedEvent behaves as leave+rejoin; apply on
+        // any registration event incl. New so a New re-declaration can't retain a stale subtype.
+        if attributeEvent.protocolEvent.indicatesRegistration,
            let attributeSubtype, attribute.attributeSubtype != attributeSubtype
         {
           _logger
