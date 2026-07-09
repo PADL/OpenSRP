@@ -1412,6 +1412,7 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
       isReplacingSubtype: true
     )
     precondition(!isRegistered)
+    participant?._requestTxOpportunity(eventSource: eventSource)
   }
 }
 
