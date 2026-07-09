@@ -2117,6 +2117,9 @@ extension MSRPApplication {
         groupPorts[boundTalker.0.port.id] = boundTalker.0.port
       }
     }
+    // a newer event re-marked the stream during the reservation awaits: skip the MDB reconcile and
+    // let the next drain program it from a fresh plan (idempotent on the desired set)
+    if _pendingStreams.contains(streamID) { return }
     // CBS idle-slope (above) and the group MDB entries (here) are deliberately reconciled in
     // separate passes, not interleaved in the old add-FDB-after-credit / remove-FDB-before-credit
     // order; the brief teardown under-credit window this allows is accepted.
