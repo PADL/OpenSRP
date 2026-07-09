@@ -38,7 +38,7 @@ ExecStartPre=/bin/sh -c '/usr/sbin/devlink dev param set "$(/usr/sbin/devlink de
 # configure MVRP hook
 ExecStartPre=/usr/sbin/nft add table bridge nat
 ExecStartPre=/usr/sbin/nft add chain bridge nat PREROUTING { type filter hook prerouting priority dstnat; policy accept; }
-ExecStartPre=/usr/sbin/nft add rule bridge nat PREROUTING meta ibrname $BR ether daddr { 01:80:c2:00:00:20, 01:80:c2:00:00:21 } drop
+ExecStartPre=/usr/sbin/nft add rule bridge nat PREROUTING meta ibrname $BR ether daddr 01:80:c2:00:00:21 drop
 
 ExecStartPre=/bin/sh -c 'for ETH in $$INTERFACES; do for GRP in $$GROUPS; do bridge mdb add dev "$$BR" port "$$ETH" grp "$$GRP" permanent || true; done; done'
 
