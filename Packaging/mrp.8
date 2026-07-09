@@ -1,0 +1,161 @@
+.\" Copyright (c) 2024 PADL Software Pty Ltd
+.\" Licensed under the Apache License, Version 2.0
+.TH MRP 8 "2026-07-09" "OpenSRP" "System Manager's Manual"
+.SH NAME
+mrp \- command-line client for interrogating the mrpd REST API
+.SH SYNOPSIS
+.B mrp
+.RI [ "global options" ]
+.I protocol
+.RI [ subcommand "] [" arguments ]
+.SH DESCRIPTION
+.B mrp
+is a command-line client that queries the REST management API of a running
+.BR mrpd (8)
+daemon and displays its MRP protocol state (MSRP streams and reservations, MVRP
+VLAN registrations and MMRP group registrations). It is read\-only: it reports
+state but does not modify reservations or configuration.
+.PP
+.B mrp
+issues HTTP GET requests to the daemon at
+.BI http:// host : port /api/avb
+and formats the JSON response either as a human\-readable table (the default)
+or as raw JSON.
+.SH REQUIREMENTS
+.B mrp
+requires an
+.BR mrpd (8)
+that was built with the
+.B RestAPI
+trait and started with
+.B \-\-rest\-server\-port
+(see
+.BR mrpd (8)).
+The
+.B mrpd\-minimal
+package omits the REST server and therefore does not ship or support
+.BR mrp .
+.PP
+The tool is a Python 3 script and requires the
+.B requests
+library.
+.SH GLOBAL OPTIONS
+These options precede the
+.I protocol
+argument.
+.TP
+.BI \-\-host " host"
+Host running
+.BR mrpd .
+Default
+.BR localhost .
+.TP
+.BI \-\-port " port"
+TCP port of the
+.B mrpd
+REST API. Default
+.BR 80 .
+.TP
+.B \-\-format " {table|json}"
+Output format:
+.B table
+for a human\-readable table (default) or
+.B json
+for the raw API response.
+.TP
+.B \-h ", " \-\-help
+Print a usage summary and exit. May be given after a
+.I protocol
+or
+.I subcommand
+for command\-specific help.
+.SH PROTOCOLS
+Exactly one protocol argument is required.
+.SS mrp
+.B mrp mrp
+.PP
+Show general MRP status: the managed ports and their per\-port Leave times.
+.SS msrp
+.B mrp msrp
+.I subcommand
+.RB [ arg ]
+.PP
+Query the Multiple Stream Reservation Protocol. Subcommands:
+.TP
+.BI "port " [port]
+With no argument, list all MSRP ports (one row per SR class per port, with
+enabled / asCapable / forwarding status, domain boundary, applicant/registrar
+state and SR PVID). With a
+.I port
+identifier (name or number), show that port in detail, including its Talker,
+Failed Talker and Listener streams and its SR class parameters.
+.TP
+.BI "streams " [stream_id]
+With no argument, list all MSRP streams (stream ID, destination, talker port
+and type, VLAN, class/rank and bandwidth). With a
+.I stream_id
+argument, show that stream in detail, including its talker and per\-port
+listeners.
+.TP
+.B listeners
+List every MSRP listener across all streams (stream ID, port, type, connected
+state and age).
+.TP
+.B talkers
+List every MSRP talker across all streams (stream ID, port, advertised/failed
+type and destination).
+.SS mvrp
+.B mvrp port
+.RB [ port ]
+.PP
+Query the Multiple VLAN Registration Protocol. With no argument,
+.B port
+lists all MVRP ports and their registered VLAN counts. With a
+.I port
+identifier, show the VLANs on that port and their registered/declared state.
+.SS mmrp
+.B mmrp port
+.RB [ port ]
+.PP
+Query the Multiple MAC Registration Protocol. With no argument,
+.B port
+lists all MMRP ports and their MAC address counts. With a
+.I port
+identifier, show the MAC addresses on that port and their registered/declared
+state.
+.SH EXIT STATUS
+.B mrp
+exits non\-zero if it cannot connect to the daemon, receives an invalid
+response, or is given invalid arguments.
+.SH EXAMPLES
+List all MSRP ports on the local daemon:
+.PP
+.RS 4
+.nf
+mrp msrp port
+.fi
+.RE
+.PP
+Show a single stream in detail, as raw JSON:
+.PP
+.RS 4
+.nf
+mrp --format json msrp streams 00:11:22:33:44:55:00:00
+.fi
+.RE
+.PP
+Query the MVRP VLANs on port
+.B lan0
+of a remote bridge:
+.PP
+.RS 4
+.nf
+mrp --host br-01.example.net mvrp port lan0
+.fi
+.RE
+.SH SEE ALSO
+.BR mrpd (8)
+.PP
+IEEE Std 802.1Q (clauses 10, 11, 35).
+.SH AUTHORS
+PADL Software Pty Ltd.

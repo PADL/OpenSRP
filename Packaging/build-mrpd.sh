@@ -97,7 +97,12 @@ install -D -m0755 "$BIN/nlmonitor" "$stage/usr/bin/nlmonitor"
 install -D -m0755 "$BIN/nldump"    "$stage/usr/bin/nldump"
 install -D -m0755 "$BIN/nltool"    "$stage/usr/bin/nltool"
 # mrp: Python CLI that interrogates the mrpd REST API (needs the RestAPI trait).
-install -D -m0755 "$SWIFTMRP_DIR/Tools/mrp" "$stage/usr/bin/mrp"
+# The minimal build ships no REST server, so it ships neither mrp nor its man page.
+if [ -z "${CONSTRAINED:-}" ]; then
+  install -D -m0755 "$SWIFTMRP_DIR/Tools/mrp" "$stage/usr/bin/mrp"
+  gzip -9 -n -c "$SWIFTMRP_DIR/Packaging/mrp.8" > "$WORK_DIR/mrp.8.gz"
+  install -D -m0644 "$WORK_DIR/mrp.8.gz" "$stage/usr/share/man/man8/mrp.8.gz"
+fi
 # atu-snapshot: Python tool to snapshot/decode the mv88e6xxx switch ATU via
 # devlink (only python3 + devlink/iproute2, both already in Depends).
 install -D -m0755 "$SWIFTMRP_DIR/Tools/atu-snapshot.py" "$stage/usr/bin/atu-snapshot"
