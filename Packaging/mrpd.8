@@ -175,6 +175,20 @@ both of the two options above).
 Install an MDB entry on the Talker's ingress port. This enables "secure switch"
 mode, where the ingress port also requires a dynamic reservation entry to admit
 an SR stream to the AVB queues.
+.TP
+.BI \-\-configure\-filtering " type"
+Enable per-port AVB admission control on each AVB-capable bridge port, using the
+given switch-specific mechanism. The only supported
+.I type
+is
+.BR marvell ,
+which sets the mv88e6xxx per-port AVB ingress mode through the
+.B avb_cfg
+devlink parameter: secure mode when
+.B \-\-configure\-ingress\-mdb
+is also given, otherwise enhanced (reservation-checked) mode. Ports are returned
+to the default legacy mode on teardown. Ports left unconfigured keep the switch
+default.
 .SS Bridging
 .TP
 .B \-\-multicast\-flooding ", " \-\-no\-multicast\-flooding
