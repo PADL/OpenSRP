@@ -240,10 +240,9 @@ struct MSRPPortState<P: AVBPort>: Sendable {
     let isAvbCapable = port.isAvbCapable || application._forceAvbCapable
     msrpPortEnabledStatus = isAvbCapable
     stpPortState = port.stpPortState ?? .forwarding
-    srpDomainBoundaryPort = .init(uniqueKeysWithValues: application._allSRClassIDs.map { (
-      $0,
-      false // peer-derived only; our own status is live in isSrpDomainBoundary
-    ) })
+    // peer-derived boundary is unknown (nil) until a recompute determines it from registrations;
+    // our own status is live in isSrpDomainBoundary. nil is not a core port (35.2.1.4 h.1).
+    srpDomainBoundaryPort = [:]
     srpClassVID = .init(uniqueKeysWithValues: application._allSRClassIDs.map { (
       $0,
       application._srPVid
@@ -534,8 +533,8 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     for srClassID in _allSRClassIDs {
       guard portState.isSrpDomainBoundary(for: srClassID, application: self) == false,
             let local = portState.srClassPriorityMap[srClassID] else { continue }
-      // require a positively registered matching peer Domain (guards the optimistic
-      // srpDomainBoundaryPort default of false before any recompute has run)
+      // belt-and-suspenders: confirm a matching peer Domain is positively registered
+      // (isSrpDomainBoundary == false already implies this once a recompute has run)
       for (_, value) in participant.findAttributes(
         attributeType: MSRPAttributeType.domain.rawValue, matching: .matchAny
       ) {
@@ -1947,24 +1946,6 @@ extension MSRPApplication {
     _streamUpdateTask = nil
   }
 
-  // true if a matching-priority peer Domain is registered on the port for the class (a positive
-  // registration, so it survives the optimistic srpDomainBoundaryPort default of false)
-  private func _domainRegistered(
-    on participant: Participant<MSRPApplication>,
-    srClassID: SRclassID, priority: SRclassPriority
-  ) -> Bool {
-    for (_, value) in participant.findAttributes(
-      attributeType: MSRPAttributeType.domain.rawValue, matching: .matchAny
-    ) {
-      if let d = value as? MSRPDomainValue, d.srClassID == srClassID,
-         d.srClassPriority == priority
-      {
-        return true
-      }
-    }
-    return false
-  }
-
   // 35.2.1.4 h.1: the Talker's own port is an SR domain boundary when we declare the class but no
   // matching peer Domain is registered on it -- the Talker then sits outside the domain, so its
   // Advertise is converted to Talker Failed code 8 on every egress (35.2.4.3 consequence).
@@ -1977,12 +1958,9 @@ extension MSRPApplication {
           let srClassID = portState
           .reverseMapSrClassPriority(priority: talker.priorityAndRank.dataFramePriority)
     else { return nil }
-    // in-domain core port: no live boundary reason and a matching peer Domain registered
-    if portState.isSrpDomainBoundary(for: srClassID, application: self) == false,
-       _domainRegistered(
-         on: participant, srClassID: srClassID,
-         priority: talker.priorityAndRank.dataFramePriority
-       ) { return nil }
+    // in-domain only once positively determined a core port (a matching peer Domain registered);
+    // unknown (nil) or a boundary (true) means the Talker sits outside the domain
+    if portState.isSrpDomainBoundary(for: srClassID, application: self) == false { return nil }
     return MSRPFailure(systemID: _systemID, failureCode: .egressPortIsNotAvbCapable)
   }
 
