@@ -121,7 +121,6 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
   private var _enqueuedEvents = EnqueuedEvents()
   private nonisolated(unsafe) var _leaveAll: LeaveAll!
   private nonisolated(unsafe) var _jointimer: Timer!
-  private var _rxInProgress = false
   private var _transmissionOpportunityTimestamps: [ContinuousClock.Instant] = []
 
   private nonisolated let _controller: Weak<MRPController<A.P>>
@@ -280,11 +279,11 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
 
     let eventSource = EventSource.joinTimer
 
-    // Suppress TX opportunities while RX is processing to prevent interleaving
-    if _rxInProgress {
-      await Task.yield()
-      _scheduleTxOpportunity(eventSource: eventSource)
-      return
+    // Coalesce a received PDU's propagation into one MRPDU: if its Join/Leave indications are
+    // still in flight, park until they drain (resumed the moment the count hits zero) rather than
+    // transmitting mid-batch.
+    if let controller, controller._propagationBarrier.count > 0 {
+      await controller._propagationBarrier.waitUntilZero()
     }
 
     if _type == .pointToPoint, let controller {
@@ -697,9 +696,6 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
     _assertIsolatedToApplication()
 
     _debugLogPdu(pdu, direction: .rx)
-
-    _rxInProgress = true
-    defer { _rxInProgress = false }
 
     var leaveAll = false
     // All received PDUs are peer-sourced: we snoop MRP via an ingress-only NFLOG trap, so our own
@@ -1378,7 +1374,14 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
     // the subsequent join
     guard !context.smFlags.contains(.isReplacingSubtype) else { return }
 
+    // Count this propagation as in flight for the duration of the indication; the increment is
+    // synchronous (before the task runs) so all of a received PDU's attributes are counted before
+    // any egress tx opportunity fires, letting it coalesce them into one MRPDU (see
+    // _onTxOpportunity).
+    let controller = context.participant.controller
+    controller?._propagationBarrier.enter()
     Task(on: context.participant._queue) { @Sendable _ in
+      defer { controller?._propagationBarrier.leave() }
       switch registrarAction {
       case .New:
         fallthrough

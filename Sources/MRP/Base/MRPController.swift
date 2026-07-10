@@ -29,6 +29,7 @@ import FlyingFox
 import IEEE802
 import Logging
 import ServiceLifecycle
+import Synchronization
 
 public struct MRPFlags: OptionSet, Sendable {
   public typealias RawValue = UInt8
@@ -66,6 +67,11 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
   // declarations (35.1.3.1) is read synchronously from the netlink port snapshot in the
   // applications, so the recompute never takes an actor transition.
   private var _stpPortStatus = [P.ID: STPPortStatus]()
+  // Counts received-PDU propagations still in flight (a Join/Leave indication scheduled but not yet
+  // applied to the egress Participants). A tx opportunity parks on this barrier until the count
+  // returns to zero, so one received PDU coalesces into one transmitted MRPDU rather than
+  // splitting.
+  nonisolated let _propagationBarrier = CountedBarrier()
   private var _periodicTimer: Timer?
   private var _stpPollTimer: Timer?
   private var _taskGroup: ThrowingTaskGroup<(), Error>?
