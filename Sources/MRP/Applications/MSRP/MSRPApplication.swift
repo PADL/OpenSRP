@@ -1928,9 +1928,10 @@ extension MSRPApplication {
   private func _applyPendingStreamUpdates() async {
     // asCapable is kept fresh by periodic() (1 s) and the per-indication resample, so plan straight
     // from the cache rather than re-query PTP for every port here (35.2.1).
+    let isEndStation = await controller?.isEndStation ?? false
     while !_pendingStreams.isEmpty {
       let streamID = _pendingStreams.removeFirst()
-      let plan = _makeStreamPlan(streamID)
+      let plan = _makeStreamPlan(streamID, isEndStation: isEndStation)
       do { try await _applyStreamPlan(plan) }
       catch { _logger.error("MSRP: recompute failed for stream \(streamID): \(error)") }
       // 10.3 a): the propagated declarations carry any New marking now, so consume it -- unless a
@@ -1946,8 +1947,47 @@ extension MSRPApplication {
     _streamUpdateTask = nil
   }
 
+  // true if a matching-priority peer Domain is registered on the port for the class (a positive
+  // registration, so it survives the optimistic srpDomainBoundaryPort default of false)
+  private func _domainRegistered(
+    on participant: Participant<MSRPApplication>,
+    srClassID: SRclassID, priority: SRclassPriority
+  ) -> Bool {
+    for (_, value) in participant.findAttributes(
+      attributeType: MSRPAttributeType.domain.rawValue, matching: .matchAny
+    ) {
+      if let d = value as? MSRPDomainValue, d.srClassID == srClassID,
+         d.srClassPriority == priority
+      {
+        return true
+      }
+    }
+    return false
+  }
+
+  // 35.2.1.4 h.1: the Talker's own port is an SR domain boundary when we declare the class but no
+  // matching peer Domain is registered on it -- the Talker then sits outside the domain, so its
+  // Advertise is converted to Talker Failed code 8 on every egress (35.2.4.3 consequence).
+  private func _talkerIngressBoundaryFailure(
+    participant: Participant<MSRPApplication>,
+    talker: any MSRPTalkerValue
+  ) -> MSRPFailure? {
+    guard talker is MSRPTalkerAdvertiseValue,
+          let portState = _portStates[participant.port.id],
+          let srClassID = portState
+          .reverseMapSrClassPriority(priority: talker.priorityAndRank.dataFramePriority)
+    else { return nil }
+    // in-domain core port: no live boundary reason and a matching peer Domain registered
+    if portState.isSrpDomainBoundary(for: srClassID, application: self) == false,
+       _domainRegistered(
+         on: participant, srClassID: srClassID,
+         priority: talker.priorityAndRank.dataFramePriority
+       ) { return nil }
+    return MSRPFailure(systemID: _systemID, failureCode: .egressPortIsNotAvbCapable)
+  }
+
   // note: this function must remain synchronous to avoid reentrancy issues
-  private func _makeStreamPlan(_ streamID: MSRPStreamID) -> StreamPlan {
+  private func _makeStreamPlan(_ streamID: MSRPStreamID, isEndStation: Bool) -> StreamPlan {
     var plan = StreamPlan(streamID: streamID)
 
     // the bound talker must be on a Forwarding port: a talker registered on a blocked port
@@ -1958,6 +1998,11 @@ extension MSRPApplication {
     plan.boundTalker = boundTalker
 
     let failed = boundTalker.1 as? MSRPTalkerFailedValue
+    // a Talker whose own port is an SR domain boundary is outside the domain: fail it everywhere so
+    // no reservation forms (35.2.4.3 consequence). Bridge only; an end station does not propagate.
+    let ingressBoundaryFailure = (!isEndStation && failed == nil)
+      ? _talkerIngressBoundaryFailure(participant: boundTalker.0, talker: boundTalker.1)
+      : nil
 
     apply(for: MAPBaseSpanningTreeContext) { participant in
       // a blocked (non-Forwarding) port propagates nothing — no declaration is forwarded out
@@ -1985,6 +2030,7 @@ extension MSRPApplication {
       // check on this listener port in case we should declare failed locally
       var egressFailure: MSRPFailure? = failed
         .map { MSRPFailure(systemID: $0.systemID, failureCode: $0.failureCode) }
+        ?? ingressBoundaryFailure
       if egressFailure == nil {
         do {
           try _canBridgeTalker(participant: participant, talker: boundTalker.1)
@@ -2031,7 +2077,7 @@ extension MSRPApplication {
 
     // Table 35-12 (35.2.4.4.1): if the bound Talker is *registered* as Failed, any associated
     // Listener Ready/ReadyFailed must be propagated toward the talker as Asking Failed.
-    if failed != nil, plan.mergedListener != nil {
+    if failed != nil || ingressBoundaryFailure != nil, plan.mergedListener != nil {
       plan.mergedListener = .listenerAskingFailed
     }
 
