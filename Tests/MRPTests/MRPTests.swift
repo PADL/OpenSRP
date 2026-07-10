@@ -8602,3 +8602,93 @@ extension MRPTests {
     )
   }
 }
+
+final class DrainBarrierTests: XCTestCase {
+  func testStartsEmpty() {
+    let barrier = CountedBarrier()
+    XCTAssertEqual(barrier.count, 0)
+  }
+
+  func testEnterLeaveTracksCount() {
+    let barrier = CountedBarrier()
+    barrier.enter()
+    barrier.enter()
+    XCTAssertEqual(barrier.count, 2)
+    barrier.leave()
+    XCTAssertEqual(barrier.count, 1)
+    barrier.leave()
+    XCTAssertEqual(barrier.count, 0)
+  }
+
+  func testWaitReturnsImmediatelyWhenDrained() async {
+    let barrier = CountedBarrier()
+    await barrier.waitUntilZero() // count already 0
+    XCTAssertEqual(barrier.count, 0)
+  }
+
+  func testWaitResumesOnDrain() async {
+    let barrier = CountedBarrier()
+    barrier.enter()
+    let waiter = Task { await barrier.waitUntilZero() }
+    try? await Task.sleep(for: .milliseconds(20)) // let the waiter park
+    XCTAssertEqual(barrier.count, 1)
+    barrier.leave() // 1 -> 0 resumes the waiter
+    await waiter.value
+    XCTAssertEqual(barrier.count, 0)
+  }
+
+  func testResumesOnlyOnZeroTransition() async {
+    let barrier = CountedBarrier()
+    barrier.enter()
+    barrier.enter()
+    let resumed = Mutex(false)
+    let waiter = Task {
+      await barrier.waitUntilZero()
+      resumed.withLock { $0 = true }
+    }
+    try? await Task.sleep(for: .milliseconds(20))
+    barrier.leave() // 2 -> 1 must not resume
+    try? await Task.sleep(for: .milliseconds(20))
+    XCTAssertFalse(resumed.withLock { $0 })
+    barrier.leave() // 1 -> 0 resumes
+    await waiter.value
+    XCTAssertTrue(resumed.withLock { $0 })
+  }
+
+  func testNoLeakedWakeup() async {
+    let barrier = CountedBarrier()
+    barrier.enter()
+    barrier.leave() // a full drain with no waiter must not satisfy a later waiter
+    barrier.enter()
+    let resumed = Mutex(false)
+    let waiter = Task {
+      await barrier.waitUntilZero()
+      resumed.withLock { $0 = true }
+    }
+    try? await Task.sleep(for: .milliseconds(20))
+    XCTAssertFalse(resumed.withLock { $0 }) // did not consume a stale wakeup
+    barrier.leave()
+    await waiter.value
+    XCTAssertTrue(resumed.withLock { $0 })
+  }
+
+  func testConcurrentWaitersAllResume() async {
+    let barrier = CountedBarrier()
+    let count = 50
+    for _ in 0..<count {
+      barrier.enter()
+    }
+    await withTaskGroup(of: Void.self) { group in
+      for _ in 0..<count {
+        group.addTask { await barrier.waitUntilZero() }
+      }
+      for _ in 0..<count {
+        group.addTask {
+          try? await Task.sleep(for: .microseconds(200))
+          barrier.leave()
+        }
+      }
+    }
+    XCTAssertEqual(barrier.count, 0)
+  }
+}
