@@ -30,7 +30,7 @@ case "$BUILD_CONFIG" in
 esac
 [ "$BUILD_CONFIG" = debug ] && NOSTRIP=1
 
-VER="$(resolve_version "$SWIFTMRP_DIR" "${MRPD_BASE_VERSION:-0.1.4}")"
+VER="$(resolve_version "$SWIFTMRP_DIR" "${MRPD_BASE_VERSION:-0.1.5}")"
 # Tag non-release builds so their .deb does not clobber the release artifact.
 [ "$BUILD_CONFIG" = release ] || VER="${VER}+${BUILD_CONFIG}"
 # The CONSTRAINED (REST-off, small-target) build ships as a SEPARATE package
