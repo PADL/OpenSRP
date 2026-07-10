@@ -150,7 +150,9 @@ struct MSRPPortState<P: AVBPort>: Sendable {
   // last Domain value declared per SR class, so we only re-emit on an actual change (the Domain
   // attribute is declared New, which the Applicant does not suppress)
   var declaredDomains = [SRclassID: MSRPDomainValue]()
-  var srpDomainBoundaryPort: [SRclassID: Bool]
+  // true once any Domain has been registered on the port: distinguishes a port that never saw a
+  // Domain (boundary undetermined, nil) from one whose Domain later left (a boundary, 35.2.1.4 h.1)
+  var domainSeen = false
   var srpClassVID: [SRclassID: VLAN]
   // priorities with PFC enabled (34.5): an SR class mapped to one is always a boundary port
   var pfcEnabledPriorities: Set<SRclassPriority> = []
@@ -158,7 +160,7 @@ struct MSRPPortState<P: AVBPort>: Sendable {
   // regeneration is a per-port PCP->PCP table in the switch, and while the mv88e6xxx hardware can
   // do it, there is no userspace API to program it: the DCB app table (DCB_APP_SEL_PCP) maps a
   // priority to a *queue*, not to a regenerated priority. So it belongs behind a future kernel
-  // interface, not this daemon; we only detect the boundary (srpDomainBoundaryPort).
+  // interface, not this daemon; we only detect the boundary dynamically.
   var neighborProtocolVersion: MSRPProtocolVersion { .v0 }
   // TODO: make these configurable
   var talkerPruning: Bool { false }
@@ -189,23 +191,6 @@ struct MSRPPortState<P: AVBPort>: Sendable {
 
   func reverseMapSrClassPriority(priority: SRclassPriority) -> SRclassID? {
     srClassPriorityMap.first(where: { $0.value == priority })?.key
-  }
-
-  // Effective SRP domain boundary: our own live status (non-AVB medium / PFC priority / not-
-  // asCapable -- none cached) OR the peer's cached Domain relationship. nil = none determined;
-  // admission treats nil as non-boundary (!= true), REST reports a boundary (?? true).
-  func isSrpDomainBoundary(
-    for srClassID: SRclassID,
-    application: MSRPApplication<P>
-  ) -> Bool? {
-    // our own status (802.1BA §6.4 / 34.5 / 35.2.1), derived live so a link change can't stale it
-    if !msrpPortEnabledStatus { return true }
-    if let priority = srClassPriorityMap[srClassID], pfcEnabledPriorities.contains(priority) {
-      return true
-    }
-    if !application._ignoreAsCapable, asCapable == false { return true }
-    // the peer's Domain relationship only (35.2.1.4 h① no registration / h② priority differs)
-    return srpDomainBoundaryPort[srClassID]
   }
 
   mutating func register(streamID: MSRPStreamID) {
@@ -240,9 +225,6 @@ struct MSRPPortState<P: AVBPort>: Sendable {
     let isAvbCapable = port.isAvbCapable || application._forceAvbCapable
     msrpPortEnabledStatus = isAvbCapable
     stpPortState = port.stpPortState ?? .forwarding
-    // peer-derived boundary is unknown (nil) until a recompute determines it from registrations;
-    // our own status is live in isSrpDomainBoundary. nil is not a core port (35.2.1.4 h.1).
-    srpDomainBoundaryPort = [:]
     srpClassVID = .init(uniqueKeysWithValues: application._allSRClassIDs.map { (
       $0,
       application._srPVid
@@ -526,35 +508,30 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
   // §6 / Table 6-5: the SR classes for which this port is in the SR domain --
   // non-boundary with a matching peer Domain registered -- so a bridge may drop
   // their un-reserved frames. A boundary class is excluded (it regenerates).
-  private func _portInDomainSRClasses(port: P) -> Set<SRclassID> {
+  private func _portInDomainSRClasses(port: P, isEndStation: Bool) -> Set<SRclassID> {
     guard let participant = try? findParticipant(for: MAPBaseSpanningTreeContext, port: port),
           let portState = try? withPortState(port: port, { $0 }) else { return [] }
     var result = Set<SRclassID>()
     for srClassID in _allSRClassIDs {
-      guard portState.isSrpDomainBoundary(for: srClassID, application: self) == false,
-            let local = portState.srClassPriorityMap[srClassID] else { continue }
-      // belt-and-suspenders: confirm a matching peer Domain is positively registered
-      // (isSrpDomainBoundary == false already implies this once a recompute has run)
-      for (_, value) in participant.findAttributes(
-        attributeType: MSRPAttributeType.domain.rawValue, matching: .matchAny
-      ) {
-        if let d = value as? MSRPDomainValue, d.srClassID == srClassID, d.srClassPriority == local {
-          result.insert(srClassID)
-          break
-        }
-      }
+      // a core port (== false) positively implies a matching peer Domain is registered
+      guard portState.srClassPriorityMap[srClassID] != nil, isSrpDomainBoundary(
+        for: srClassID, participant: participant, portState: portState, isEndStation: isEndStation
+      ) == false else { continue }
+      result.insert(srClassID)
     }
     return result
   }
 
   // Table 6-5 / §6.9.4: SR classes for which this port is a confirmed SR domain boundary, so a
   // bridge regenerates their frames' priority to 0. Needs a local priority to match against.
-  private func _portBoundarySRClasses(port: P) -> Set<SRclassID> {
-    guard let portState = try? withPortState(port: port, { $0 }) else { return [] }
+  private func _portBoundarySRClasses(port: P, isEndStation: Bool) -> Set<SRclassID> {
+    guard let participant = try? findParticipant(for: MAPBaseSpanningTreeContext, port: port),
+          let portState = try? withPortState(port: port, { $0 }) else { return [] }
     var result = Set<SRclassID>()
     for srClassID in _allSRClassIDs {
-      guard portState.isSrpDomainBoundary(for: srClassID, application: self) == true,
-            portState.srClassPriorityMap[srClassID] != nil else { continue }
+      guard portState.srClassPriorityMap[srClassID] != nil, isSrpDomainBoundary(
+        for: srClassID, participant: participant, portState: portState, isEndStation: isEndStation
+      ) == true else { continue }
       result.insert(srClassID)
     }
     return result
@@ -564,9 +541,10 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
   // boundary regeneration set -- only when either changed, so a recompute is a no-op otherwise.
   private func _applyPortFiltering(port: P, bridge: any MSRPAwareBridge<P>) async {
     guard let _filtering else { return }
+    let isEndStation = await controller?.isEndStation ?? false
     let state = PortAdmissionState(
-      filter: _portInDomainSRClasses(port: port),
-      regenerate: _portBoundarySRClasses(port: port)
+      filter: _portInDomainSRClasses(port: port, isEndStation: isEndStation),
+      regenerate: _portBoundarySRClasses(port: port, isEndStation: isEndStation)
     )
     guard _portFilterApplied[port.id] != state else { return }
     do {
@@ -1341,7 +1319,8 @@ extension MSRPApplication {
 
   private func _canBridgeTalker(
     participant: Participant<MSRPApplication>,
-    talker: any MSRPTalkerValue
+    talker: any MSRPTalkerValue,
+    isEndStation: Bool
   ) throws {
     let port = participant.port
     do {
@@ -1408,7 +1387,9 @@ extension MSRPApplication {
       // 35.2.4.3: a Talker Advertise propagating out an SR domain boundary port -- domain/PFC or a
       // not-asCapable egress port (35.2.1) -- is converted to Talker Failed code 8. nil (SRP
       // determined none) propagates, matching the prior nil-is-non-boundary admission rule.
-      guard portState.isSrpDomainBoundary(for: srClassID, application: self) != true else {
+      guard isSrpDomainBoundary(
+        for: srClassID, participant: participant, portState: portState, isEndStation: isEndStation
+      ) != true else {
         _logger
           .error("MSRP: port \(port) is a SRP domain boundary port for \(talker.priorityAndRank)")
         throw MSRPFailure(systemID: _systemID, failureCode: .egressPortIsNotAvbCapable)
@@ -1774,33 +1755,59 @@ extension MSRPApplication {
     }
   }
 
-  // 35.2.1.4 h): a boundary if the class is declared with no peer Domain registration (h.1) or any
-  // carries a different priority (h.2). Own live status (non-AVB/PFC/asCapable) applied elsewhere.
-  // Re-derive the boundary for every SR class we declare, not just the one that changed: a peer
-  // that declares only one class (e.g. class A) leaves the other a boundary (35.2.1.4 h.1), as we
-  // declare it with no matching registration. One scan buckets peer priorities by class.
-  private func _recomputeSrpDomainBoundaries(
-    participant: Participant<MSRPApplication>, port: P
-  ) throws {
-    try withPortState(port: port) { portState in
-      var priorities = [SRclassID: Set<SRclassPriority>]()
-      for (_, value) in participant.findAttributes(
-        attributeType: MSRPAttributeType.domain.rawValue, matching: .matchAny
-      ) {
-        guard let d = value as? MSRPDomainValue else { continue }
-        priorities[d.srClassID, default: []].insert(d.srClassPriority)
-      }
-      for srClassID in _allSRClassIDs {
-        guard let localPriority = portState.srClassPriorityMap[srClassID] else {
-          // the port does not support this class (35.2.1.4 h.3): treat it as a boundary
-          portState.srpDomainBoundaryPort[srClassID] = true
-          continue
-        }
-        let registered = priorities[srClassID] ?? []
-        portState.srpDomainBoundaryPort[srClassID] =
-          registered.isEmpty || registered.contains { $0 != localPriority }
+  // the peer Domain priorities registered on the port for a class (empty if none)
+  private func _registeredDomainPriorities(
+    on participant: Participant<MSRPApplication>, srClassID: SRclassID
+  ) -> Set<SRclassPriority> {
+    var result = Set<SRclassPriority>()
+    for (_, value) in participant.findAttributes(
+      attributeType: MSRPAttributeType.domain.rawValue, matching: .matchAny
+    ) {
+      if let d = value as? MSRPDomainValue, d.srClassID == srClassID {
+        result.insert(d.srClassPriority)
       }
     }
+    return result
+  }
+
+  // Effective SRP domain boundary for a class, computed live from the port's Domain registrations
+  // and own status -- never cached. nil = undetermined (no Domain seen); admission treats nil as
+  // non-boundary (!= true), REST reports a boundary (?? true).
+  func isSrpDomainBoundary(
+    for srClassID: SRclassID,
+    participant: Participant<MSRPApplication>,
+    portState: MSRPPortState<P>,
+    isEndStation: Bool
+  ) -> Bool? {
+    // our own live status (802.1BA §6.4 / 34.5 / 35.2.1), so a link change can never stale it
+    if !portState.msrpPortEnabledStatus { return true }
+    if let priority = portState.srClassPriorityMap[srClassID],
+       portState.pfcEnabledPriorities.contains(priority) { return true }
+    if !_ignoreAsCapable, portState.asCapable == false { return true }
+    let registered = _registeredDomainPriorities(on: participant, srClassID: srClassID)
+    guard let local = portState.srClassPriorityMap[srClassID] else {
+      return portState.domainSeen ? true : nil // 35.2.1.4 h.3: class unsupported
+    }
+    if isEndStation {
+      // 35.2.2.9: an end station adopts its neighbour; a core port while the adopted priority stays
+      // registered (a coexisting stale priority during a change is not a boundary)
+      if registered.contains(local) { return false }
+      return portState.domainSeen ? true : nil
+    }
+    // bridge: 35.2.1.4 h.1 (no matching registration) / h.2 (a different priority registered)
+    if registered.isEmpty { return portState.domainSeen ? true : nil }
+    return registered.contains { $0 != local } ? true : false
+  }
+
+  // convenience for callers/tests holding only a port: resolve the participant, port state and
+  // station role, then compute the boundary dynamically
+  func isSrpDomainBoundary(for srClassID: SRclassID, port: P) async -> Bool? {
+    guard let participant = try? findParticipant(for: MAPBaseSpanningTreeContext, port: port),
+          let portState = try? withPortState(port: port, { $0 }) else { return nil }
+    let isEndStation = await controller?.isEndStation ?? false
+    return isSrpDomainBoundary(
+      for: srClassID, participant: participant, portState: portState, isEndStation: isEndStation
+    )
   }
 
   // 35.2.2.8: true when any registered Talker declaration for the stream (either type) differs from
@@ -1821,16 +1828,19 @@ extension MSRPApplication {
 
   // a peer changing its Domain re-declares the new value without a Leave (35.2.4), so the old
   // registration lingers until ageout; drop it so a superseded priority can't hold a boundary (h).
+  // Keep only the peer's most-recently-registered Domain for the class -- picking the newest by
+  // registration order (not the indicated value) keeps this robust to indication ordering, so two
+  // in-flight priorities can't each supersede the other and annihilate the registration.
   private func _supersedeStaleDomains(
-    on participant: Participant<MSRPApplication>, keeping domain: MSRPDomainValue
+    on participant: Participant<MSRPApplication>, for srClassID: SRclassID
   ) {
-    for (_, value) in participant.findAttributes(
-      attributeType: MSRPAttributeType.domain.rawValue, matching: .matchAnyIndex(domain.index)
-    ) {
-      guard let stale = value as? MSRPDomainValue, stale != domain else { continue }
-      try? participant.deregister(
-        attributeType: MSRPAttributeType.domain.rawValue, attributeValue: stale, eventSource: .peer
-      )
+    let type = MSRPAttributeType.domain.rawValue
+    let filter = AttributeValueFilter.matchAnyIndex(UInt64(srClassID.rawValue))
+    guard let newest = participant.newestRegisteredValue(attributeType: type, matching: filter)
+      as? MSRPDomainValue else { return }
+    for (_, value) in participant.findAttributes(attributeType: type, matching: filter) {
+      guard let stale = value as? MSRPDomainValue, stale != newest else { continue }
+      try? participant.deregister(attributeType: type, attributeValue: stale, eventSource: .peer)
     }
   }
 
@@ -1898,18 +1908,19 @@ extension MSRPApplication {
       if isEndStation {
         try withPortState(port: port) { portState in
           // 35.2.2.9.3/.4: an end station adopts its neighbour's SRclassPriority and SRclassVID,
-          // joining the attached network's SR domain -- so it is not a peer boundary (PFC on the
-          // adopted priority is caught live by isSrpDomainBoundary).
+          // joining the attached network's SR domain (the boundary is then derived live).
+          portState.domainSeen = true
           portState.srClassPriorityMap[domain.srClassID] = domain.srClassPriority
           portState.srpClassVID[domain.srClassID] = VLAN(vid: domain.srClassVID)
-          portState.srpDomainBoundaryPort[domain.srClassID] = false
         }
       } else {
         let ingress = try findParticipant(for: contextIdentifier, port: port)
         // on a point-to-point link a peer priority change re-declares without a Leave, so supersede
         // the stale registration; on shared media keep coexisting peers (the derive handles many)
-        if port.isPointToPoint { _supersedeStaleDomains(on: ingress, keeping: domain) }
-        try _recomputeSrpDomainBoundaries(participant: ingress, port: port)
+        if port.isPointToPoint { _supersedeStaleDomains(on: ingress, for: domain.srClassID) }
+        try withPortState(port: port) {
+          $0.domainSeen = true
+        } // boundary now derivable (35.2.1.4 h)
         if let bridge = controller?.bridge as? any MSRPAwareBridge<P> {
           await _applyPortFiltering(port: port, bridge: bridge)
         }
@@ -1951,7 +1962,8 @@ extension MSRPApplication {
   // Advertise is converted to Talker Failed code 8 on every egress (35.2.4.3 consequence).
   private func _talkerIngressBoundaryFailure(
     participant: Participant<MSRPApplication>,
-    talker: any MSRPTalkerValue
+    talker: any MSRPTalkerValue,
+    isEndStation: Bool
   ) -> MSRPFailure? {
     guard talker is MSRPTalkerAdvertiseValue,
           let portState = _portStates[participant.port.id],
@@ -1960,7 +1972,9 @@ extension MSRPApplication {
     else { return nil }
     // in-domain only once positively determined a core port (a matching peer Domain registered);
     // unknown (nil) or a boundary (true) means the Talker sits outside the domain
-    if portState.isSrpDomainBoundary(for: srClassID, application: self) == false { return nil }
+    if isSrpDomainBoundary(
+      for: srClassID, participant: participant, portState: portState, isEndStation: isEndStation
+    ) == false { return nil }
     return MSRPFailure(systemID: _systemID, failureCode: .egressPortIsNotAvbCapable)
   }
 
@@ -1979,7 +1993,9 @@ extension MSRPApplication {
     // a Talker whose own port is an SR domain boundary is outside the domain: fail it everywhere so
     // no reservation forms (35.2.4.3 consequence). Bridge only; an end station does not propagate.
     let ingressBoundaryFailure = (!isEndStation && failed == nil)
-      ? _talkerIngressBoundaryFailure(participant: boundTalker.0, talker: boundTalker.1)
+      ? _talkerIngressBoundaryFailure(
+        participant: boundTalker.0, talker: boundTalker.1, isEndStation: isEndStation
+      )
       : nil
 
     apply(for: MAPBaseSpanningTreeContext) { participant in
@@ -2011,7 +2027,9 @@ extension MSRPApplication {
         ?? ingressBoundaryFailure
       if egressFailure == nil {
         do {
-          try _canBridgeTalker(participant: participant, talker: boundTalker.1)
+          try _canBridgeTalker(
+            participant: participant, talker: boundTalker.1, isEndStation: isEndStation
+          )
         } catch let error as MSRPFailure {
           egressFailure = error
         } catch {}
@@ -2398,21 +2416,13 @@ extension MSRPApplication {
     case .listener:
       _streamDidUpdate((attributeValue as! any MSRPStreamIDRepresentable).streamID)
     case .domain:
-      let domain = (attributeValue as! MSRPDomainValue)
-      let ingress = try findParticipant(for: contextIdentifier, port: port)
-      if await controller?.isEndStation == true {
-        // 35.2.2.9: revert to a boundary only if no Domain for the class remains adopted; a peer
-        // priority change withdraws the old value but leaves the new one registered (in-domain)
-        let stillAdopted = ingress.findAttributes(
-          attributeType: MSRPAttributeType.domain.rawValue, matching: .matchAnyIndex(domain.index)
-        ).contains { ($0.1 as? MSRPDomainValue)?.srClassID == domain.srClassID }
-        try withPortState(port: port) { $0.srpDomainBoundaryPort[domain.srClassID] = !stillAdopted }
-      } else {
-        // a bridge re-derives the boundary with this registration now withdrawn (35.2.1.4 h)
-        try _recomputeSrpDomainBoundaries(participant: ingress, port: port)
-        if let bridge = controller?.bridge as? any MSRPAwareBridge<P> {
-          await _applyPortFiltering(port: port, bridge: bridge)
-        }
+      // 35.2.1.4 h / 35.2.2.9: the boundary is derived live from the remaining Domain
+      // registrations,
+      // so a withdrawal needs no state update; a bridge only re-applies its hardware filtering
+      if await controller?.isEndStation != true,
+         let bridge = controller?.bridge as? any MSRPAwareBridge<P>
+      {
+        await _applyPortFiltering(port: port, bridge: bridge)
       }
     }
 

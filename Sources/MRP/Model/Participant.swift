@@ -118,6 +118,7 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
   private typealias EnqueuedEvents = [AttributeType: [EnqueuedEvent<A>]]
 
   private var _attributes = [AttributeType: Set<_AttributeValue<A>>]()
+  fileprivate var _generation: UInt64 = 0
   private var _enqueuedEvents = EnqueuedEvents()
   private nonisolated(unsafe) var _leaveAll: LeaveAll!
   private nonisolated(unsafe) var _jointimer: Timer!
@@ -404,6 +405,17 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
       _attributes[replacement.attributeType] = [replacement]
     }
     return replacement
+  }
+
+  // the most recently registered value (by Registrar-IN order) matching the filter, or nil if none
+  // is registered; distinguishes several coexisting same-index registrations by recency.
+  func newestRegisteredValue(
+    attributeType: AttributeType,
+    matching filter: AttributeValueFilter = .matchAny
+  ) -> (any Value)? {
+    _findRegisteredAttributes(attributeType: attributeType, matching: filter)
+      .max { $0.generation < $1.generation }?
+      .unwrappedValue
   }
 
   private func _findRegisteredAttributes(
@@ -1067,6 +1079,10 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
   // no lock is needed on the isolated read paths and Set/hash stays valid.
   nonisolated(unsafe) var value: AnyValue
 
+  // registration generation (stamped when the Registrar enters IN); lets callers tell which of
+  // several same-index registrations is the most recent. Application-isolated like registrar/value.
+  nonisolated(unsafe) var generation: UInt64 = 0
+
   let counters = Mutex(EventCounters<A>())
 
   var index: UInt64 { value.index }
@@ -1274,7 +1290,14 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
       participant: participant
     )
 
+    let wasRegistered = registrar?.state.isRegistered ?? false
     try _handleRegistrar(context: context, participant: context.participant)
+    // stamp a new generation on the MT -> IN edge so callers can tell apart several same-index
+    // registrations (e.g. a peer that re-declared a Domain at a new priority without a Leave).
+    if !wasRegistered, registrar?.state.isRegistered == true {
+      participant._generation += 1
+      generation = participant._generation
+    }
     try _handleApplicant(context: context, participant: context.participant)
 
     // remove attribute entirely if it is no longer declared or registered

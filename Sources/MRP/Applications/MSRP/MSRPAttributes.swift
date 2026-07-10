@@ -344,7 +344,7 @@ struct MSRPDomainValue: Value, Equatable {
     return Self(
       srClassID: SRclassID(rawValue: UInt8(srClassID))!,
       srClassPriority: SRclassPriority(rawValue: UInt8(srClassPriority))!,
-      srClassVID: SR_PVID.vid
+      srClassVID: srClassVID // preserve the FirstValue's VID (not a vector-incremented field)
     )
   }
 }

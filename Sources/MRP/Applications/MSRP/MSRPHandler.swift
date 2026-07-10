@@ -142,8 +142,8 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
       else { return nil }
       guard let domain = portState.getDomain(for: srClassID, defaultSRPVid: application._srPVid)
       else { return nil }
-      domainBoundaryPort = portState.isSrpDomainBoundary(
-        for: srClassID, application: application
+      domainBoundaryPort = await application.isSrpDomainBoundary(
+        for: srClassID, port: participant.port
       ) ?? true
       // conflicting priorities coexist per class: applicantState reflects our own declared domain,
       // registrarState any registration for the class (a peer, possibly at a different priority)

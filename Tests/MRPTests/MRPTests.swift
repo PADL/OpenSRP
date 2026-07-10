@@ -3911,7 +3911,7 @@ final class MRPTests: XCTestCase {
 
     @Sendable
     func boundaryIs(_ expected: Bool) async -> Bool {
-      await (try? msrp.withPortState(port: port) { $0.srpDomainBoundaryPort[.A] }) == expected
+      await msrp.isSrpDomainBoundary(for: .A, port: port) == expected
     }
     func receiveDomain(priority: SRclassPriority) async throws {
       try await _drive(
@@ -3946,9 +3946,7 @@ final class MRPTests: XCTestCase {
 
     @Sendable
     func boundary(_ srClassID: SRclassID) async -> Bool? {
-      await (try? msrp.withPortState(port: port) {
-        $0.isSrpDomainBoundary(for: srClassID, application: msrp)
-      }) ?? nil
+      await msrp.isSrpDomainBoundary(for: srClassID, port: port)
     }
 
     // the peer declares only class A, at the matching local priority (CA)
@@ -3996,19 +3994,18 @@ final class MRPTests: XCTestCase {
   func testEndStationAdoptsNeighbourSRClassPriorityAndVID() async throws {
     let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0]) // 1 port => end station
     let port = MockPort(id: 0)
-    do {
-      try await msrp.onJoinIndication(
-        contextIdentifier: MAPBaseSpanningTreeContext, port: port,
-        attributeType: MSRPAttributeType.domain.rawValue, attributeSubtype: nil,
-        attributeValue: MSRPDomainValue(srClassID: .A, srClassPriority: .VI, srClassVID: 3),
-        isNew: true, eventSource: .peer
-      )
-    } catch MRPError.doNotPropagateAttribute {}
-    let priority = try await msrp.withPortState(port: port) { $0.srClassPriorityMap[.A] }
-    XCTAssertEqual(priority, .VI, "an end station must adopt the neighbour's SRclassPriority")
+    try await _drive(
+      msrp, port: 0, attributeType: .domain,
+      value: MSRPDomainValue(srClassID: .A, srClassPriority: .VI, srClassVID: 3), event: .JoinIn
+    )
+    // adoption runs on the async indication queue; wait for it to land
+    let adopted = await _waitFor {
+      await (try? msrp.withPortState(port: port) { $0.srClassPriorityMap[.A] }) == .VI
+    }
+    XCTAssertTrue(adopted, "an end station must adopt the neighbour's SRclassPriority")
     let vid = try await msrp.withPortState(port: port) { $0.srpClassVID[.A] }
     XCTAssertEqual(vid, VLAN(vid: 3), "an end station must adopt the neighbour's SRclassVID")
-    let boundary = try await msrp.withPortState(port: port) { $0.srpDomainBoundaryPort[.A] }
+    let boundary = await msrp.isSrpDomainBoundary(for: .A, port: port)
     XCTAssertEqual(boundary, false, "an end station that adopted the domain is not a boundary port")
     _ = controller
   }
@@ -4023,7 +4020,7 @@ final class MRPTests: XCTestCase {
 
     @Sendable
     func boundaryIs(_ expected: Bool) async -> Bool {
-      await (try? msrp.withPortState(port: port) { $0.srpDomainBoundaryPort[.A] }) == expected
+      await msrp.isSrpDomainBoundary(for: .A, port: port) == expected
     }
 
     try await _drive(msrp, port: 0, attributeType: .domain, value: domain, event: .JoinIn)
@@ -4045,7 +4042,7 @@ final class MRPTests: XCTestCase {
     let port = MockPort(id: 0)
     @Sendable
     func boundaryIs(_ expected: Bool) async -> Bool {
-      await (try? msrp.withPortState(port: port) { $0.srpDomainBoundaryPort[.A] }) == expected
+      await msrp.isSrpDomainBoundary(for: .A, port: port) == expected
     }
     // local class-A priority is CA; the peer first declares a mismatching EE -> boundary
     try await _drive(
@@ -4074,34 +4071,26 @@ final class MRPTests: XCTestCase {
   // 35.2.2.9: an end station adopts its neighbour's SR domain (not a boundary); when the neighbour
   // withdraws that Domain the end station must revert to a boundary, not keep streaming into it.
   func testEndStationDomainLeaveRevertsToBoundary() async throws {
-    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0]) // 1 port => end station
+    // short leaveTime so the withdrawn registration ages to MT within the test
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0], leaveTime: .seconds(1))
     let port = MockPort(id: 0)
     let domain = MSRPDomainValue(srClassID: .A, srClassPriority: .VI, srClassVID: 3)
-    do {
-      try await msrp.onJoinIndication(
-        contextIdentifier: MAPBaseSpanningTreeContext, port: port,
-        attributeType: MSRPAttributeType.domain.rawValue, attributeSubtype: nil,
-        attributeValue: domain, isNew: true, eventSource: .peer
-      )
-    } catch MRPError.doNotPropagateAttribute {}
-    let adopted = try await msrp.withPortState(port: port) { $0.srpDomainBoundaryPort[.A] }
-    XCTAssertEqual(
+    try await _drive(msrp, port: 0, attributeType: .domain, value: domain, event: .JoinIn)
+    // adoption runs on the async indication queue; wait for it to land
+    let adopted = await _waitFor {
+      await msrp.isSrpDomainBoundary(for: .A, port: port) == false
+    }
+    XCTAssertTrue(
       adopted,
-      false,
       "an end station that adopted the neighbour domain is not a boundary"
     )
 
-    do {
-      try await msrp.onLeaveIndication(
-        contextIdentifier: MAPBaseSpanningTreeContext, port: port,
-        attributeType: MSRPAttributeType.domain.rawValue, attributeSubtype: nil,
-        attributeValue: domain, eventSource: .peer
-      )
-    } catch MRPError.doNotPropagateAttribute {}
-    let reverted = try await msrp.withPortState(port: port) { $0.srpDomainBoundaryPort[.A] }
-    XCTAssertEqual(
+    try await _drive(msrp, port: 0, attributeType: .domain, value: domain, event: .Lv)
+    let reverted = await _waitFor(timeoutMs: 4000) {
+      await msrp.isSrpDomainBoundary(for: .A, port: port) == true
+    }
+    XCTAssertTrue(
       reverted,
-      true,
       "an end station reverts to boundary when the adopted domain is withdrawn"
     )
     _ = controller
@@ -4117,7 +4106,7 @@ final class MRPTests: XCTestCase {
     let port = MockPort(id: 0)
     @Sendable
     func boundaryIs(_ expected: Bool) async -> Bool {
-      await (try? msrp.withPortState(port: port) { $0.srpDomainBoundaryPort[.A] }) == expected
+      await msrp.isSrpDomainBoundary(for: .A, port: port) == expected
     }
 
     // adopt the neighbour's class-A domain at VI, then the neighbour changes it to VO (no Leave):
@@ -4216,10 +4205,8 @@ final class MRPTests: XCTestCase {
     let msrp = try await MSRPApplication(controller: controller)
     try await msrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
     let port = MockPort(id: 0)
-    let boundaryA = try await msrp
-      .withPortState(port: port) { $0.isSrpDomainBoundary(for: .A, application: msrp) }
-    let boundaryB = try await msrp
-      .withPortState(port: port) { $0.isSrpDomainBoundary(for: .B, application: msrp) }
+    let boundaryA = await msrp.isSrpDomainBoundary(for: .A, port: port)
+    let boundaryB = await msrp.isSrpDomainBoundary(for: .B, port: port)
     XCTAssertEqual(
       boundaryA,
       true,
@@ -4248,8 +4235,7 @@ final class MRPTests: XCTestCase {
     try await msrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
     let enabled = try await msrp.withPortState(port: MockPort(id: 0)) { $0.msrpPortEnabledStatus }
     XCTAssertFalse(enabled, "a high-MTU port must have MSRP disabled (not AVB capable)")
-    let boundary = try await msrp
-      .withPortState(port: MockPort(id: 0)) { $0.isSrpDomainBoundary(for: .A, application: msrp) }
+    let boundary = await msrp.isSrpDomainBoundary(for: .A, port: MockPort(id: 0))
     XCTAssertEqual(boundary, true, "a non-AVB port must be an SRP domain boundary port")
     _ = controller
   }
@@ -4298,15 +4284,12 @@ final class MRPTests: XCTestCase {
     let port = MockPort(id: 0)
     try await _receiveMatchingDomainA(msrp, port: port)
 
-    let boundary = try await msrp
-      .withPortState(port: port) { $0.isSrpDomainBoundary(for: .A, application: msrp) }
+    let boundary = await msrp.isSrpDomainBoundary(for: .A, port: port)
     XCTAssertEqual(
       boundary,
       true,
       "PFC keeps the port a boundary even when the peer Domain matches"
     )
-    let peerMap = try await msrp.withPortState(port: port) { $0.srpDomainBoundaryPort[.A] }
-    XCTAssertEqual(peerMap, false, "the peer map alone is non-boundary on a matching Domain")
     _ = controller
   }
 
@@ -4315,8 +4298,7 @@ final class MRPTests: XCTestCase {
     let port = MockPort(id: 0)
     try await _receiveMatchingDomainA(msrp, port: port)
 
-    let boundary = try await msrp
-      .withPortState(port: port) { $0.isSrpDomainBoundary(for: .A, application: msrp) }
+    let boundary = await msrp.isSrpDomainBoundary(for: .A, port: port)
     XCTAssertEqual(
       boundary,
       true,
@@ -4363,8 +4345,7 @@ final class MRPTests: XCTestCase {
 
     // the port is now non-AVB, so it must read as an SRP domain boundary (35.2.4.3) even though its
     // cached boundary map -- set at creation when it was AVB-capable -- was never re-derived
-    let boundaryAfter = try await msrp
-      .withPortState(port: MockPort(id: 0)) { $0.isSrpDomainBoundary(for: .A, application: msrp) }
+    let boundaryAfter = await msrp.isSrpDomainBoundary(for: .A, port: MockPort(id: 0))
     XCTAssertEqual(
       boundaryAfter, true,
       "a renegotiated non-AVB port must be an SRP domain boundary (drives Talker Advertise -> Failed)"
