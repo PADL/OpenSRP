@@ -3879,6 +3879,39 @@ final class MRPTests: XCTestCase {
     _ = controller
   }
 
+  // A peer that declares only one SR class (class A here) must still interoperate: the declared
+  // class stays a core port, while the class we declare but the peer never registers is a boundary
+  // (35.2.1.4 h.1 -- declared with no matching registration), so its Talkers convert to Failed
+  // code 8 rather than propagating past a peer that is not in that class's SR domain.
+  func testSingleClassPeerMakesUndeclaredClassABoundary() async throws {
+    let (controller, msrp, _) = try await _makeBridgeMSRP(portIDs: [0, 1])
+    let port = MockPort(id: 0)
+
+    @Sendable
+    func boundary(_ srClassID: SRclassID) async -> Bool? {
+      await (try? msrp.withPortState(port: port) {
+        $0.isSrpDomainBoundary(for: srClassID, application: msrp)
+      }) ?? nil
+    }
+
+    // the peer declares only class A, at the matching local priority (CA)
+    try await _drive(
+      msrp, port: 0, attributeType: .domain,
+      value: MSRPDomainValue(srClassID: .A, srClassPriority: .CA, srClassVID: SR_PVID.vid),
+      event: .JoinIn
+    )
+
+    let classACore = await _waitFor { await boundary(.A) == false }
+    XCTAssertTrue(classACore, "the peer's declared class A must be a core (non-boundary) port")
+
+    let classBBoundary = await _waitFor { await boundary(.B) == true }
+    XCTAssertTrue(
+      classBBoundary,
+      "an SR class we declare with no peer registration must be a boundary port (35.2.1.4 h.1)"
+    )
+    _ = controller
+  }
+
   // A not-enabled port (link down / not AVB-capable) has no gPTP peer: the periodic asCapable
   // resample must leave asCapable nil (REST collapses nil to false), not a stale PMC read.
   func testNotEnabledPortKeepsAsCapableNil() async throws {
