@@ -659,20 +659,24 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     // refresh spanning-tree state from the fresh port (a synchronous read, no actor hop); a change
     // is a topology change, so invalidate the port's latency state here (the single place STP
     // clears it) and re-derive the active streams
-    var stpChanged = false
+    var forwardingChanged = false
     for port in context {
       guard let index = _portStates.index(forKey: port.id) else { continue }
       // nil = an AF_UNSPEC snapshot with no bridge-port state; keep the last-known STP state
       guard let stpPortState = port.stpPortState else { continue }
-      if _portStates.values[index].stpPortState != stpPortState {
-        _logger.info("MSRP: port \(port) spanning-tree state now \(stpPortState)")
-        _portStates.values[index].stpPortState = stpPortState
+      guard _portStates.values[index].stpPortState != stpPortState else { continue }
+      let wasForwarding = _portStates.values[index].isForwarding
+      _logger.info("MSRP: port \(port) spanning-tree state now \(stpPortState)")
+      _portStates.values[index].stpPortState = stpPortState
+      // 10.3/35.1.3.1: MAP operates over the Forwarding set; every non-Forwarding state is equally
+      // blocked, so only a Forwarding-status change moves the topology (skip the intermediates).
+      if _portStates.values[index].isForwarding != wasForwarding {
         _portStates.values[index].invalidate()
         _tcDetected.insert(port.id) // 10.3 a): declarations propagated from this port are New
-        stpChanged = true
+        forwardingChanged = true
       }
     }
-    if stpChanged {
+    if forwardingChanged {
       // a topology change can move a port's worst-case path latency (35.2.2.8.6): the recompute
       // below re-samples per-hop latency fresh and fails a stream whose reported latency rose above
       // its guarantee.
