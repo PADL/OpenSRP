@@ -743,8 +743,9 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
               .error("MSRP: failed to unconfigure ingress queues for port \(port): \(error)")
           }
         }
-        // Reset the port's admission control, after the queues are gone.
-        if let _filtering {
+        // Reset the port's admission control, after the queues are gone (skipped once shutdown()
+        // has already withdrawn it, so a torn-down bridge is not touched a second time).
+        if let _filtering, _portFilterApplied[port.id] != nil {
           do {
             try await bridge.unconfigureFiltering(on: port, type: _filtering)
           } catch {
@@ -785,6 +786,19 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
   public func shutdown() async {
     for streamID in Array(_reservedGroupPorts.keys) {
       await _updateGroupReservations(streamID: streamID, params: nil, desired: [:])
+    }
+    // withdraw the per-port SR admission control here, while the bridge is still usable;
+    // onContextRemoved otherwise resets it only after bridge.shutdown() tears the sockets down
+    guard let _filtering, let controller,
+          let bridge = controller.bridge as? any MSRPAwareBridge<P> else { return }
+    for portID in Array(_portFilterApplied.keys) {
+      guard let port = try? await controller.port(with: portID) else { continue }
+      do {
+        try await bridge.unconfigureFiltering(on: port, type: _filtering)
+        _portFilterApplied.removeValue(forKey: portID)
+      } catch {
+        _logger.error("MSRP: failed to reset admission control on port \(port): \(error)")
+      }
     }
   }
 
