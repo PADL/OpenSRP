@@ -62,9 +62,6 @@ public protocol AVBPort: Port {
   // priority has PFC enabled makes the port an SRP domain boundary port for that class (35.2.1.4).
   var pfcEnabledPriorities: Set<SRclassPriority> { get async throws }
 
-  // multicast flooding
-  func setMulticastFlooding(_ enabled: Bool) async throws
-
   // 802.3x flow control (clause 31 / Annex 31B PAUSE). MSRP disables it on every
   // AVB-capable port at setup, since AVB ports do not use 802.3x flow control and a
   // received PAUSE must not be allowed to stall reserved-stream egress
