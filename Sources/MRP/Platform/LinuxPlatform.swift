@@ -668,6 +668,9 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   private let _vlanRegistrationStream: AsyncStream<VLANRegistrationNotification<P>>
   private let _vlanRegistrationContinuation:
     AsyncStream<VLANRegistrationNotification<P>>.Continuation
+  // Multicast view of _vlanRegistrationStream: MVRP and MSRP each observe VLAN membership
+  // changes independently (AsyncStream is single-consumer, share() fans out to both).
+  private let _vlanRegistrationShared: AnyAsyncSequence<VLANRegistrationNotification<P>>
   fileprivate let _pmc: PTPManagementClient
   private var _portPropertiesCache = [P.ID: PortPropertiesNP]()
   private let _portExclusions: Set<String>
@@ -707,6 +710,9 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
       of: VLANRegistrationNotification<P>.self,
       bufferingPolicy: .bufferingNewest(256)
     )
+    _vlanRegistrationShared = _vlanRegistrationStream
+      .share(bufferingPolicy: .bufferingLatest(256))
+      .eraseToAnyAsyncSequence()
   }
 
   public nonisolated var description: String {
@@ -1245,8 +1251,10 @@ extension LinuxBridge: MMRPAwareBridge {
 }
 
 extension LinuxBridge: MVRPAwareBridge {
-  nonisolated var vlanRegistrationNotifications: AnyAsyncSequence<VLANRegistrationNotification<P>> {
-    _vlanRegistrationStream.eraseToAnyAsyncSequence()
+  public nonisolated var vlanRegistrationNotifications:
+    AnyAsyncSequence<VLANRegistrationNotification<P>>
+  {
+    _vlanRegistrationShared
   }
 
   func register(vlan: VLAN, on port: P, static isStatic: Bool) async throws {

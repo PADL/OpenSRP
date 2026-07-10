@@ -26,8 +26,7 @@ import FlyingFox
 public let MVRPEtherType: UInt16 = 0x88F5
 
 protocol MVRPAwareBridge<P>: Bridge where P: Port {
-  // fires when a port's statically-configured VLAN membership changes
-  var vlanRegistrationNotifications: AnyAsyncSequence<VLANRegistrationNotification<P>> { get }
+  // vlanRegistrationNotifications (a port's VLAN membership changed) is inherited from Bridge
 
   // VLAN registration entries: dynamic ones reflect peer MVRP registrations; static ones
   // are administratively configured (e.g. the SR class VLANs) and held Registration Fixed

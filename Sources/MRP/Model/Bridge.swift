@@ -22,6 +22,10 @@ public protocol Bridge<P>: Sendable {
 
   var notifications: AnyAsyncSequence<PortNotification<P>> { get }
 
+  // fires when a port's VLAN membership changes; a multicast source so every application
+  // (MVRP declarations, MSRP reservation-MDB offload) can observe it independently
+  var vlanRegistrationNotifications: AnyAsyncSequence<VLANRegistrationNotification<P>> { get }
+
   func register(
     groupAddress: EUI48,
     etherType: UInt16,
