@@ -1083,7 +1083,8 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
   // several same-index registrations is the most recent. Application-isolated like registrar/value.
   nonisolated(unsafe) var generation: UInt64 = 0
 
-  let counters = Mutex(EventCounters<A>())
+  // mutated only from the application-isolated handle() path (like registrar/value), so no lock
+  nonisolated(unsafe) var counters = EventCounters<A>()
 
   var index: UInt64 { value.index }
   var participant: P? { _participant.object }
@@ -1365,7 +1366,7 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
         eventSource: context.eventSource
       )
 
-      counters.withLock { $0.count(context: context, attributeEvent: attributeEvent) }
+      counters.count(context: context, attributeEvent: attributeEvent)
     }
 
     if txOpportunity {
