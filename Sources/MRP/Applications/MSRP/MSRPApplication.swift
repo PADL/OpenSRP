@@ -2058,12 +2058,11 @@ extension MSRPApplication {
           }
         }
 
-        // merge registered listeners toward the talker. The merge uses the listener as
-        // registered: per Table 35-12 (35.2.4.4.1) the propagation keys on the Talker
-        // *registered* on the source port (the bound talker), not on a local per-egress
-        // admission result — that case is handled by the post-loop override below.
+        // merge listeners toward the talker keyed on the per-egress declaration: a local
+        // admission/boundary failure demotes this egress to Talker Failed, so Table 35-12
+        // (35.2.4.4.1) maps the Listener Ready/Ready Failed to Asking Failed toward the talker
         plan.mergedListener = _mergeListener(
-          declarationType: ownDeclaration,
+          declarationType: declarationType,
           with: plan.mergedListener
         )
         plan.listenerSourcePorts.insert(participant.port.id)
@@ -2075,12 +2074,9 @@ extension MSRPApplication {
       plan.talkerDeclarations.append((participant, egressFailure))
     }
 
-    // Table 35-12 (35.2.4.4.1): if the bound Talker is *registered* as Failed, any associated
-    // Listener Ready/ReadyFailed must be propagated toward the talker as Asking Failed.
-    if failed != nil || ingressBoundaryFailure != nil, plan.mergedListener != nil {
-      plan.mergedListener = .listenerAskingFailed
-    }
-
+    // no post-loop override needed: a globally Failed bound Talker (or an out-of-domain ingress)
+    // sets egressFailure on every port, so the per-egress merge above already yields Asking Failed
+    // toward the talker (Table 35-12, 35.2.4.4.1).
     return plan
   }
 

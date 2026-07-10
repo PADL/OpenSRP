@@ -8036,12 +8036,11 @@ extension MRPTests {
     _ = controller
   }
 
-  // Table 35-12 (35.2.4.4.1): the listener propagated toward the talker keys on the Talker
-  // *registered* on the source port, NOT on a local per-egress admission result. When the
-  // bound talker is registered as Advertise but a local egress fails bandwidth admission, the
-  // listener is forwarded toward the talker as-is (Ready) — the AskingFailed comes back from
-  // the downstream listener reacting to the TalkerFailed we declare out the failed egress.
-  func testRecomputeAdmissionFailedEgressForwardsListenerAsIsTowardTalker() async throws {
+  // 35.1.3 / Table 35-12 (35.2.4.4.1): when a local egress fails bandwidth admission the bridge
+  // demotes that egress to Talker Failed, so the Listener Ready registered there must be
+  // propagated toward the talker as Asking Failed -- even though the bound talker is registered
+  // Advertise. The bridge signals the drop in both directions itself.
+  func testRecomputeAdmissionFailedEgressPropagatesAskingFailedTowardTalker() async throws {
     let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
     let streamID = MSRPStreamID(0x0001_0000_0000_003B)
     let bigTalker = MSRPTalkerAdvertiseValue(
@@ -8068,13 +8067,14 @@ extension MRPTests {
       event: .JoinIn,
       subtype: .ready
     )
-    // the listener declaration merged toward the talker (port 0) must be forwarded as-is (Ready)
+    // the listener merged toward the talker (port 0) must be demoted to Asking Failed because
+    // the egress (port 1) failed admission and is declared Talker Failed
     let merged = await _waitFor {
-      await _declaredListenerSubtype(msrp, streamID, port: 0) == .ready
+      await _declaredListenerSubtype(msrp, streamID, port: 0) == .askingFailed
     }
     XCTAssertTrue(
       merged,
-      "a listener whose local egress failed admission is still forwarded Ready toward the talker"
+      "a listener whose local egress failed admission propagates Asking Failed toward the talker"
     )
     _ = controller
   }
