@@ -6915,6 +6915,61 @@ extension MRPTests {
     _ = controller
   }
 
+  // 35.2.1.4 h.1 / 35.2.4.3: a Talker whose own (ingress) port is an SR domain boundary -- we
+  // declare the class there but no matching peer Domain is registered -- sits outside the domain,
+  // so its Advertise converts to Talker Failed code 8 even toward a domain *core* egress port.
+  func testTalkerOnIngressBoundaryConvertsToFailedCode8() async throws {
+    let (controller, msrp, _) = try await _makeBridgeMSRP(portIDs: [0, 1, 2])
+
+    // port 1 registers a matching class A Domain -> it is a domain core egress port; port 0 (the
+    // Talker's own port) has no registration, so the Talker is out-of-domain
+    try await _drive(
+      msrp, port: 1, attributeType: .domain,
+      value: MSRPDomainValue(srClassID: .A, srClassPriority: .CA, srClassVID: SR_PVID.vid),
+      event: .JoinIn
+    )
+
+    let streamID = MSRPStreamID(0x0001_0000_0000_00B0)
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise, value: _talkerAdvertise(streamID),
+      event: .JoinIn
+    )
+
+    let failed = await _waitFor {
+      await _declaredTalkerFailureCode(msrp, streamID, port: 1) == .egressPortIsNotAvbCapable
+    }
+    XCTAssertTrue(failed, "a Talker on an ingress boundary port must propagate Failed code 8")
+    let advertiseGone = await _waitFor {
+      await _declaredTalkerAdvertise(msrp, streamID, port: 1) == nil
+    }
+    XCTAssertTrue(advertiseGone, "no Talker Advertise may propagate from an out-of-domain Talker")
+    _ = controller
+  }
+
+  // The ingress-boundary conversion must not over-fire: a Talker whose own port has a matching peer
+  // Domain registered is in-domain, so its Advertise propagates unchanged toward a core egress.
+  func testTalkerOnInDomainIngressPropagatesAdvertise() async throws {
+    let (controller, msrp, _) = try await _makeBridgeMSRP(portIDs: [0, 1, 2])
+    let domain = MSRPDomainValue(srClassID: .A, srClassPriority: .CA, srClassVID: SR_PVID.vid)
+    // both the Talker's port and the egress register a matching Domain -> both are core ports
+    try await _drive(msrp, port: 0, attributeType: .domain, value: domain, event: .JoinIn)
+    try await _drive(msrp, port: 1, attributeType: .domain, value: domain, event: .JoinIn)
+
+    let streamID = MSRPStreamID(0x0001_0000_0000_00B1)
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise, value: _talkerAdvertise(streamID),
+      event: .JoinIn
+    )
+
+    let advertised = await _waitFor {
+      await _declaredTalkerAdvertise(msrp, streamID, port: 1) != nil
+    }
+    XCTAssertTrue(advertised, "an in-domain Talker must propagate Advertise, not Failed")
+    let notFailed = await _declaredTalkerFailureCode(msrp, streamID, port: 1)
+    XCTAssertNil(notFailed, "an in-domain Talker must not be converted to Failed")
+    _ = controller
+  }
+
   // 35.2.2.8: a peer re-declaring a registered Talker Failed with the same FirstValue but a changed
   // FailureInformation (failureCode -- a non-FirstValue field) must update the registration in
   // place
