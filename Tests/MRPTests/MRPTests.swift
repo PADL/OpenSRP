@@ -90,8 +90,6 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
   let _pfcEnabledPriorities: Set<SRclassPriority>
   var pfcEnabledPriorities: Set<SRclassPriority> { get async throws { _pfcEnabledPriorities } }
 
-  func setMulticastFlooding(_ enabled: Bool) async throws {}
-
   func setFlowControl(_ enabled: Bool) async throws {}
 
   init(

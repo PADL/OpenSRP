@@ -38,10 +38,7 @@ public struct MRPFlags: OptionSet, Sendable {
   public init(rawValue: RawValue) { self.rawValue = rawValue }
 
   public static let forceFullParticipant = Self(rawValue: 1 << 0)
-  public static let multicastFlooding = Self(rawValue: 1 << 1)
 
-  // Daemon defaults flooding ON (802.1Q). --no-multicast-flooding for SRP: flooded
-  // SR frames bypass CBS queueing and boundary priority regeneration.
   public static let defaultFlags: Self = []
 }
 
@@ -74,8 +71,6 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
   private var _taskGroup: ThrowingTaskGroup<(), Error>?
   private let _rxPackets: AnyAsyncSequence<(P.ID, IEEE802Packet)>
   private let _portExclusions: Set<String>
-  private var _multicastFloodingConfiguredPorts = Set<P.ID>()
-  private var _multicastFlooding: Bool { flags.contains(.multicastFlooding) }
   #if RestAPI
   private var _httpServer: HTTPServer?
   #endif
@@ -368,31 +363,11 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
   private func _handleBridgeNotifications() async throws {
     for try await notification in bridge.notifications {
       do {
-        // apply the configured multicast flooding policy to _all_ ports, even
-        // the excluded ones: for SRP we typically don't want to flood multicast
-        // to non-participant ports, but the operator can keep it enabled. doing
-        // this here is something of an abstraction violation, but the
-        // applications would otherwise not see the port.
-        if case let .added(port) = notification, !ports.contains(port),
-           !_multicastFloodingConfiguredPorts.contains(port.id),
-           let avbPort = port as? any AVBPort
-        {
-          do {
-            try await avbPort.setMulticastFlooding(_multicastFlooding)
-            _multicastFloodingConfiguredPorts.insert(port.id)
-            logger
-              .debug("set multicast flooding \(_multicastFlooding ? "on" : "off") on port \(port)")
-          } catch {
-            logger.warning("failed to configure multicast flooding on port \(port): \(error)")
-          }
-        }
-
         if _portExclusions.contains(notification.port.name) { continue }
         switch notification {
         case let .added(port):
           try await ports.contains(port) ? _didUpdate(port: port) : _didAdd(port: port)
         case let .removed(port):
-          _multicastFloodingConfiguredPorts.remove(port.id)
           try await _didRemove(port: port)
         case let .changed(port):
           try await _didUpdate(port: port)

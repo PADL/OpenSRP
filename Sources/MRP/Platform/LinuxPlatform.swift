@@ -554,11 +554,6 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
     }
   }
 
-  public func setMulticastFlooding(_ enabled: Bool) async throws {
-    guard let _bridge else { throw MRPError.internalError }
-    try await _rtnl.set(option: .mcastFlood, enabled, socket: _bridge._nlLinkSocket)
-  }
-
   public func setFlowControl(_ enabled: Bool) async throws {
     let fileHandle = try FileHandle(
       fileDescriptor: socket(CInt(AF_PACKET), Int32(SOCK_DGRAM.rawValue), 0),
@@ -1341,7 +1336,7 @@ extension LinuxBridge: MSRPAwareBridge {
     switch type {
     case .marvell:
       // regenerate is ignored: the mv88e6xxx regenerates non-reserved SR frames in HW.
-      let supported = ((try? await getSRClassPriorityMap(port: port)) ?? nil)
+      let supported = await ((try? getSRClassPriorityMap(port: port)) ?? nil)
         .map { Set($0.keys) } ?? []
       var config = MarvellAVBPortConfig(avbMode: requireIngressFdbEntry ? .secure : .enhanced)
       if !supported.isEmpty, supported.isSubset(of: filter) {
@@ -1359,7 +1354,9 @@ extension LinuxBridge: MSRPAwareBridge {
       try await _setAVBPortConfig(on: port, .init(avbMode: .legacy))
     case .tcflower:
       // removing the clsact qdisc tears down every attached ingress filter at once
-      if let classes = _flowerClasses[port.id], !classes.filter.isEmpty || !classes.regenerate.isEmpty {
+      if let classes = _flowerClasses[port.id],
+         !classes.filter.isEmpty || !classes.regenerate.isEmpty
+      {
         try? await port._rtnl.removeClsActQDisc(socket: _nlLinkSocket)
       }
       _flowerClasses.removeValue(forKey: port.id)
@@ -1382,10 +1379,10 @@ extension LinuxBridge: MSRPAwareBridge {
   private func _configureFlowerFiltering(
     on port: P, filter: Set<SRclassID>, regenerate: Set<SRclassID>
   ) async throws {
-    let priorityMap = ((try? await getSRClassPriorityMap(port: port)) ?? nil) ?? [:]
+    let priorityMap = await ((try? getSRClassPriorityMap(port: port)) ?? nil) ?? [:]
     let current = _flowerClasses[port.id] ?? (filter: [], regenerate: [])
     let hadAny = !current.filter.isEmpty || !current.regenerate.isEmpty
-    if (!filter.isEmpty || !regenerate.isEmpty), !hadAny {
+    if !filter.isEmpty || !regenerate.isEmpty, !hadAny {
       try await port._rtnl.addClsActQDisc(socket: _nlLinkSocket)
     }
     for srClassID in filter.subtracting(current.filter) {

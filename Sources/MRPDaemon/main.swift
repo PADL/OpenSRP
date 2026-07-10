@@ -113,9 +113,6 @@ private final class MRPDaemon: AsyncParsableCommand {
   )
   var configureFiltering: MSRPFilteringType? = nil
 
-  @Flag(inversion: .prefixedNo, help: "Flood multicast on bridge ports (802.1Q default on)")
-  var multicastFlooding: Bool = true
-
   @Option(name: .long, help: "MSRP SR PVID (the VLAN both SR classes declare, 35.2.1.4)")
   var srPVid: UInt16 = SR_PVID.id
 
@@ -194,7 +191,6 @@ private final class MRPDaemon: AsyncParsableCommand {
     case joinTime
     case leaveTime
     case leaveAllTime
-    case multicastFlooding
     case periodicTime
     #if RestAPI
     case restServerPort
@@ -234,7 +230,6 @@ private final class MRPDaemon: AsyncParsableCommand {
 
     var mrpFlags: MRPFlags = []
     if forceFullParticipant { mrpFlags.insert(.forceFullParticipant) }
-    if multicastFlooding { mrpFlags.insert(.multicastFlooding) }
 
     let controller = try await MRPController<P>(
       bridge: bridge,
