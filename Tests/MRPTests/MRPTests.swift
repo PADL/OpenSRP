@@ -4225,7 +4225,10 @@ final class MRPTests: XCTestCase {
       true,
       "PFC on Class A priority must mark the port a boundary port for A"
     )
-    XCTAssertEqual(boundaryB, false, "Class B (no PFC on its priority) must remain a core port")
+    XCTAssertNil(
+      boundaryB,
+      "Class B (no PFC on its priority) stays undetermined until a Domain is registered"
+    )
     _ = controller
   }
 
