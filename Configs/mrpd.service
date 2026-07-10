@@ -42,6 +42,9 @@ ExecStartPre=/usr/sbin/nft add rule bridge nat PREROUTING meta ibrname $BR ether
 
 ExecStartPre=/bin/sh -c 'for ETH in $$INTERFACES; do for GRP in $$GROUPS; do bridge mdb add dev "$$BR" port "$$ETH" grp "$$GRP" permanent || true; done; done'
 
+# enable multicast flooding on all bridge ports (802.1Q default)
+ExecStartPre=/bin/sh -c 'for ETH in $$INTERFACES; do bridge link set dev "$$ETH" mcast_flood on || true; done'
+
 # --configure-ingress-mdb: secure-switch mode -- the ingress port also requires a DRE to admit an SR stream to the AVB queues
 ExecStart=/usr/sbin/mrpd --enable-srp -b $BR --configure-egress-queues --configure-ingress-mdb --configure-filtering marvell $MRPD_OPTS
 
