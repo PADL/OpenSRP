@@ -6811,6 +6811,49 @@ extension MRPTests {
     _ = controller
   }
 
+  // 10.3/35.1.3.1: MAP operates over the Forwarding port set and every non-Forwarding state is
+  // equally blocked, so propagation must follow the Forwarding edge -- withdrawn when the port
+  // leaves Forwarding, restored on return -- and an intermediate blocking->learning step must not
+  // disturb it. Guards the Forwarding-edge detection against the intermediate-state rewrite.
+  func testTalkerPropagationFollowsForwardingEdgeNotIntermediateStpStates() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_00E1)
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .JoinIn
+    )
+    let advertised = await _waitFor {
+      await _declaredTalkerAdvertise(msrp, streamID, port: 1) != nil
+    }
+    XCTAssertTrue(advertised, "the talker must propagate to the egress port while forwarding")
+
+    func setTalkerPortState(_ state: STPPortState) async throws {
+      var p0 = MockPort(id: 0)
+      p0.stpPortState = state
+      try await msrp.didUpdate(
+        contextIdentifier: MAPBaseSpanningTreeContext, with: [p0, MockPort(id: 1)]
+      )
+    }
+
+    // the talker's port leaves Forwarding: the declaration is blocked (35.1.3.1) and withdrawn
+    try await setTalkerPortState(.blocking)
+    let withdrawn = await _waitFor { await _declaredTalkerAdvertise(msrp, streamID, port: 1) == nil
+    }
+    XCTAssertTrue(withdrawn, "leaving Forwarding must withdraw the propagated talker")
+
+    // blocking -> learning is non-Forwarding -> non-Forwarding: no restore, no disturbance
+    try await setTalkerPortState(.learning)
+    try await Task.sleep(for: .milliseconds(150))
+    let stillWithdrawn = await _declaredTalkerAdvertise(msrp, streamID, port: 1)
+    XCTAssertNil(stillWithdrawn, "a non-Forwarding intermediate step must not restore the talker")
+
+    // returning to Forwarding restores propagation
+    try await setTalkerPortState(.forwarding)
+    let restored = await _waitFor { await _declaredTalkerAdvertise(msrp, streamID, port: 1) != nil }
+    XCTAssertTrue(restored, "returning to Forwarding must restore the propagated talker")
+    _ = controller
+  }
+
   // A changed non-FirstValue payload adopted in place (35.2.2.8) must reach the wire: the egress
   // applicant sits in QA after its transmissions, where Join! alone is a no-op (Table 10-3), so
   // the in-place update must re-arm it (periodic!, QA->AA) or peers keep the stale value.
