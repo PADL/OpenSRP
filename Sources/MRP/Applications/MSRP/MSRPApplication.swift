@@ -1757,25 +1757,30 @@ extension MSRPApplication {
 
   // 35.2.1.4 h): a boundary if the class is declared with no peer Domain registration (h.1) or any
   // carries a different priority (h.2). Own live status (non-AVB/PFC/asCapable) applied elsewhere.
-  private func _recomputeSrpDomainBoundary(
-    participant: Participant<MSRPApplication>, port: P, srClassID: SRclassID
+  // Re-derive the boundary for every SR class we declare, not just the one that changed: a peer
+  // that declares only one class (e.g. class A) leaves the other a boundary (35.2.1.4 h.1), as we
+  // declare it with no matching registration. One scan buckets peer priorities by class.
+  private func _recomputeSrpDomainBoundaries(
+    participant: Participant<MSRPApplication>, port: P
   ) throws {
     try withPortState(port: port) { portState in
-      guard let localPriority = portState.srClassPriorityMap[srClassID] else {
-        // the port does not support this class (35.2.1.4 h.3): treat it as a boundary
-        portState.srpDomainBoundaryPort[srClassID] = true
-        return
-      }
-      var priorities = Set<SRclassPriority>()
+      var priorities = [SRclassID: Set<SRclassPriority>]()
       for (_, value) in participant.findAttributes(
         attributeType: MSRPAttributeType.domain.rawValue, matching: .matchAny
       ) {
-        if let d = value as? MSRPDomainValue, d.srClassID == srClassID {
-          priorities.insert(d.srClassPriority)
-        }
+        guard let d = value as? MSRPDomainValue else { continue }
+        priorities[d.srClassID, default: []].insert(d.srClassPriority)
       }
-      portState.srpDomainBoundaryPort[srClassID] =
-        priorities.isEmpty || priorities.contains { $0 != localPriority }
+      for srClassID in _allSRClassIDs {
+        guard let localPriority = portState.srClassPriorityMap[srClassID] else {
+          // the port does not support this class (35.2.1.4 h.3): treat it as a boundary
+          portState.srpDomainBoundaryPort[srClassID] = true
+          continue
+        }
+        let registered = priorities[srClassID] ?? []
+        portState.srpDomainBoundaryPort[srClassID] =
+          registered.isEmpty || registered.contains { $0 != localPriority }
+      }
     }
   }
 
@@ -1885,11 +1890,7 @@ extension MSRPApplication {
         // on a point-to-point link a peer priority change re-declares without a Leave, so supersede
         // the stale registration; on shared media keep coexisting peers (the derive handles many)
         if port.isPointToPoint { _supersedeStaleDomains(on: ingress, keeping: domain) }
-        try _recomputeSrpDomainBoundary(
-          participant: ingress,
-          port: port,
-          srClassID: domain.srClassID
-        )
+        try _recomputeSrpDomainBoundaries(participant: ingress, port: port)
         if let bridge = controller?.bridge as? any MSRPAwareBridge<P> {
           await _applyPortFiltering(port: port, bridge: bridge)
         }
@@ -2362,11 +2363,7 @@ extension MSRPApplication {
         try withPortState(port: port) { $0.srpDomainBoundaryPort[domain.srClassID] = !stillAdopted }
       } else {
         // a bridge re-derives the boundary with this registration now withdrawn (35.2.1.4 h)
-        try _recomputeSrpDomainBoundary(
-          participant: ingress,
-          port: port,
-          srClassID: domain.srClassID
-        )
+        try _recomputeSrpDomainBoundaries(participant: ingress, port: port)
         if let bridge = controller?.bridge as? any MSRPAwareBridge<P> {
           await _applyPortFiltering(port: port, bridge: bridge)
         }
