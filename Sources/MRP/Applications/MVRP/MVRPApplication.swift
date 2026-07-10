@@ -68,6 +68,8 @@ public actor MVRPApplication<P: Port>: BaseApplication, BaseApplicationEventObse
   var _participants: [MAPContextIdentifier: Set<Participant<MVRPApplication<P>>>] = [:]
   let _logger: Logger
   let _vlanExclusions: Set<VLAN>
+  // whether to declare each port's PVID (native VLAN) as a static registration (11.2.1.3)
+  let _declarePVID: Bool
   // statically-configured VIDs per port currently held as Registration Fixed (8.8.2).
   // Dynamic (peer-registered) VLANs must never be promoted to Registration Fixed (that
   // would ignore the peer's Leave and could loop propagation); they are excluded via
@@ -82,11 +84,13 @@ public actor MVRPApplication<P: Port>: BaseApplication, BaseApplicationEventObse
 
   public init(
     controller: MRPController<P>,
-    vlanExclusions: Set<VLAN> = []
+    vlanExclusions: Set<VLAN> = [],
+    declarePVID: Bool = false
   ) async throws {
     _controller = Weak(controller)
     _logger = controller.logger
     _vlanExclusions = vlanExclusions
+    _declarePVID = declarePVID
     try await controller.register(application: self)
     _vlanNotificationTask = Task { [weak self] in
       guard let self, let controller = self.controller,
@@ -402,7 +406,7 @@ extension MVRPApplication {
     var desired = Set(port.vlans.filter { !_vlanExclusions.contains($0) })
     desired.subtract(port.dynamicVlans) // kernel-flagged (also survives our restart)
     desired.subtract(_dynamicVIDs[port.id] ?? []) // ours this run (flagless-kernel fallback)
-    if let pvid = port.pvid, !_vlanExclusions.contains(VLAN(vid: pvid)) {
+    if _declarePVID, let pvid = port.pvid, !_vlanExclusions.contains(VLAN(vid: pvid)) {
       desired.insert(VLAN(vid: pvid))
     }
     let current = _staticVIDs[port.id] ?? []

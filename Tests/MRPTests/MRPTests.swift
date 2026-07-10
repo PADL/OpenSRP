@@ -3324,6 +3324,7 @@ final class MRPTests: XCTestCase {
     portIDs: [Int],
     exclusions: Set<VLAN> = [],
     pvid: UInt16? = nil,
+    declarePVID: Bool = false,
     vlans: Set<UInt16> = [2],
     dynamicVlans: Set<UInt16> = []
   )
@@ -3341,7 +3342,8 @@ final class MRPTests: XCTestCase {
     )
     let mvrp = try await MVRPApplication(
       controller: controller,
-      vlanExclusions: exclusions
+      vlanExclusions: exclusions,
+      declarePVID: declarePVID
     )
     try await mvrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
     return (controller, mvrp, recorder)
@@ -3412,7 +3414,11 @@ final class MRPTests: XCTestCase {
   // 11.2.3.1.7: a received VID of 0 is translated to the receiving port's PVID, never registered
   // as a bogus VLAN 0.
   func testMVRPReceivedVIDZeroTranslatedToPVID() async throws {
-    let (controller, mvrp, recorder) = try await _makeMVRP(portIDs: [0, 1], pvid: 5)
+    let (controller, mvrp, recorder) = try await _makeMVRP(
+      portIDs: [0, 1],
+      pvid: 5,
+      declarePVID: true
+    )
     try await _driveMVRP(mvrp, port: 0, vid: 0, event: .JoinIn)
     // a normal dynamic VID still registers, proving the rx path ran
     try await _driveMVRP(mvrp, port: 0, vid: 100, event: .JoinIn)
@@ -3536,7 +3542,7 @@ final class MRPTests: XCTestCase {
   // The PVID has a Static VLAN Registration Entry with Registration Fixed on all ports
   // (11.2.1.3), so its membership is propagated like any other static VLAN.
   func testMVRPDeclaresPVID() async throws {
-    let (controller, mvrp, _) = try await _makeMVRP(portIDs: [0, 1], pvid: 1)
+    let (controller, mvrp, _) = try await _makeMVRP(portIDs: [0, 1], pvid: 1, declarePVID: true)
     let registered = await _isVLANRegistered(mvrp, vid: 1, port: 0)
     XCTAssertTrue(registered, "PVID must be Registration Fixed (11.2.1.3)")
     let declared = await _isVLANDeclared(mvrp, vid: 1, port: 1)
