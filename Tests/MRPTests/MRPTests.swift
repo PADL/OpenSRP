@@ -7884,6 +7884,35 @@ extension MRPTests {
     _ = controller
   }
 
+  // 35.2.4.1: streamPreemptedByHigherRank (code 6) requires a strictly higher Rank. Two equal-rank
+  // streams that do not fit together are ordered by streamAge/StreamID (35.2.4.1); the loser
+  // "simply
+  // does not fit" and must be insufficientBandwidth (code 1), not preempted.
+  func testRecomputeEqualRankLoserFailsInsufficientNotPreempted() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    // class-A budget 750_000 kbps ~ 11 frames; 6 + 6 = 12 frames (801_024) exceed it, but 6 alone
+    // fits. Both Non-emergency (rank == true), so the newcomer only loses the streamAge tiebreak.
+    let oldID = MSRPStreamID(0x0001_0000_0000_0500) // Non-emergency, older, 6 frames
+    let newID = MSRPStreamID(0x0001_0000_0000_0501) // Non-emergency, newer, 6 frames — loses on age
+
+    try await _reserve(msrp, _classATalker(oldID, dest: 0x50, frames: 6, rank: true))
+    let oldAdvertised = await _waitFor { await _isDeclared(msrp, .talkerAdvertise, oldID, port: 1) }
+    XCTAssertTrue(oldAdvertised, "the first equal-rank stream is admitted")
+
+    try await _reserve(msrp, _classATalker(newID, dest: 0x51, frames: 6, rank: true))
+    let newFailed = await _waitFor { await _isDeclared(msrp, .talkerFailed, newID, port: 1) }
+    XCTAssertTrue(newFailed, "the newer equal-rank stream does not fit")
+    let newCode = await _declaredTalkerFailureCode(msrp, newID, port: 1)
+    XCTAssertEqual(
+      newCode, .insufficientBandwidth,
+      "an equal-rank loser fails insufficientBandwidth, not streamPreemptedByHigherRank"
+    )
+    // the older stream keeps its reservation
+    let oldKept = await _isDeclared(msrp, .talkerAdvertise, oldID, port: 1)
+    XCTAssertTrue(oldKept, "the older equal-rank stream must not be affected")
+    _ = controller
+  }
+
   // Table 35-12 (35.2.4.4.1): the listener propagated toward the talker keys on the Talker
   // *registered* on the source port, NOT on a local per-egress admission result. When the
   // bound talker is registered as Advertise but a local egress fails bandwidth admission, the

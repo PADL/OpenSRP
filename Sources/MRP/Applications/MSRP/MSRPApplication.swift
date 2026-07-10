@@ -1289,12 +1289,12 @@ extension MSRPApplication {
     let candidates = _candidateTalkers(participant: participant, provisional: provisional)
     let admitted = _admittedStreamIDs(port: port, portState: portState, candidates: candidates)
     if admitted.contains(talker.streamID) { return nil }
-    // it was only preempted if it could have fit on its own; a stream that exceeds the budget even
-    // alone simply does not fit, and no amount of preemption would admit it
+    // Preemption (code 6) needs a strictly higher Rank (Emergency, rank reset; 35.2.2.8.5); an
+    // equal-rank loser of the streamAge tiebreak (35.2.4.1) "simply does not fit". Fit-alone only.
     let fitsAlone = _talkersFit(port: port, portState: portState, talkers: [provisional])
     let lostToHigher = fitsAlone && candidates.contains { other in
       other.streamID != talker.streamID && admitted.contains(other.streamID) &&
-        _compareStreamImportance(port: port, portState: portState, other, provisional)
+        !other.priorityAndRank.rank && provisional.priorityAndRank.rank
     }
     return MSRPFailure(
       systemID: _systemID,
