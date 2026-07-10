@@ -932,6 +932,57 @@ final class MRPTests: XCTestCase {
     )
   }
 
+  // A higher-version MVRPDU may interleave an unrecognized AttributeType between known VLAN
+  // Messages. 10.8.3.5(c)1) requires the unknown Message to be discarded to its EndMark and the
+  // following Message to still be processed -- previously the parser aborted at the unknown type
+  // and dropped every Message after it.
+  func testUnknownAttributeTypeSkippedToNextMessage() async throws {
+    let logger = Logger(label: "com.padl.MRPTests")
+    let bridge = MockBridge()
+    let controller = try await MRPController(bridge: bridge, logger: logger)
+    let mvrp = try await MVRPApplication(controller: controller)
+
+    func vlanMessage(_ vid: UInt16) -> Message {
+      Message(attributeType: MVRPAttributeType.vid.rawValue, attributeList: [VectorAttribute(
+        leaveAllEvent: .NullLeaveAllEvent,
+        firstValue: AnyValue(VLAN(vid: vid)),
+        attributeEvents: [.JoinIn],
+        applicationEvents: nil
+      )])
+    }
+
+    // Each single-value VLAN Message is 9 octets (AttributeType, AttributeLength, VectorHeader,
+    // FirstValue, one ThreePackedEvents octet, EndMark); the middle Message's AttributeType sits
+    // at offset 1 (ProtocolVersion) + 9. Rewriting it to 2 forges an unrecognized-type Message
+    // with the same structural layout.
+    let middleAttributeTypeIndex = 1 + 9
+
+    // protocol version 1 is higher than MVRP's implemented version 0 -> 10.8.3.5(c) skip applies
+    var sc = SerializationContext()
+    try MRPDU(protocolVersion: 1, messages: [vlanMessage(10), vlanMessage(99), vlanMessage(14)])
+      .serialize(into: &sc, application: mvrp)
+    var bytes = sc.bytes
+    XCTAssertEqual(bytes[middleAttributeTypeIndex], MVRPAttributeType.vid.rawValue, "layout sanity")
+    bytes[middleAttributeTypeIndex] = 2
+
+    let pdu = try bytes.withParserSpan { try MRPDU(parsing: &$0, application: mvrp) }
+    XCTAssertEqual(pdu.messages.count, 2, "unknown Message skipped, both VLAN Messages kept")
+    XCTAssertEqual(pdu.messages.map(\.attributeType), [1, 1])
+    XCTAssertEqual(pdu.messages.first?.attributeList.first?.firstValue, AnyValue(VLAN(vid: 10)))
+    XCTAssertEqual(pdu.messages.last?.attributeList.first?.firstValue, AnyValue(VLAN(vid: 14)))
+
+    // gate (10.8.3.5): at the implemented version the unknown type is a malformed PDU, not a
+    // forward-compatible skip -- keep the valid prefix (VLAN 10) and discard the rest (Avnu §8.1).
+    var sc0 = SerializationContext()
+    try MRPDU(protocolVersion: 0, messages: [vlanMessage(10), vlanMessage(99), vlanMessage(14)])
+      .serialize(into: &sc0, application: mvrp)
+    var bytes0 = sc0.bytes
+    bytes0[middleAttributeTypeIndex] = 2
+    let pdu0 = try bytes0.withParserSpan { try MRPDU(parsing: &$0, application: mvrp) }
+    XCTAssertEqual(pdu0.messages.count, 1, "same-version unknown type: valid prefix kept only")
+    XCTAssertEqual(pdu0.messages.first?.attributeList.first?.firstValue, AnyValue(VLAN(vid: 10)))
+  }
+
   func testLeaveAllOnlyVectorAttribute() {
     let vectorAttribute = VectorAttribute<AnyValue>(
       leaveAllEvent: .LeaveAll,

@@ -353,6 +353,19 @@ struct Message {
       else { throw MRPError.badPduLength }
     }
 
+    // 10.8.3.5(c)1): an unrecognized AttributeType is discarded by skipping its VectorAttributes to
+    // the EndMark. We realign input past that EndMark and then throw: the mutated span is written
+    // back on the throw, so the caller -- which knows the PDU's protocol version -- resumes at the
+    // next Message (higher version) or drops the tail.
+    if !application.validAttributeTypes.contains(attributeType) {
+      try Message.skipAttributeList(
+        parsing: &input,
+        attributeLength: attributeLength,
+        attributeListLength: attributeListLength
+      )
+      throw MRPError.unknownAttributeType
+    }
+
     var attributeList = [VectorAttribute<V>]()
     let startCount = input.count
 
@@ -381,6 +394,34 @@ struct Message {
       throw MRPError.badPduEndMark
     }
     self.attributeList = attributeList
+  }
+
+  // 10.8.3.5: advance past an unrecognized-AttributeType Message's VectorAttributes and EndMark
+  // without decoding them. Each VectorAttribute is VectorHeader(2) + firstValue(attributeLength) +
+  // ceil(numberOfValues/3) ThreePackedEvents; an unknown type carries no AttributeSubtype.
+  private static func skipAttributeList(
+    parsing input: inout ParserSpan,
+    attributeLength: AttributeLength,
+    attributeListLength: AttributeListLength?
+  ) throws {
+    let startCount = input.count
+    repeat {
+      if let attributeListLength {
+        if startCount - input.count == Int(attributeListLength) - 2 { break }
+      } else {
+        var peekSpan = ParserSpan(input.bytes)
+        let mark = try UInt16(parsing: &peekSpan, storedAsBigEndian: UInt16.self)
+        if mark == EndMark { break }
+      }
+      let vectorHeader = try VectorHeader(parsing: &input)
+      let bytesToSkip = Int(attributeLength) + Int.ceil(Int(vectorHeader.numberOfValues), 3)
+      guard input.count >= bytesToSkip else { throw MRPError.badPduLength }
+      try input.seek(toRelativeOffset: bytesToSkip)
+    } while input.count > 0
+    let endMark: UInt16 = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
+    guard endMark == EndMark else {
+      throw MRPError.badPduEndMark
+    }
   }
 
   func serialize(
@@ -439,7 +480,9 @@ struct MRPDU {
       } catch let error as MRPError where protocolVersion > application.protocolVersion &&
         (error == .unknownAttributeType || error == .unknownAttributeEvent)
       {
-        // clause 10.8.3.5: skip unknown attributes if the PDU has a higher protocol version
+        // clause 10.8.3.5: skip unknown attributes if the PDU has a higher protocol version.
+        // Message.init has already advanced input past the unknown Message's EndMark (the mutated
+        // span survives the throw), so we resume cleanly at the next Message.
         continue
       } catch {
         // a corrupted or truncated field (a structural MRPError, or the parser running off the
