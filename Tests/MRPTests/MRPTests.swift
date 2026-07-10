@@ -5565,12 +5565,15 @@ extension MRPTests {
     flags: MSRPApplicationFlags = .defaultFlags,
     portTcMaxLatency: [Int: Int] = [:],
     leaveTime: Duration? = nil,
-    maxTalkerAttributes: Int = 150
+    maxTalkerAttributes: Int = 150,
+    vlans: Set<UInt16> = [2]
   ) async throws
     -> (MRPController<MockPort>, MSRPApplication<MockPort>, MRPTestRecorder)
   {
     let recorder = MRPTestRecorder()
-    let ports = Set(portIDs.map { MockPort(id: $0, portTcMaxLatency: portTcMaxLatency[$0] ?? 0) })
+    let ports = Set(portIDs.map {
+      MockPort(id: $0, vlans: vlans, portTcMaxLatency: portTcMaxLatency[$0] ?? 0)
+    })
     let bridge = MockBridge(ports: ports, recorder: recorder)
     let controller = try await MRPController(
       bridge: bridge,
@@ -5939,6 +5942,71 @@ extension MRPTests {
       fdb.contains { $0.ports.contains(1) && _isEqualMacAddress($0.mac, group) },
       "listener egress port (1) should still get its reservation entry"
     )
+    _ = controller
+  }
+
+  // A reservation's group MDB entry only HW-offloads on a port already in the stream's VLAN (VTU).
+  // With the data-frame VLAN absent, the reservation still runs (CBS programmed) but no MDB entry
+  // is installed -- it would not offload, so it is withheld until the VLAN appears.
+  func testRecomputeNoMdbUntilStreamVlanPresent() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(
+      portIDs: [0, 1], flags: _ingressMdbFlags(), vlans: []
+    )
+    let streamID = MSRPStreamID(0x0001_0000_0000_00B0)
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .JoinIn
+    )
+    try await _drive(
+      msrp, port: 1, attributeType: .listener,
+      value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready
+    )
+    let reserved = await _waitFor { await recorder.cbs.contains { $0.port == 1 } }
+    XCTAssertTrue(reserved, "the listener reservation should still run with the VLAN absent")
+    let group = Self._ingressGroup
+    let anyMdb = await recorder.fdbRegister.contains { _isEqualMacAddress($0.mac, group) }
+    XCTAssertFalse(
+      anyMdb,
+      "no MDB entry may install while the stream VLAN is absent from the ports"
+    )
+    _ = controller
+  }
+
+  // The MDB reconcile diffs against the tracked set, so recompute is idempotent: the talker's
+  // recompute installs the ingress (port 0) entry, and the later listener recompute adds only port
+  // 1 -- it must not re-register or tear down the already-offloaded port-0 entry.
+  func testRecomputeMdbOffloadIsIdempotent() async throws {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(
+      portIDs: [0, 1], flags: _ingressMdbFlags()
+    )
+    let streamID = MSRPStreamID(0x0001_0000_0000_00B1)
+    let group = Self._ingressGroup
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .JoinIn
+    )
+    _ = await _waitFor {
+      await recorder.fdbRegister
+        .contains { $0.ports.contains(0) && _isEqualMacAddress($0.mac, group) }
+    }
+    try await _drive(
+      msrp, port: 1, attributeType: .listener,
+      value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready
+    )
+    _ = await _waitFor {
+      await recorder.fdbRegister
+        .contains { $0.ports.contains(1) && _isEqualMacAddress($0.mac, group) }
+    }
+    let port0Registers = await recorder.fdbRegister
+      .filter { _isEqualMacAddress($0.mac, group) && $0.ports.contains(0) }.count
+    XCTAssertEqual(
+      port0Registers,
+      1,
+      "the ingress entry is registered once; recompute is idempotent"
+    )
+    let port0Deregisters = await recorder.fdbDeregister
+      .filter { _isEqualMacAddress($0.mac, group) && $0.ports.contains(0) }.count
+    XCTAssertEqual(port0Deregisters, 0, "a later recompute must not churn the offloaded entry")
     _ = controller
   }
 

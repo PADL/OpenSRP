@@ -291,6 +291,7 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
   fileprivate var _portStates: [P.ID: MSRPPortState<P>] = [:]
   fileprivate let _mmrp: MMRPApplication<P>?
   fileprivate var _priorityMapNotificationTask: Task<(), Error>?
+  fileprivate var _vlanRegistrationNotificationTask: Task<(), Error>?
   // bridge System ID cached from the (async) bridge base MAC for the synchronous recompute path
   fileprivate var _bridgeSystemID: MSRPSystemID?
 
@@ -397,6 +398,12 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
 
       try? await _observePriorityMapNotifications(bridge: bridge, controller: controller)
     }
+    _vlanRegistrationNotificationTask = Task { [weak self] in
+      guard let self, let controller = self.controller,
+            let bridge = controller.bridge as? any MSRPAwareBridge<P> else { return }
+
+      try? await _observeVlanRegistrationNotifications(bridge: bridge, controller: controller)
+    }
   }
 
   // Workaround for Swift 6.3 SIL verification crash: the optimizer incorrectly
@@ -415,8 +422,21 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     }
   }
 
+  // A stream's group MDB entry only HW-offloads on a port already in its VLAN (VTU). When a VLAN
+  // appears on a port (e.g. after MVRP declares it from a received Talker Advertise), re-derive the
+  // active streams so _applyStreamPlan re-offloads any entry now gated in by the fresh membership.
+  private func _observeVlanRegistrationNotifications<B: MSRPAwareBridge>(
+    bridge: B,
+    controller: MRPController<P>
+  ) async throws where B.P == P {
+    for try await _ in bridge.vlanRegistrationNotifications {
+      _forceUpdateActiveStreams()
+    }
+  }
+
   deinit {
     _priorityMapNotificationTask?.cancel()
+    _vlanRegistrationNotificationTask?.cancel()
     _streamUpdateTask?.cancel()
   }
 
@@ -2224,14 +2244,20 @@ extension MSRPApplication {
     // p2p ingress admission port. A Failed talker reserves nothing, so its group is torn down.
     var groupPorts = [P.ID: P]()
     if boundTalker.1 is MSRPTalkerAdvertiseValue {
+      // the MDB entry only HW-offloads on a port already in the stream's VLAN (VTU); gate each port
+      // on membership and re-offload from the vlanRegistrationNotifications hook once it appears.
+      let dataFrameVlan = boundTalker.1.dataFrameParameters.vlanIdentifier
       // only ports whose per-port reservation was actually recorded; a CBS failure above leaves the
       // port unrecorded, so it is excluded here and retried on a later recompute
       for (participant, _) in plan.listenerPorts
         where _portStates[participant.port.id]?.reservations[streamID]?.isListenerReady == true
+        && participant.port.vlans.contains(dataFrameVlan)
       {
         groupPorts[participant.port.id] = participant.port
       }
-      if _configureIngressMdb, boundTalker.0.port.isPointToPoint {
+      if _configureIngressMdb, boundTalker.0.port.isPointToPoint,
+         boundTalker.0.port.vlans.contains(dataFrameVlan)
+      {
         groupPorts[boundTalker.0.port.id] = boundTalker.0.port
       }
     }
