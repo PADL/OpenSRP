@@ -131,6 +131,13 @@ private final class MRPDaemon: AsyncParsableCommand {
   @Flag(name: .long, help: "Enable MVRP")
   var enableMVRP: Bool = false
 
+  @Flag(
+    name: .long,
+    inversion: .prefixedNo,
+    help: "Declare each port's PVID over MVRP (11.2.1.3)"
+  )
+  var declarePVID: Bool = false
+
   @Flag(name: .long, help: "Enable MSRP")
   var enableMSRP: Bool = false
 
@@ -184,6 +191,7 @@ private final class MRPDaemon: AsyncParsableCommand {
     case logLevel
     case enableMMRP
     case enableMVRP
+    case declarePVID
     case enableMSRP
     case enableSRP
     case forceFullParticipant
@@ -253,7 +261,8 @@ private final class MRPDaemon: AsyncParsableCommand {
     if enableMVRP {
       _ = try await MVRPApplication(
         controller: controller,
-        vlanExclusions: Set(excludeVlan.map { VLAN(id: $0) })
+        vlanExclusions: Set(excludeVlan.map { VLAN(id: $0) }),
+        declarePVID: declarePVID
       )
     }
     if enableMSRP {
