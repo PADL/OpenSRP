@@ -857,10 +857,9 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     switch MSRPAttributeType(rawValue: attributeType) {
     case .talkerAdvertise, .talkerFailed:
       guard let talker = attributeValue as? any MSRPTalkerValue else { return true }
-      // 35.1.3.1: the stream's SR-class VLAN must be present on the port.
-      guard port.vlans.contains(talker.dataFrameParameters.vlanIdentifier) else { return false }
-      // Avnu ProAV §9.3: hold the Registrar MT once the global Talker limit is reached, so the
-      // additional stream is ignored (never registered). Same actor as the Participant.
+      // 35.2.4.3.4: talkerVlanPruning defaults off, so register regardless of the stream VLAN;
+      // egress pruning (when enabled) is applied in _shouldPruneTalkerDeclaration.
+      // Avnu ProAV §9.3: hold the Registrar MT once the global Talker limit is reached.
       return assumeIsolated { $0._isTalkerRegistrationPermitted(streamID: talker.streamID) }
     default:
       return true

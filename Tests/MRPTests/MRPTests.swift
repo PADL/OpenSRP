@@ -2044,6 +2044,38 @@ final class MRPTests: XCTestCase {
     _ = controller
   }
 
+  // 35.2.4.3.4: talkerVlanPruning is off by default, so a Talker Advertise registers and
+  // propagates out other Forwarding ports even when the stream's SR-class VLAN is not a member of
+  // the port -- the Listener learns the VID from the Advertise (35.1.2.2) before declaring it.
+  func testMSRPTalkerPropagatesWithoutStreamVLANWhenPruningOff() async throws {
+    let recorder = MRPTestRecorder()
+    // neither port is a member of the stream's SR-class VLAN (2, from _talkerAdvertise)
+    let ports = Set([0, 1].map { MockPort(id: $0, vlans: [1]) })
+    let bridge = MockBridge(ports: ports, recorder: recorder)
+    let controller = try await MRPController(
+      bridge: bridge,
+      logger: Logger(label: "com.padl.MRPTests.talker.novlan"),
+      timerConfiguration: MRPTimerConfiguration(periodicTime: .zero)
+    )
+    let msrp = try await MSRPApplication(controller: controller, flags: .defaultFlags)
+    try await msrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
+    let streamID = MSRPStreamID(0x0001_0000_0000_0001)
+
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID), event: .JoinIn
+    )
+
+    let propagated = await _waitFor {
+      await _declaredTalkerAdvertise(msrp, streamID, port: 1) != nil
+    }
+    XCTAssertTrue(
+      propagated,
+      "a Talker on a port without the SR-class VLAN must still propagate out port 1 (pruning off)"
+    )
+    _ = controller
+  }
+
   // The talker leavetimer wins the race: after a LeaveAll the talker reaches MT (Listener is torn
   // down, correctly), then the talker re-Joins. The Listener toward the talker MUST recover to
   // Ready. A stuck-withdrawn/askingFailed here is the field dropout that never re-arms.
