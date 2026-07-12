@@ -425,12 +425,17 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
     return state.linkSettings.0.duplex == DUPLEX_FULL || state.flags & IFF_POINTOPOINT != 0
   }
 
-  // A bridge member's BR_STATE_*; non-members (no master) are always Forwarding. nil when this
-  // snapshot came from an AF_UNSPEC notification carrying no bridge-port state: the caller keeps
-  // the last-known state rather than assuming Forwarding. Synchronous read of the cached link.
+  // A bridge member's BR_STATE_*; non-members (no master) are Forwarding. Live from the bridge
+  // cache (RTM_NEWLINK) so a frozen Port copy reads current state; nil = AF_UNSPEC, keep
+  // last-known.
   public var stpPortState: STPPortState? {
-    guard _rtnl.master != 0 else { return .forwarding }
-    guard let brport = _rtnl as? RTNLLinkBridge else { return nil }
+    if let live = _bridge?._portStpState.withLock({ $0[id] }) { return live }
+    return Self._stpPortState(from: _rtnl)
+  }
+
+  static func _stpPortState(from rtnl: RTNLLink) -> STPPortState? {
+    guard rtnl.master != 0 else { return .forwarding }
+    guard let brport = rtnl as? RTNLLinkBridge else { return nil }
     switch brport.bridgePortState {
     case 1: return .listening
     case 2: return .learning
@@ -652,6 +657,9 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   let _portVLANs = Mutex<[Int: [UInt16: Bool]]>([:])
   // Per-port PVID by ifindex; seeded from the AF_BRIDGE dump, kept live by VLAN DB.
   let _portPVID = Mutex<[Int: UInt16]>([:])
+  // Live BR_STATE per port, kept current by RTM_NEWLINK; a value-copied Port's _rtnl is frozen.
+  // AF_UNSPEC notifications carry no bridge-port state, so the last-known entry is kept.
+  let _portStpState = Mutex<[Int: STPPortState]>([:])
   // real_num_tx_queues by ifindex. Member ports are enumerated via an AF_BRIDGE RTM_GETLINK dump
   // (for bridge port state), whose reduced attribute set omits IFLA_NUM_TX_QUEUES, so those link
   // objects report 0. Seeded from a full AF_UNSPEC dump (like `ip -d link`) and kept live by link
@@ -754,6 +762,10 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     } else if port._rtnl.master == _bridgeIndex {
       if case .new = linkMessage {
         _updatePortLinkState(port._rtnl)
+        // keep the live BR_STATE current; skip AF_UNSPEC snapshots (nil) so the last-known is kept
+        if let stpState = P._stpPortState(from: port._rtnl) {
+          _portStpState.withLock { $0[port.id] = stpState }
+        }
         portNotification = .added(port)
         // seed the live VLAN map from the link's AF_BRIDGE info unless VLAN DB
         // notifications have already populated it (they are the fresher source, and
@@ -771,6 +783,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
         _portPropertiesCache[port.id] = nil
         _portVLANs.withLock { $0[port.id] = nil }
         _portPVID.withLock { $0[port.id] = nil }
+        _portStpState.withLock { $0[port.id] = nil }
         // deliberately keep the last-known link state: a value-copy of this Port held by a
         // concurrent recompute would otherwise read a zeroed state (speed 0 -> bad CBS). The stale
         // entry is harmless (bounded by port count) and overwritten if the ifindex is re-added.
