@@ -6919,6 +6919,38 @@ extension MRPTests {
     _ = controller
   }
 
+  // 35.2.1.4 h: MSRP attributes arrive asynchronously, so a Talker can precede its peer Domain. It
+  // is Failed while the port is a boundary (h.1: declaring, no registration); when the matching
+  // Domain later registers the port becomes core, so the stream must re-plan and the Advertise
+  // flow.
+  func testLateDomainRegistrationReplansFailedTalker() async throws {
+    let (controller, msrp, _) = try await _makeBridgeMSRP(portIDs: [0, 1, 2])
+    let domain = MSRPDomainValue(srClassID: .A, srClassPriority: .CA, srClassVID: SR_PVID.vid)
+    // egress port 1 is a core port; port 0 (the Talker's port) has no Domain yet -> boundary (h.1)
+    try await _drive(msrp, port: 1, attributeType: .domain, value: domain, event: .JoinIn)
+
+    let streamID = MSRPStreamID(0x0001_0000_0000_00B2)
+    try await _drive(
+      msrp, port: 0, attributeType: .talkerAdvertise, value: _talkerAdvertise(streamID),
+      event: .JoinIn
+    )
+    let failed = await _waitFor {
+      await _declaredTalkerFailureCode(msrp, streamID, port: 1) == .egressPortIsNotAvbCapable
+    }
+    XCTAssertTrue(failed, "a Talker arriving before its Domain must be Failed (h.1 boundary)")
+
+    // the matching Domain now registers on the Talker's port -> it becomes a core port
+    try await _drive(msrp, port: 0, attributeType: .domain, value: domain, event: .JoinIn)
+    // must re-plan promptly on the Domain event, not wait for the periodic asCapable-resample tick
+    let advertised = await _waitFor(timeoutMs: 300) {
+      await _declaredTalkerAdvertise(msrp, streamID, port: 1) != nil
+    }
+    XCTAssertTrue(advertised, "a late Domain must re-plan the stream so the Advertise propagates")
+    let clearedFailure = await _declaredTalkerFailureCode(msrp, streamID, port: 1)
+    XCTAssertNil(clearedFailure, "the Talker must no longer be Failed once its Domain registers")
+    _ = controller
+  }
+
   // 35.2.2.8: a peer re-declaring a registered Talker Failed with the same FirstValue but a changed
   // FailureInformation (failureCode -- a non-FirstValue field) must update the registration in
   // place

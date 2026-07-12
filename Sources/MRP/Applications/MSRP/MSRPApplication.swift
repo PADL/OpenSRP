@@ -1926,6 +1926,10 @@ extension MSRPApplication {
           await _applyPortFiltering(port: port, bridge: bridge)
         }
       }
+      // 35.2.1.4 h: the boundary is now derivable, so re-plan streams that were failed (or bridged)
+      // for a previously-undetermined domain on this port, rather than waiting for a periodic
+      // recompute
+      _forceUpdateActiveStreams()
     }
     throw MRPError.doNotPropagateAttribute
   }
