@@ -8938,3 +8938,27 @@ extension MRPTests {
     XCTAssertEqual(pdu.messages[0].attributeList[1].numberOfValues, 1)
   }
 }
+
+extension MRPTests {
+  // Regression (10.8.3.1): an MRPDU whose attribute list runs to the physical end of the PDU with
+  // no explicit 0x0000 EndMark is valid -- the end of the PDU is itself the EndMark. A single VID
+  // Message of nine single-value vectors that ends at the frame boundary. Previously mrpd required
+  // the explicit EndMark and discarded the whole Message, dropping all nine VIDs.
+  func testEndOfPduIsAnImplicitEndMark() async throws {
+    let mvrp = try await makeMVRP()
+    // version(0) + AttributeType(1=VID) + AttributeLength(2) + 9 single-value VID vectors,
+    // ending at the frame boundary with NO explicit EndMark (bytes as captured, FCS stripped).
+    let mrpdu: [UInt8] = [
+      0x00, 0x01, 0x02,
+      0x00, 0x01, 0x00, 0x66, 0x6C, 0x00, 0x01, 0x00, 0xCA, 0x6C,
+      0x00, 0x01, 0x01, 0x2E, 0x6C, 0x00, 0x01, 0x01, 0x92, 0x6C,
+      0x00, 0x01, 0x01, 0xF6, 0x6C, 0x00, 0x01, 0x02, 0x5A, 0x6C,
+      0x00, 0x01, 0x02, 0xBE, 0x6C, 0x00, 0x01, 0x03, 0x22, 0x6C,
+      0x00, 0x01, 0x03, 0x86, 0x6C,
+    ]
+    let pdu = try mrpdu.withParserSpan { try MRPDU(parsing: &$0, application: mvrp) }
+    XCTAssertEqual(pdu.messages.count, 1, "the message must not be discarded")
+    let vids = pdu.messages[0].attributeList.compactMap { ($0.firstValue.value as? VLAN)?.vid }
+    XCTAssertEqual(vids, [102, 202, 302, 402, 502, 602, 702, 802, 902])
+  }
+}

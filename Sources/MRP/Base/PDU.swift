@@ -370,6 +370,9 @@ struct Message {
     let startCount = input.count
 
     repeat {
+      // 10.8.3.1: the physical end of the PDU is taken to be an EndMark, so fewer than two octets
+      // remaining terminates the attribute list without an explicit EndMark.
+      guard input.count >= 2 else { break }
       if let attributeListLength {
         let bytesProcessed = startCount - input.count
         if bytesProcessed == Int(attributeListLength) - 2 { break }
@@ -389,9 +392,18 @@ struct Message {
       attributeList.append(vectorAttribute)
     } while input.count > 0
 
-    let endMark: UInt16 = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
-    guard endMark == EndMark else {
-      throw MRPError.badPduEndMark
+    // Consume the explicit EndMark when present. The end of the PDU is itself an EndMark
+    // (10.8.3.1),
+    // so an attribute list that runs exactly to the frame boundary is valid and needs no trailing
+    // 0x0000; a lone remaining octet is a truncated tail, rejected so the caller discards from here
+    // (Avnu ProAV Bridge §8.1).
+    if input.count >= 2 {
+      let endMark: UInt16 = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
+      guard endMark == EndMark else {
+        throw MRPError.badPduEndMark
+      }
+    } else if input.count == 1 {
+      throw MRPError.badPduLength
     }
     self.attributeList = attributeList
   }
