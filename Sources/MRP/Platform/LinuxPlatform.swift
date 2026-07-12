@@ -559,6 +559,16 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
       fileDescriptor: socket(CInt(AF_PACKET), Int32(SOCK_DGRAM.rawValue), 0),
       closeOnDealloc: true
     )
+    // Applying pause params restarts autonegotiation and flaps the link, so skip it when the port
+    // is already in the desired state (e.g. an mrpd restart re-disabling already-disabled PAUSE).
+    var current = ethtool_pauseparam()
+    current.cmd = UInt32(ETHTOOL_GPAUSEPARAM)
+    let want: UInt32 = enabled ? 1 : 0
+    if (try? _ethToolIoctl(fileHandle: fileHandle, name: _rtnl.name, arg: &current)) != nil,
+       current.autoneg == want, current.rx_pause == want, current.tx_pause == want
+    {
+      return
+    }
     var pause = ethtool_pauseparam()
     pause.cmd = UInt32(ETHTOOL_SPAUSEPARAM)
     // Turn autonegotiation off so rx/tx are honored directly: 0/0 forces 802.3x
