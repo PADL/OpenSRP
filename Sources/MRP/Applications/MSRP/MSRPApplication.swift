@@ -1287,13 +1287,15 @@ extension MSRPApplication {
     let candidates = _candidateTalkers(participant: participant, provisional: provisional)
     let admitted = _admittedStreamIDs(port: port, portState: portState, candidates: candidates)
     if admitted.contains(talker.streamID) { return nil }
-    // Preemption (code 6) needs a strictly higher Rank (Emergency, rank reset; 35.2.2.8.5); an
-    // equal-rank loser of the streamAge tiebreak (35.2.4.1) "simply does not fit". Fit-alone only.
-    let fitsAlone = _talkersFit(port: port, portState: portState, talkers: [provisional])
-    let lostToHigher = fitsAlone && candidates.contains { other in
-      other.streamID != talker.streamID && admitted.contains(other.streamID) &&
-        !other.priorityAndRank.rank && provisional.priorityAndRank.rank
+    // Preemption (code 6) means a strictly higher Rank (Emergency, rank reset; 35.2.2.8.5) took the
+    // bandwidth: true iff removing the strictly-higher-Rank streams would admit this one. A loser to
+    // an equal-Rank older stream (streamAge tiebreak, 35.2.4.1) "simply does not fit" -> code 1.
+    let strictlyHigher = candidates.filter {
+      $0.streamID != talker.streamID && !$0.priorityAndRank.rank && provisional.priorityAndRank.rank
     }
+    let lostToHigher = !strictlyHigher.isEmpty && _admittedStreamIDs(
+      port: port, portState: portState, candidates: candidates.subtracting(strictlyHigher)
+    ).contains(talker.streamID)
     return MSRPFailure(
       systemID: _systemID,
       failureCode: lostToHigher ? .streamPreemptedByHigherRank : .insufficientBandwidth

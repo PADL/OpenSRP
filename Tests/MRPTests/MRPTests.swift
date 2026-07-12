@@ -5567,13 +5567,15 @@ extension MRPTests {
     dest: EUI48 = [0x91, 0xE0, 0xF0, 0x00, 0x00, 0x01],
     priority: SRclassPriority =
       .CA, // .CA = SR class A, .EE = SR class B (DefaultSRClassPriorityMap)
-    accumulatedLatency: UInt32 = 1000
+    accumulatedLatency: UInt32 = 1000,
+    rank: Bool = false, // false == Rank reset == Emergency (35.2.2.8.5)
+    tSpec: MSRPTSpec = MSRPTSpec(maxFrameSize: 64, maxIntervalFrames: 1)
   ) -> MSRPTalkerAdvertiseValue {
     MSRPTalkerAdvertiseValue(
       streamID: streamID,
       dataFrameParameters: MSRPDataFrameParameters(destinationAddress: dest, vlanIdentifier: 2),
-      tSpec: MSRPTSpec(maxFrameSize: 64, maxIntervalFrames: 1),
-      priorityAndRank: MSRPPriorityAndRank(dataFramePriority: priority, rank: false),
+      tSpec: tSpec,
+      priorityAndRank: MSRPPriorityAndRank(dataFramePriority: priority, rank: rank),
       accumulatedLatency: accumulatedLatency
     )
   }
@@ -6827,6 +6829,52 @@ extension MRPTests {
     _ = controller
   }
 
+  // Avnu ProAV §9.1 / failure code: a Non-emergency stream that loses admission to a *same-Rank*
+  // older stream "simply does not fit" -> insufficientBandwidth (1), not
+  // streamPreemptedByHigherRank
+  // (6) -- even while an unrelated higher-Rank Emergency stream is also admitted.
+  func testAdmissionLossToSameRankIsInsufficientBandwidthNotPreemption() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    // class A limit = 1Gbps x 75% = 750 Mbps. A 1000-byte/7-frames stream is ~62%; two overflow,
+    // one fits alone. The Emergency stream is tiny (~1%), so it is not why a big stream is
+    // rejected.
+    let big = MSRPTSpec(maxFrameSize: 1000, maxIntervalFrames: 7)
+    func reserve(_ id: UInt64, dest: UInt8, rank: Bool, tSpec: MSRPTSpec) async throws {
+      let streamID = MSRPStreamID(integerLiteral: id)
+      try await _drive(
+        msrp, port: 0, attributeType: .talkerAdvertise,
+        value: _talkerAdvertise(
+          streamID, dest: [0x91, 0xE0, 0xF0, 0x00, 0x00, dest], rank: rank, tSpec: tSpec
+        ), event: .JoinIn
+      )
+      try await _drive(
+        msrp, port: 1, attributeType: .listener,
+        value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready
+      )
+    }
+    let emergency = MSRPTSpec(maxFrameSize: 64, maxIntervalFrames: 1)
+    let n1 = MSRPStreamID(0x0001_0000_0000_00A1)
+    let n2 = MSRPStreamID(0x0001_0000_0000_00A2)
+    // Emergency (Rank reset), then an older then a younger Non-emergency (Rank set) big stream
+    try await reserve(0x0001_0000_0000_00E0, dest: 0xE0, rank: false, tSpec: emergency)
+    try await reserve(n1.id, dest: 0xA1, rank: true, tSpec: big)
+    let n1Admitted = await _waitFor { await _declaredTalkerAdvertise(msrp, n1, port: 1) != nil }
+    XCTAssertTrue(n1Admitted, "the first big Non-emergency stream must be admitted")
+    // the younger same-Rank stream is displaced by N1 (age tiebreak), not by the Emergency stream
+    try await reserve(n2.id, dest: 0xA2, rank: true, tSpec: big)
+
+    let failed = await _waitFor(timeoutMs: 1000) {
+      await _declaredTalkerFailureCode(msrp, n2, port: 1) != nil
+    }
+    XCTAssertTrue(failed, "the younger big stream must be Talker Failed (bandwidth exhausted)")
+    let code = await _declaredTalkerFailureCode(msrp, n2, port: 1)
+    XCTAssertEqual(
+      code, .insufficientBandwidth,
+      "a same-Rank age-tiebreak loser is insufficientBandwidth (1), not preempted-by-Rank (6)"
+    )
+    _ = controller
+  }
+
   // 35.2.2.8.6: a peer's upstream AccumulatedLatency is tracked in both directions. After an
   // increase fails the stream (code 7), a genuine decrease back within the guarantee must clear the
   // failure and re-declare Talker Advertise -- a transient spike must not strand the stream Failed.
@@ -6949,8 +6997,11 @@ extension MRPTests {
       await _declaredTalkerAdvertise(msrp, streamID, port: 1) != nil
     }
     XCTAssertTrue(advertised, "a late Domain must re-plan the stream so the Advertise propagates")
-    let clearedFailure = await _declaredTalkerFailureCode(msrp, streamID, port: 1)
-    XCTAssertNil(clearedFailure, "the Talker must no longer be Failed once its Domain registers")
+    // the Failed leave and the Advertise join are separate async events; poll rather than one-shot
+    let clearedFailure = await _waitFor(timeoutMs: 300) {
+      await _declaredTalkerFailureCode(msrp, streamID, port: 1) == nil
+    }
+    XCTAssertTrue(clearedFailure, "the Talker must no longer be Failed once its Domain registers")
     _ = controller
   }
 
