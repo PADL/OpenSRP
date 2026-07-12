@@ -8850,3 +8850,91 @@ final class DrainBarrierTests: XCTestCase {
     XCTAssertEqual(barrier.count, 0)
   }
 }
+
+extension MRPTests {
+  // Regression: a coalesced multi-value MVRP vector must serialize to a well-formed MVRPDU that
+  // parses back with every VID preserved -- guards a malformed MVRPDU (wrong length / missing
+  // EndMark / dropped VIDs) from the propagation-coalescing path.
+  func testMVRPMultiValueVectorRoundTrips() async throws {
+    let mvrp = try await makeMVRP()
+    let message = Message(
+      attributeType: MVRPAttributeType.vid.rawValue,
+      attributeList: [VectorAttribute(
+        leaveAllEvent: .NullLeaveAllEvent,
+        firstValue: AnyValue(VLAN(vid: 100)),
+        attributeEvents: [.JoinIn, .JoinIn, .JoinIn],
+        applicationEvents: nil
+      )]
+    )
+    var sc = SerializationContext()
+    try MRPDU(protocolVersion: 0, messages: [message]).serialize(into: &sc, application: mvrp)
+    let pdu = try sc.bytes.withParserSpan { try MRPDU(parsing: &$0, application: mvrp) }
+    XCTAssertEqual(pdu.messages.count, 1)
+    XCTAssertEqual(pdu.messages[0].attributeList.count, 1)
+    XCTAssertEqual(pdu.messages[0].attributeList[0].numberOfValues, 3)
+  }
+
+  // Regression: an MRPDU carrying more than one Message (as coalescing produces) must round-trip
+  // with every Message preserved and a well-formed EndMark.
+  func testMSRPMultiMessagePduRoundTrips() async throws {
+    let msrp = try await makeMSRP()
+    let talker = MSRPTalkerAdvertiseValue(
+      streamID: MSRPStreamID(0x0001_0000_0000_0001),
+      dataFrameParameters: MSRPDataFrameParameters(),
+      tSpec: MSRPTSpec(),
+      priorityAndRank: MSRPPriorityAndRank(),
+      accumulatedLatency: 0
+    )
+    let domain = try MSRPDomainValue(srClassID: .A, srClassPriority: .CA, srClassVID: SR_PVID.vid)
+    let messages = [
+      Message(
+        attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
+        attributeList: [VectorAttribute(
+          leaveAllEvent: .NullLeaveAllEvent, firstValue: AnyValue(talker),
+          attributeEvents: [.JoinMt], applicationEvents: nil
+        )]
+      ),
+      Message(
+        attributeType: MSRPAttributeType.domain.rawValue,
+        attributeList: [VectorAttribute(
+          leaveAllEvent: .NullLeaveAllEvent, firstValue: AnyValue(domain),
+          attributeEvents: [.JoinIn], applicationEvents: nil
+        )]
+      ),
+    ]
+    var sc = SerializationContext()
+    try MRPDU(protocolVersion: 0, messages: messages).serialize(into: &sc, application: msrp)
+    let pdu = try sc.bytes.withParserSpan { try MRPDU(parsing: &$0, application: msrp) }
+    XCTAssertEqual(pdu.messages.count, 2)
+  }
+}
+
+extension MRPTests {
+  // Regression: an MVRP Message with MULTIPLE VectorAttributes (non-consecutive VIDs, as the
+  // coalescing path packs into one MRPDU) must round-trip with every vector + VID preserved.
+  func testMVRPMultiVectorNonConsecutiveRoundTrips() async throws {
+    let mvrp = try await makeMVRP()
+    let message = Message(
+      attributeType: MVRPAttributeType.vid.rawValue,
+      attributeList: [
+        VectorAttribute(
+          leaveAllEvent: .NullLeaveAllEvent, firstValue: AnyValue(VLAN(vid: 1)),
+          attributeEvents: [.JoinIn, .JoinIn], applicationEvents: nil
+        ),
+        VectorAttribute(
+          leaveAllEvent: .NullLeaveAllEvent, firstValue: AnyValue(VLAN(vid: 666)),
+          attributeEvents: [.JoinIn], applicationEvents: nil
+        ),
+      ]
+    )
+    var sc = SerializationContext()
+    try MRPDU(protocolVersion: 0, messages: [message]).serialize(into: &sc, application: mvrp)
+    let pdu = try sc.bytes.withParserSpan { try MRPDU(parsing: &$0, application: mvrp) }
+    XCTAssertEqual(pdu.messages.count, 1)
+    XCTAssertEqual(pdu.messages[0].attributeList.count, 2, "both VectorAttributes must survive")
+    let firstVids = pdu.messages[0].attributeList.compactMap { ($0.firstValue.value as? VLAN)?.vid }
+    XCTAssertEqual(firstVids, [1, 666])
+    XCTAssertEqual(pdu.messages[0].attributeList[0].numberOfValues, 2)
+    XCTAssertEqual(pdu.messages[0].attributeList[1].numberOfValues, 1)
+  }
+}
