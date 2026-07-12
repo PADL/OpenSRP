@@ -73,6 +73,15 @@ public protocol Application<P>: Actor, Equatable, Hashable, Sendable {
   func didUpdate(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) async throws
   func didRemove(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) async throws
 
+  // A Port's Forwarding-set membership changed (isForwarding = new state). Generic MRP apps
+  // re-propagate declarations per 10.3 c/d/e/f; an application with its own MAP recompute (MSRP)
+  // ignores this and re-derives via its didUpdate recompute instead.
+  func didChangeForwardingState(
+    port: P,
+    isForwarding: Bool,
+    for contextIdentifier: MAPContextIdentifier
+  ) async throws
+
   // withdraw programmed hardware state on graceful shutdown, while the bridge is still usable
   func shutdown() async
 
@@ -252,5 +261,11 @@ extension Application {
 
   func redeclare(for contextIdentifier: MAPContextIdentifier, port: P) throws {
     try findParticipant(for: contextIdentifier, port: port).redeclare()
+  }
+
+  // 10.3 NOTE: a Port leaving the active topology transmits a Leave for every attribute it had
+  // declared, so downstream FDBs are updated (11.2.1.2). Registrations on the Port are unaffected.
+  func leave(for contextIdentifier: MAPContextIdentifier, port: P) throws {
+    try findParticipant(for: contextIdentifier, port: port).leave()
   }
 }

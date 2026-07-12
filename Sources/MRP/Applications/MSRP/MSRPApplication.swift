@@ -346,6 +346,14 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
   nonisolated var _ignoreAsCapable: Bool { _flags.contains(.ignoreAsCapable) }
   public nonisolated var registrarLeaveImmediate: Bool { _flags.contains(.leaveImmediate) }
 
+  // MSRP re-derives declarations in its own recompute (onContextUpdated), so the generic 10.3
+  // Forwarding-set-change handling is a no-op here -- running it would fight the recompute.
+  public func didChangeForwardingState(
+    port: P,
+    isForwarding: Bool,
+    for contextIdentifier: MAPContextIdentifier
+  ) throws {}
+
   fileprivate nonisolated var _talkerPruning: Bool { _flags.contains(.talkerPruning) }
 
   public init(

@@ -836,6 +836,12 @@ public extension Participant {
     try _handleLeaveAll(protocolEvent: .Flush, eventSource: .internal)
   }
 
+  // 10.3 NOTE: when this Port leaves the active topology it transmits a Leave for every attribute
+  // it has declared. Lv is a MAD_Leave.request to the Applicant, so registrations are unaffected.
+  func leave() throws {
+    try _apply(protocolEvent: .Lv, eventSource: .internal)
+  }
+
   // A Re-declare! event signals to the Applicant and Registrar state machines
   // that there is a need to rapidly redeclare registered information on the
   // Port associated with the state machines as a result of a topology change

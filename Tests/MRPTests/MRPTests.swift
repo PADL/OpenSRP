@@ -8962,3 +8962,125 @@ extension MRPTests {
     XCTAssertEqual(vids, [102, 202, 302, 402, 502, 602, 702, 802, 902])
   }
 }
+
+extension MRPTests {
+  // Regression (802.1Q §10.3 NOTE / §11.2.1.2): when a Port leaves the active topology (its STP
+  // Forwarding state clears) the Bridge must transmit a Leave for every attribute that Port had
+  // declared and stop declaring on it -- so downstream FDBs are updated.
+  func testPortLeavingActiveTopologyWithdrawsDeclarations() async throws {
+    let (controller, mvrp, recorder) = try await _makeMVRP(portIDs: [0, 1])
+    // a peer registration on port 0 propagates to an active declaration on port 1
+    try await _driveMVRP(mvrp, port: 0, vid: 200, event: .JoinIn)
+    let declared = await _waitFor { await _isVLANDeclared(mvrp, vid: 200, port: 1) }
+    XCTAssertTrue(declared, "VID 200 must be declared on port 1 while it is Forwarding")
+
+    // seed port 1's Forwarding baseline, then drive it out of the active topology (-> Blocking)
+    try await controller._didUpdate(port: MockPort(id: 1, vlans: [2]))
+    var blocked = MockPort(id: 1, vlans: [2])
+    blocked.stpPortState = .blocking
+    try await controller._didUpdate(port: blocked)
+
+    // §10.3 NOTE: port 1 must transmit a Leave for VID 200 and stop declaring it
+    let left = await _waitFor {
+      await _transmittedVLANEvents(recorder, mvrp, port: 1, vid: 200).contains(.Lv)
+    }
+    XCTAssertTrue(left, "port 1 must Leave VID 200 after leaving the active topology")
+    let stopped = await !_isVLANDeclared(mvrp, vid: 200, port: 1)
+    XCTAssertTrue(stopped, "port 1 must stop declaring VID 200")
+    _ = controller
+  }
+
+  // Regression: a Port that declared while its STP state was unknown (nil / AF_UNSPEC) is still in
+  // the Forwarding set (nil-lenient, like propagation), so leaving it (nil -> Blocking) must also
+  // transmit a Leave -- the case the old literal-.forwarding gate missed.
+  func testPortLeavingForwardingSetFromUnknownStateWithdraws() async throws {
+    let (controller, mvrp, recorder) = try await _makeMVRP(portIDs: [0, 1])
+    // seed port 1's controller state as unknown (nil) -- still counts as in the Forwarding set
+    var unknown = MockPort(id: 1, vlans: [2])
+    unknown.stpPortState = nil
+    try await controller._didUpdate(port: unknown)
+
+    // a peer on port 0 declares VID 200; it propagates to a declaration on port 1
+    try await _driveMVRP(mvrp, port: 0, vid: 200, event: .JoinIn)
+    let declared = await _waitFor { await _isVLANDeclared(mvrp, vid: 200, port: 1) }
+    XCTAssertTrue(declared, "VID 200 must be declared on port 1")
+
+    // port 1 leaves the Forwarding set (nil -> Blocking): it must still transmit a Leave
+    var blocked = MockPort(id: 1, vlans: [2])
+    blocked.stpPortState = .blocking
+    try await controller._didUpdate(port: blocked)
+    let left = await _waitFor {
+      await _transmittedVLANEvents(recorder, mvrp, port: 1, vid: 200).contains(.Lv)
+    }
+    XCTAssertTrue(left, "leaving the Forwarding set from an unknown state must transmit a Leave")
+    _ = controller
+  }
+
+  // 10.3 e): when the Port that *registered* an attribute leaves the set (and no other Port
+  // registered it), the *other* Ports must withdraw the declarations that resulted from that
+  // registration -- driven by the surviving ports, so it works even if the leaving port is down.
+  func testRegisteringPortLeavingWithdrawsOtherPortDeclarations() async throws {
+    let (controller, mvrp, _) = try await _makeMVRP(portIDs: [0, 1])
+    // seed port 0 Forwarding, then a peer on port 0 registers VID 200 -> port 1 declares it
+    try await controller._didUpdate(port: MockPort(id: 0, vlans: [2]))
+    try await _driveMVRP(mvrp, port: 0, vid: 200, event: .JoinIn)
+    let declared = await _waitFor { await _isVLANDeclared(mvrp, vid: 200, port: 1) }
+    XCTAssertTrue(declared, "port 1 must declare VID 200 (propagated from port 0's registration)")
+
+    // drive the *registering* port 0 out of the set
+    var blocked = MockPort(id: 0, vlans: [2])
+    blocked.stpPortState = .blocking
+    try await controller._didUpdate(port: blocked)
+
+    // §10.3 e): port 0 was the only registrant, so port 1 must withdraw its declaration
+    let withdrawn = await _waitFor { await !_isVLANDeclared(mvrp, vid: 200, port: 1) }
+    XCTAssertTrue(withdrawn, "port 1 must withdraw VID 200 after the registering port left the set")
+    _ = controller
+  }
+
+  // 10.3 b) refcount: if the attribute is still registered on ANOTHER in-set Port, the declaration
+  // must NOT be withdrawn when one registering Port leaves -- withdrawing it would break a still-
+  // valid reservation.
+  func testDeclarationSurvivesWhenAnotherRegistrarRemains() async throws {
+    let (controller, mvrp, _) = try await _makeMVRP(portIDs: [0, 1, 2])
+    // ports 0 AND 2 both register VID 200 -> port 1 declares it (two registrars)
+    try await controller._didUpdate(port: MockPort(id: 0, vlans: [2]))
+    try await _driveMVRP(mvrp, port: 0, vid: 200, event: .JoinIn)
+    try await _driveMVRP(mvrp, port: 2, vid: 200, event: .JoinIn)
+    let declared = await _waitFor { await _isVLANDeclared(mvrp, vid: 200, port: 1) }
+    XCTAssertTrue(declared, "port 1 must declare VID 200 (two registrars)")
+
+    // port 0 leaves the set -- but port 2 still registers VID 200, so port 1 must KEEP declaring
+    var blocked = MockPort(id: 0, vlans: [2])
+    blocked.stpPortState = .blocking
+    try await controller._didUpdate(port: blocked)
+    try await Task
+      .sleep(for: .milliseconds(300)) // allow a (wrongful) withdrawal to occur if broken
+    let stillDeclared = await _isVLANDeclared(mvrp, vid: 200, port: 1)
+    XCTAssertTrue(
+      stillDeclared,
+      "port 1 must keep declaring VID 200 while port 2 still registers it"
+    )
+    _ = controller
+  }
+
+  func testPortReenteringForwardingSetRedeclares() async throws {
+    let (controller, mvrp, _) = try await _makeMVRP(portIDs: [0, 1])
+    try await controller._didUpdate(port: MockPort(id: 1, vlans: [2]))
+    try await _driveMVRP(mvrp, port: 0, vid: 200, event: .JoinIn)
+    _ = await _waitFor { await _isVLANDeclared(mvrp, vid: 200, port: 1) }
+    var blocked = MockPort(id: 1, vlans: [2]); blocked.stpPortState = .blocking
+    try await controller._didUpdate(port: blocked)
+    _ = await _waitFor { await !_isVLANDeclared(mvrp, vid: 200, port: 1) }
+    // port 1 RE-ENTERS the set: per 10.3 c/d it should re-declare (port 0 still registers VID 200)
+    try await controller._didUpdate(port: MockPort(id: 1, vlans: [2]))
+    let redeclared = await _waitFor(timeoutMs: 1500) {
+      await _isVLANDeclared(mvrp, vid: 200, port: 1)
+    }
+    XCTAssertTrue(
+      redeclared,
+      "port 1 must re-declare VID 200 on re-entering the Forwarding set (10.3 d)"
+    )
+    _ = controller
+  }
+}

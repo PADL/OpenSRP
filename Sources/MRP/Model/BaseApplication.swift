@@ -216,10 +216,10 @@ extension BaseApplication {
     }
   }
 
-  // 10.3: MAP propagates only across the set of Ports whose Port State (8.4) is
-  // Forwarding, both for the source and each destination. nil (no bridge-port
-  // state) is treated as Forwarding so non-STP setups are unaffected.
-  private func _isForwarding(_ port: P) -> Bool {
+  // 10.3: MAP propagates only across the set of Ports whose Port State (8.4) is Forwarding, both
+  // for the source and each destination. nil (no bridge-port state) is treated as Forwarding so
+  // non-STP setups are unaffected.
+  nonisolated func _isForwarding(_ port: P) -> Bool {
     port.stpPortState.map { $0 == .forwarding } ?? true
   }
 
@@ -312,6 +312,103 @@ extension BaseApplication {
         eventSource: .map
       )
     }
+  }
+
+  // Generic 10.3 Forwarding-set-change handling, shared by the MRP applications whose declarations
+  // follow registration directly (MVRP/MMRP). MSRP overrides didChangeForwardingState with a no-op
+  // because its own recompute (didUpdate) re-derives declarations.
+  func _applyForwardingStateChange(
+    port: P, isForwarding: Bool, for contextIdentifier: MAPContextIdentifier
+  ) throws {
+    if isForwarding {
+      // 10.3 c)/d): the Port re-entered the set -- re-propagate declarations both ways
+      try propagateDeclarationsJoiningSet(for: contextIdentifier, port: port)
+    } else {
+      // 10.3 NOTE: withdraw this Port's own declarations; 10.3 e/f: withdraw the other Ports'
+      // declarations that depended on this Port's registrations
+      try leave(for: contextIdentifier, port: port)
+      try withdrawPropagatedDeclarations(for: contextIdentifier, port: port)
+    }
+  }
+
+  // iterate the attributes a Participant has registered, across every valid attribute type
+  private func _forEachRegistered(
+    of participant: Participant<Self>,
+    _ body: (AttributeValue) throws -> ()
+  ) rethrows {
+    for attributeType in validAttributeTypes {
+      for attribute in participant.findAllAttributesUnchecked(
+        attributeType: attributeType, matching: .matchAny, isolation: self
+      ) where attribute.isRegistered {
+        try body(attribute)
+      }
+    }
+  }
+
+  // 10.3 e): a Port removed from the Forwarding set no longer counts as a registration source, so
+  // for every attribute it had registered, withdraw the resulting declaration on each other in-set
+  // Port -- but only where no other in-set Port still registers it (10.3 b refcount). The surviving
+  // ports transmit these Leaves, so this holds even when the leaving Port is down. GenAVB's
+  // is_vlan_registered_other_forwarding computes the same (registered & forwarding & ~self).
+  func withdrawPropagatedDeclarations(
+    for contextIdentifier: MAPContextIdentifier,
+    port: P
+  ) throws {
+    let leaving = try findParticipant(for: contextIdentifier, port: port)
+    let participants = findParticipants(for: contextIdentifier)
+    try _forEachRegistered(of: leaving) { attribute in
+      try apply(for: contextIdentifier) { other in
+        guard other.port != port, _isForwarding(other.port) else { return }
+        // 10.3 b) refcount: keep the declaration if any OTHER in-set Port still registers it
+        let registeredElsewhere = participants.contains {
+          $0.port != other.port && $0.port != port && _isForwarding($0.port) &&
+            $0.isRegisteredUnchecked(
+              attributeType: attribute.attributeType,
+              matching: .matchIndex(attribute.attributeValue),
+              isolation: self
+            )
+        }
+        guard !registeredElsewhere else { return }
+        try other.leave(
+          attributeType: attribute.attributeType,
+          attributeSubtype: attribute.attributeSubtype,
+          attributeValue: attribute.attributeValue,
+          eventSource: .map
+        )
+      }
+    }
+  }
+
+  // 10.3 c)/d): a Port added to the Forwarding set propagates its registrations to the other in-set
+  // Ports (they declare, c) and declares the attributes the other in-set Ports have registered (d).
+  // 10.3 a): re-declaration on a topology change is marked New.
+  func propagateDeclarationsJoiningSet(
+    for contextIdentifier: MAPContextIdentifier,
+    port: P
+  ) throws {
+    let joining = try findParticipant(for: contextIdentifier, port: port)
+    let others = findParticipants(for: contextIdentifier)
+      .filter { $0.port != port && _isForwarding($0.port) }
+    // c): each other in-set Port declares what the joining Port has registered
+    try _forEachRegistered(of: joining) { attribute in
+      for other in others {
+        try _redeclare(on: other, attribute)
+      }
+    }
+    // d): the joining Port declares what the other in-set Ports have registered
+    for other in others {
+      try _forEachRegistered(of: other) { try _redeclare(on: joining, $0) }
+    }
+  }
+
+  private func _redeclare(on participant: Participant<Self>, _ attribute: AttributeValue) throws {
+    try participant.join(
+      attributeType: attribute.attributeType,
+      attributeSubtype: attribute.attributeSubtype,
+      attributeValue: attribute.attributeValue,
+      isNew: true,
+      eventSource: .map
+    )
   }
 
   // Administratively register an attribute on a port (Registration Fixed, 10.7.2), e.g.

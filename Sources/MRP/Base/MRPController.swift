@@ -284,6 +284,15 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
   private func _didRemove(port: P) async throws {
     logger.debug("removed port \(port.id): \(port)")
 
+    // 10.3: removal is also removal from the Forwarding set. Withdraw the other Ports' declarations
+    // that depended on this Port's registrations before its participant is torn down; the surviving
+    // Ports transmit these Leaves, so this works even though the Port is gone.
+    await _apply { application in
+      try? await application.didChangeForwardingState(
+        port: port, isForwarding: false, for: MAPBaseSpanningTreeContext
+      )
+    }
+
     try await _applyContextIdentifierChanges(beforeRemoving: port)
     _ports[port.id] = nil
     _portMRPState[port.id] = nil
@@ -315,6 +324,12 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
     }
   }
 
+  // Forwarding-set membership, matching BaseApplication._isForwarding: an unknown (nil/AF_UNSPEC)
+  // STP state counts as Forwarding, for bridges without STP integration.
+  private func _isForwarding(_ stpPortState: STPPortState?) -> Bool {
+    stpPortState.map { $0 == .forwarding } ?? true
+  }
+
   func _didUpdate(port: P) async throws {
     // The STP Port Role is not part of PortMRPState (it comes from an async mstpd poll, not the
     // netlink port snapshot), so a role-only transition -- Designated -> Root with unchanged
@@ -324,9 +339,24 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
 
     // Act only on a real MRP-relevant change, not a netlink no-op (e.g. stats refresh). Compare
     // against the last snapshot: re-deriving from the stored port reads the same live cache.
+    let previousState = _portMRPState[port.id]
     let state = PortMRPState(port)
-    if _portMRPState[port.id] == state { return }
+    if previousState == state { return }
     logger.debug("updated port \(port.id): \(port)")
+
+    // 10.3 NOTE / 11.2.1.2: a Port removed from the Forwarding set has left the active topology, so
+    // it transmits a Leave for every attribute it had declared. Test the set exactly as propagation
+    // does (BaseApplication._isForwarding, nil-lenient) so a declaration made while nil-state is
+    // withdrawn, and a nil (AF_UNSPEC) snapshot -- still in the set -- is not treated as leaving.
+    // 10.3: the Port entered or left the Forwarding set (only on a real transition, not first sight).
+    let nowForwarding = _isForwarding(state.stpPortState)
+    if let previousState, _isForwarding(previousState.stpPortState) != nowForwarding {
+      await _apply { application in
+        try? await application.didChangeForwardingState(
+          port: port, isForwarding: nowForwarding, for: MAPBaseSpanningTreeContext
+        )
+      }
+    }
 
     try await _applyContextIdentifierChanges(beforeAddingOrUpdating: port, isNewPort: false)
     _ports[port.id] = port

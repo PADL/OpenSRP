@@ -71,6 +71,13 @@ public actor MMRPApplication<P: Port>: BaseApplication, BaseApplicationEventObse
 
   // MMRP uses the base 802.1Q leavetimer (Avnu §9.2 immediate leave is MSRP-only)
   public nonisolated var registrarLeaveImmediate: Bool { false }
+  public func didChangeForwardingState(
+    port: P,
+    isForwarding: Bool,
+    for contextIdentifier: MAPContextIdentifier
+  ) throws {
+    try _applyForwardingStateChange(port: port, isForwarding: isForwarding, for: contextIdentifier)
+  }
 
   public nonisolated var validAttributeTypes: ClosedRange<AttributeType> {
     MMRPAttributeType.validAttributeTypes
