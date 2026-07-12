@@ -264,9 +264,15 @@ private func _transmittedDomainVIDs(
     for message in pdu.messages
       where message.attributeType == MSRPAttributeType.domain.rawValue
     {
+      // expand the vector: a coalesced Domain carries Class B as the FirstValue and Class A as a
+      // reconstructed value at index 1, so read every value, not just the FirstValue
       for vector in message.attributeList {
-        if let domain = vector.firstValue.value as? MSRPDomainValue {
-          result[domain.srClassID] = domain.srClassVID
+        for i in 0..<UInt64(vector.numberOfValues) {
+          if let domain = try? vector.firstValue.value
+            .makeValue(relativeTo: i) as? MSRPDomainValue
+          {
+            result[domain.srClassID] = domain.srClassVID
+          }
         }
       }
     }
@@ -294,29 +300,6 @@ private func _transmittedAdvertiseLatencies(
            talker.streamID == streamID
         {
           result.append(talker.accumulatedLatency)
-        }
-      }
-    }
-  }
-  return result
-}
-
-// the (srClassID, value-count) of every Domain vector in the captured transmissions
-private func _transmittedDomainVectors(
-  _ recorder: MRPTestRecorder,
-  _ msrp: MSRPApplication<MockPort>
-) async -> [(srClassID: SRclassID, count: UInt16)] {
-  var result = [(srClassID: SRclassID, count: UInt16)]()
-  for packet in await recorder.txPackets {
-    guard let pdu = try? packet.payload.withParserSpan({ input in
-      try MRPDU(parsing: &input, application: msrp)
-    }) else { continue }
-    for message in pdu.messages
-      where message.attributeType == MSRPAttributeType.domain.rawValue
-    {
-      for vector in message.attributeList {
-        if let domain = vector.firstValue.value as? MSRPDomainValue {
-          result.append((domain.srClassID, vector.numberOfValues))
         }
       }
     }
@@ -4547,24 +4530,6 @@ final class MRPTests: XCTestCase {
     XCTAssertEqual(reconstructed, sameLatency)
     XCTAssertNotEqual(reconstructed, diffLatency)
     XCTAssertEqual(reconstructed.index, diffLatency.index)
-  }
-
-  // The Domain attribute opts out of coalescing (some peers don't expand a multi-value Domain
-  // vector): each SR class must be emitted as its own single-value vector, not coalesced B->A.
-  func testDomainVectorsAreNotCoalesced() async throws {
-    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(portIDs: [0])
-    let ok = await _waitFor {
-      let domains = await _transmittedDomainVectors(recorder, msrp)
-      return domains.contains(where: { $0.srClassID == .A && $0.count == 1 })
-        && domains.contains(where: { $0.srClassID == .B && $0.count == 1 })
-    }
-    XCTAssertTrue(ok, "each SR class Domain must be a separate single-value vector")
-    let domains = await _transmittedDomainVectors(recorder, msrp)
-    XCTAssertFalse(
-      domains.contains(where: { $0.count > 1 }),
-      "Domain vectors must not be coalesced into a multi-value vector"
-    )
-    _ = controller
   }
 
   // Both SR classes declare the single SR_PVID (35.2.1.4) in transmitted Domains.

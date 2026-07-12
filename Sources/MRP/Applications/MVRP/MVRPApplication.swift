@@ -133,10 +133,6 @@ public actor MVRPApplication<P: Port>: BaseApplication, BaseApplicationEventObse
     false
   }
 
-  public nonisolated func coalesceVectors(for: AttributeType) -> Bool {
-    true
-  }
-
   public nonisolated func administrativeControl(for attributeType: AttributeType) throws
     -> AdministrativeControl
   {
