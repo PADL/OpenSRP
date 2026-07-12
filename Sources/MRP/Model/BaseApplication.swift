@@ -295,10 +295,11 @@ extension BaseApplication {
     let participants = findParticipants(for: contextIdentifier)
     try apply(for: contextIdentifier) { participant in
       guard participant.port != port, _isForwarding(participant.port) else { return }
-      // 10.3 b): propagate a Leave to a port if and only if no registration for the
-      // attribute now exists on any other port excluding it
+      // 10.3 b): propagate a Leave to a port iff no registration now exists on any other Port in
+      // the set excluding it -- "the set" is the Forwarding ports, so a registration lingering on
+      // a non-Forwarding (blocked) Port does not keep the declaration alive
       let isRegisteredElsewhere = participants.contains {
-        $0.port != participant.port && $0.isRegisteredUnchecked(
+        $0.port != participant.port && _isForwarding($0.port) && $0.isRegisteredUnchecked(
           attributeType: attributeType,
           matching: .matchIndex(attributeValue),
           isolation: self

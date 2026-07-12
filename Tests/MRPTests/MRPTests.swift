@@ -3360,13 +3360,16 @@ final class MRPTests: XCTestCase {
     pvid: UInt16? = nil,
     declarePVID: Bool = false,
     vlans: Set<UInt16> = [2],
-    dynamicVlans: Set<UInt16> = []
+    dynamicVlans: Set<UInt16> = [],
+    blockedPortIDs: Set<Int> = []
   )
     async throws -> (MRPController<MockPort>, MVRPApplication<MockPort>, MRPTestRecorder)
   {
     let recorder = MRPTestRecorder()
-    let ports = Set(portIDs.map {
-      MockPort(id: $0, pvid: pvid, vlans: vlans, dynamicVlans: dynamicVlans)
+    let ports = Set(portIDs.map { id -> MockPort in
+      var port = MockPort(id: id, pvid: pvid, vlans: vlans, dynamicVlans: dynamicVlans)
+      if blockedPortIDs.contains(id) { port.stpPortState = .blocking }
+      return port
     })
     let bridge = MockBridge(ports: ports, recorder: recorder)
     let controller = try await MRPController(
@@ -9112,6 +9115,32 @@ extension MRPTests {
     XCTAssertTrue(
       redeclared,
       "port 1 must re-declare VID 200 on re-entering the Forwarding set (10.3 d)"
+    )
+    _ = controller
+  }
+
+  // 10.3 b) refcount is scoped to the Forwarding set: a registration on a *non-Forwarding* Port
+  // must not keep a propagated declaration alive. When the sole Forwarding registrant leaves, the
+  // declaration is withdrawn even though a blocked Port still registers the attribute.
+  func testLeavePropagationExcludesNonForwardingRegistration() async throws {
+    // port 2 is blocked from the start: it may register but is outside the propagation set
+    let (controller, mvrp, _) = try await _makeMVRP(portIDs: [0, 1, 2], blockedPortIDs: [2])
+    // the blocked port registers VID 200 -- allowed on any Port State, but propagates nothing
+    try await _driveMVRP(mvrp, port: 2, vid: 200, event: .JoinIn)
+    // port 0 (Forwarding) registers VID 200 -> port 1 declares it
+    try await _driveMVRP(mvrp, port: 0, vid: 200, event: .JoinIn)
+    let declared = await _waitFor { await _isVLANDeclared(mvrp, vid: 200, port: 1) }
+    XCTAssertTrue(declared, "port 1 declares VID 200 (propagated from Forwarding port 0)")
+
+    // the sole Forwarding registrant leaves via the leavetimer; blocked port 2's registration is
+    // outside the set, so port 1 must withdraw (the bug counts port 2 and keeps declaring)
+    try await _driveMVRP(mvrp, port: 0, vid: 200, event: .Lv)
+    let withdrawn = await _waitFor(timeoutMs: 3000) {
+      await !_isVLANDeclared(mvrp, vid: 200, port: 1)
+    }
+    XCTAssertTrue(
+      withdrawn,
+      "port 1 must withdraw VID 200: a blocked Port's registration is outside the set (10.3 b)"
     )
     _ = controller
   }
