@@ -284,13 +284,15 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
   private func _didRemove(port: P) async throws {
     logger.debug("removed port \(port.id): \(port)")
 
-    // 10.3: removal is also removal from the Forwarding set. Withdraw the other Ports' declarations
-    // that depended on this Port's registrations before its participant is torn down; the surviving
-    // Ports transmit these Leaves, so this works even though the Port is gone.
-    await _apply { application in
-      try? await application.didChangeForwardingState(
-        port: port, isForwarding: false, for: MAPBaseSpanningTreeContext
-      )
+    // 10.3: removal is also removal from the Forwarding set -- but only a Port that was in the set
+    // had declarations to withdraw. Withdraw the other Ports' declarations that depended on this
+    // Port's registrations before its participant is torn down; the survivors transmit the Leaves.
+    if _portMRPState[port.id].map({ _isForwarding($0.stpPortState) }) ?? false {
+      await _apply { application in
+        try? await application.didChangeForwardingState(
+          port: port, isForwarding: false, for: MAPBaseSpanningTreeContext
+        )
+      }
     }
 
     try await _applyContextIdentifierChanges(beforeRemoving: port)
