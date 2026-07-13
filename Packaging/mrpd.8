@@ -139,6 +139,14 @@ be accepted).
 .B 0
 (the default) means no limit.
 .TP
+.BI \-\-max\-talker\-attributes " n"
+Global limit on the number of MSRP Talker attributes registered across all
+ports (Avnu ProAV Bridge Specification section 9.3). A Talker declaration beyond
+the limit is ignored. Default
+.BR 150 ;
+.B 0
+disables the limit.
+.TP
 .BI \-\-sr\-p\-vid " vid"
 The SR PVID: the single VLAN that both SR classes declare in their MSRP Domain
 (802.1Q 35.2.1.4). Default

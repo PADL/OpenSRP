@@ -83,6 +83,9 @@ private final class MRPDaemon: AsyncParsableCommand {
   @Option(name: .long, help: "Maximum number of MSRP fan-in ports")
   var maxFanInPorts: Int = 0
 
+  @Option(name: .long, help: "Global MSRP Talker attribute limit (0 disables the limit)")
+  var maxTalkerAttributes: Int = 150
+
   @Option(name: .long, help: "MSRP SR class A Qdisc handle (queue)")
   var classAQdiscHandle: UInt = 4
 
@@ -176,6 +179,7 @@ private final class MRPDaemon: AsyncParsableCommand {
     case enableTalkerPruning
     case leaveImmediate
     case maxFanInPorts
+    case maxTalkerAttributes
     case classADeltaBandwidth
     case classBDeltaBandwidth
     case classAQdiscHandle
@@ -290,6 +294,7 @@ private final class MRPDaemon: AsyncParsableCommand {
         srPVid: srPVidVLAN,
         queues: queues,
         deltaBandwidths: deltaBandwidths.isEmpty ? nil : deltaBandwidths,
+        maxTalkerAttributes: maxTalkerAttributes,
         filtering: configureFiltering
       )
     }
