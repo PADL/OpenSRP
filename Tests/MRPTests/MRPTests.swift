@@ -5695,6 +5695,106 @@ extension MRPTests {
     _ = controller
   }
 
+  // Repro harness for the 150-stream scale test: a 2-port bridge that registers a peer-declared
+  // talker on each port and propagates it to the other. isEndStation is false (ports added through
+  // the controller) so the bridge propagation path runs.
+  private func _makeScaleBridge(maxTalkerAttributes: Int = 150) async throws
+    -> (MRPController<MockPort>, MSRPApplication<MockPort>, MRPTestRecorder)
+  {
+    let recorder = MRPTestRecorder()
+    let ports = Set([0, 1].map { MockPort(id: $0, vlans: [2]) })
+    let bridge = MockBridge(ports: ports, recorder: recorder)
+    let controller = try await MRPController(
+      bridge: bridge, logger: Logger(label: "com.padl.MRPTests.scale")
+    )
+    let msrp = try await MSRPApplication(
+      controller: controller, maxTalkerAttributes: maxTalkerAttributes
+    )
+    for port in ports {
+      try await controller._didAdd(port: port)
+    }
+    return (controller, msrp, recorder)
+  }
+
+  func testScale150TalkersMirrorsCapture() async throws {
+    let (controller, msrp, _) = try await _makeScaleBridge()
+
+    let ids = Array(0x0A...0x9F) // 150 stream indices, exactly as captured
+    @Sendable
+    func sid(_ idx: Int) -> MSRPStreamID {
+      MSRPStreamID(integerLiteral: 0x001B_C50A_CF00_0000 + UInt64(idx))
+    }
+    @Sendable
+    func dest(_ idx: Int) -> EUI48 { [0x91, 0xE0, 0xF0, 0x00, 0xFE, UInt8(idx)] }
+    @Sendable
+    func portOf(_ idx: Int) -> Int { idx <= 0x54 ? 0 : 1 }
+    @Sendable
+    func otherOf(_ idx: Int) -> Int { portOf(idx) == 0 ? 1 : 0 }
+    // captured FirstValue: class A (.CA), non-emergency (rank bit set -> rank: true), 100-byte
+    // frame
+    let tSpec = MSRPTSpec(maxFrameSize: 100, maxIntervalFrames: 1)
+    func talker(_ idx: Int) -> MSRPTalkerAdvertiseValue {
+      _talkerAdvertise(
+        sid(idx), dest: dest(idx), priority: .CA, accumulatedLatency: 100_000, rank: true,
+        tSpec: tSpec
+      )
+    }
+    let listenerIdx = [0x55, 0x5D, 0x10, 0x30, 0x70, 0x90] // sparse Ready listeners, as on the wire
+
+    let clock = ContinuousClock()
+    let rampStart = clock.now
+    for idx in ids {
+      try await _drive(
+        msrp, port: portOf(idx), attributeType: .talkerAdvertise, value: talker(idx), event: .JoinIn
+      )
+    }
+    for idx in listenerIdx {
+      try await _drive(
+        msrp, port: otherOf(idx), attributeType: .listener,
+        value: MSRPListenerValue(streamID: sid(idx)), event: .JoinIn, subtype: .ready
+      )
+    }
+    let allRegistered = await _waitFor(timeoutMs: 15000) {
+      for idx in ids where await !_isTalkerRegistered(msrp, sid(idx), port: portOf(idx)) {
+        return false
+      }
+      return true
+    }
+    let rampMs = (clock.now - rampStart) / .milliseconds(1)
+    XCTAssertTrue(allRegistered, "all 150 talkers must register")
+
+    var talkerProp = 0
+    for idx in ids {
+      let adv = await _isDeclared(msrp, .talkerAdvertise, sid(idx), port: otherOf(idx))
+      let fail = await _isDeclared(msrp, .talkerFailed, sid(idx), port: otherOf(idx))
+      if adv || fail { talkerProp += 1 }
+    }
+    var listenerProp = 0
+    for idx in listenerIdx where await _isDeclared(msrp, .listener, sid(idx), port: portOf(idx)) {
+      listenerProp += 1
+    }
+
+    // A LeaveAll-style mass refresh must settle, not spin.
+    let refreshStart = clock.now
+    for idx in ids {
+      try await _drive(
+        msrp, port: portOf(idx), attributeType: .talkerAdvertise, value: talker(idx), event: .JoinIn
+      )
+    }
+    let stillAll = await _waitFor(timeoutMs: 15000) {
+      for idx in ids where await !_isTalkerRegistered(msrp, sid(idx), port: portOf(idx)) {
+        return false
+      }
+      return true
+    }
+    let refreshMs = (clock.now - refreshStart) / .milliseconds(1)
+    XCTAssertTrue(stillAll, "all 150 talkers must remain registered after a refresh")
+    print(
+      "SCALECAP ramp=\(rampMs)ms refresh=\(refreshMs)ms talkerProp=\(talkerProp)/150 listenerProp=\(listenerProp)/\(listenerIdx.count)"
+    )
+    _ = controller
+  }
+
   // talker on one port + a Ready listener on another -> reservation programmed on the
   // listener port only (CBS idleslope + FDB entry), never on the talker's port.
   func testRecomputeProgramsListenerReservationNoReflection() async throws {
