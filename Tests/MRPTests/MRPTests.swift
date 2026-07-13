@@ -5926,9 +5926,9 @@ extension MRPTests {
     _ = controller
   }
 
-  // The MDB reconcile diffs against the tracked set, so recompute is idempotent: the talker's
-  // recompute installs the ingress (port 0) entry, and the later listener recompute adds only port
-  // 1 -- it must not re-register or tear down the already-offloaded port-0 entry.
+  // The MDB reconcile diffs against the tracked set, so recompute is idempotent: the listener
+  // recompute installs the egress (port 1) and ingress (port 0) entries, and a later recompute must
+  // not re-register or tear down the already-offloaded port-0 entry.
   func testRecomputeMdbOffloadIsIdempotent() async throws {
     let (controller, msrp, recorder) = try await _makeRecomputeMSRP(
       portIDs: [0, 1], flags: _ingressMdbFlags()
@@ -5939,18 +5939,11 @@ extension MRPTests {
       msrp, port: 0, attributeType: .talkerAdvertise,
       value: _talkerAdvertise(streamID), event: .JoinIn
     )
-    _ = await _waitFor {
-      await recorder.fdbRegister
-        .contains { $0.ports.contains(0) && _isEqualMacAddress($0.mac, group) }
-    }
     try await _drive(
       msrp, port: 1, attributeType: .listener,
       value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready
     )
-    _ = await _waitFor {
-      await recorder.fdbRegister
-        .contains { $0.ports.contains(1) && _isEqualMacAddress($0.mac, group) }
-    }
+    _ = await _waitFor { await recorder.fdbMembers(mac: group) == Set([0, 1]) }
     let port0Registers = await recorder.fdbRegister
       .filter { _isEqualMacAddress($0.mac, group) && $0.ports.contains(0) }.count
     XCTAssertEqual(
@@ -5964,9 +5957,10 @@ extension MRPTests {
     _ = controller
   }
 
-  // the ingress entry is tied to the Talker, not the Listeners: it is installed as soon as the
-  // Talker is bound, even before any Listener declares.
-  func testRecomputeIngressMdbInstalledWithoutListener() async throws {
+  // secure mode admits a stream only where both an egress entry and the Talker's ingress port
+  // exist, so the ingress-admission entry is withheld while the Talker has no reserved Listener --
+  // installed alone it would block the best-effort flood a boundary owes an unreserved stream.
+  func testRecomputeIngressMdbWithheldWithoutListener() async throws {
     let (controller, msrp, recorder) = try await _makeRecomputeMSRP(
       portIDs: [0, 1],
       flags: _ingressMdbFlags()
@@ -5978,12 +5972,14 @@ extension MRPTests {
       value: _talkerAdvertise(streamID), event: .JoinIn
     )
 
+    // no listener -> no egress reservation -> the ingress-admission entry must not be installed
+    try? await Task.sleep(nanoseconds: 200_000_000)
     let group = Self._ingressGroup
-    let installed = await _waitFor {
-      await recorder.fdbRegister
-        .contains { $0.ports.contains(0) && _isEqualMacAddress($0.mac, group) }
-    }
-    XCTAssertTrue(installed, "ingress entry should be installed for the Talker with no Listener")
+    let members = await recorder.fdbMembers(mac: group)
+    XCTAssertTrue(
+      members.isEmpty,
+      "no ingress-admission entry may exist for a Talker with no reserved Listener"
+    )
     _ = controller
   }
 
@@ -6012,9 +6008,10 @@ extension MRPTests {
     _ = controller
   }
 
-  // the ingress entry survives Listener churn (avoiding thrash) and is removed only when the Talker
-  // itself leaves.
-  func testRecomputeIngressMdbSurvivesListenerLeaveRemovedOnTalkerLeave() async throws {
+  // the ingress-admission entry is bound to the reservation, not the Talker: when the last Listener
+  // leaves, the stream is no longer reserved, so both the egress and the ingress entries are torn
+  // down (leaving the ingress entry alone would keep the DA a known multicast and block flooding).
+  func testRecomputeIngressMdbRemovedWhenLastListenerLeaves() async throws {
     let (controller, msrp, recorder) = try await _makeRecomputeMSRP(
       portIDs: [0, 1],
       flags: _ingressMdbFlags()
@@ -6030,38 +6027,20 @@ extension MRPTests {
       msrp, port: 1, attributeType: .listener,
       value: MSRPListenerValue(streamID: streamID), event: .JoinIn, subtype: .ready
     )
-    let installed = await _waitFor {
-      await recorder.fdbRegister
-        .contains { $0.ports.contains(0) && _isEqualMacAddress($0.mac, group) }
-    }
-    XCTAssertTrue(installed, "precondition: ingress entry installed on the talker port")
+    let installed = await _waitFor { await recorder.fdbMembers(mac: group).contains(0) }
+    XCTAssertTrue(installed, "precondition: reserved stream installs the ingress entry (port 0)")
 
-    // Listener leaves: the egress reservation on port 1 is withdrawn, but the ingress entry on the
-    // talker port must NOT be (no churn while the Talker persists).
+    // the only Listener leaves: with no reservation left, the group entry is removed from every
+    // port -- both the egress reservation (port 1) and the ingress-admission entry (port 0).
     try await _drive(
       msrp, port: 1, attributeType: .listener,
       value: MSRPListenerValue(streamID: streamID), event: .Lv, subtype: .ready
     )
-    let egressWithdrawn = await _waitFor {
-      await recorder.fdbDeregister.contains { $0.ports.contains(1) }
-    }
-    XCTAssertTrue(egressWithdrawn, "listener leave should withdraw the egress reservation (port 1)")
-    let deregAfterListenerLeave = await recorder.fdbDeregister
-    XCTAssertFalse(
-      deregAfterListenerLeave.contains { $0.ports.contains(0) },
-      "the ingress entry must survive a listener leave (removed only on talker leave)"
+    let cleared = await _waitFor { await recorder.fdbMembers(mac: group).isEmpty }
+    XCTAssertTrue(
+      cleared,
+      "the last Listener leaving must tear down the whole group entry, ingress port included"
     )
-
-    // Talker leaves: now the ingress entry is torn down.
-    try await _drive(
-      msrp, port: 0, attributeType: .talkerAdvertise,
-      value: _talkerAdvertise(streamID), event: .Lv
-    )
-    let ingressRemoved = await _waitFor {
-      await recorder.fdbDeregister
-        .contains { $0.ports.contains(0) && _isEqualMacAddress($0.mac, group) }
-    }
-    XCTAssertTrue(ingressRemoved, "talker leave should remove the ingress MDB entry (port 0)")
     _ = controller
   }
 

@@ -2289,7 +2289,12 @@ extension MSRPApplication {
       {
         groupPorts[participant.port.id] = participant.port
       }
-      if _configureIngressMdb, boundTalker.0.port.isPointToPoint,
+      // secure mode admits a stream only where BOTH an egress entry and the ingress (Talker) port
+      // in its vector exist. The ingress-admission entry is therefore only meaningful alongside an
+      // egress Listener reservation; installed alone (a boundary Talker Failed, no reservation) it
+      // is a single-port entry that admits the stream but forwards it nowhere useful, blocking the
+      // best-effort flood a boundary port owes the unreserved stream (35.2.4.3 / Table 6-5).
+      if _configureIngressMdb, !groupPorts.isEmpty, boundTalker.0.port.isPointToPoint,
          boundTalker.0.port.vlans.contains(dataFrameVlan)
       {
         groupPorts[boundTalker.0.port.id] = boundTalker.0.port
