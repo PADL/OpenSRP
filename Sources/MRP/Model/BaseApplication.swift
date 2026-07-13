@@ -216,13 +216,6 @@ extension BaseApplication {
     }
   }
 
-  // 10.3: MAP propagates only across the set of Ports whose Port State (8.4) is Forwarding, both
-  // for the source and each destination. nil (no bridge-port state) is treated as Forwarding so
-  // non-STP setups are unaffected.
-  nonisolated func _isForwarding(_ port: P) -> Bool {
-    port.stpPortState.map { $0 == .forwarding } ?? true
-  }
-
   private func _propagateJoinIndicated(
     contextIdentifier: MAPContextIdentifier,
     port: P,
@@ -233,9 +226,9 @@ extension BaseApplication {
     eventSource: EventSource
   ) throws {
     guard shouldPropagate(eventSource: eventSource) else { return }
-    guard _isForwarding(port) else { return } // 10.3: ingress not in Forwarding set
+    guard port.stpPortState.isForwarding else { return } // 10.3: ingress not in Forwarding set
     try apply(for: contextIdentifier) { participant in
-      guard participant.port != port, _isForwarding(participant.port) else { return }
+      guard participant.port != port, participant.port.stpPortState.isForwarding else { return }
       try participant.join(
         attributeType: attributeType,
         attributeSubtype: attributeSubtype,
@@ -291,19 +284,20 @@ extension BaseApplication {
     eventSource: EventSource
   ) throws {
     guard shouldPropagate(eventSource: eventSource) else { return }
-    guard _isForwarding(port) else { return } // 10.3: ingress not in Forwarding set
+    guard port.stpPortState.isForwarding else { return } // 10.3: ingress not in Forwarding set
     let participants = findParticipants(for: contextIdentifier)
     try apply(for: contextIdentifier) { participant in
-      guard participant.port != port, _isForwarding(participant.port) else { return }
+      guard participant.port != port, participant.port.stpPortState.isForwarding else { return }
       // 10.3 b): propagate a Leave to a port iff no registration now exists on any other Port in
       // the set excluding it -- "the set" is the Forwarding ports, so a registration lingering on
       // a non-Forwarding (blocked) Port does not keep the declaration alive
       let isRegisteredElsewhere = participants.contains {
-        $0.port != participant.port && _isForwarding($0.port) && $0.isRegisteredUnchecked(
-          attributeType: attributeType,
-          matching: .matchIndex(attributeValue),
-          isolation: self
-        )
+        $0.port != participant.port && $0.port.stpPortState.isForwarding && $0
+          .isRegisteredUnchecked(
+            attributeType: attributeType,
+            matching: .matchIndex(attributeValue),
+            isolation: self
+          )
       }
       guard !isRegisteredElsewhere else { return }
       try participant.leave(
@@ -359,10 +353,10 @@ extension BaseApplication {
     let participants = findParticipants(for: contextIdentifier)
     try _forEachRegistered(of: leaving) { attribute in
       try apply(for: contextIdentifier) { other in
-        guard other.port != port, _isForwarding(other.port) else { return }
+        guard other.port != port, other.port.stpPortState.isForwarding else { return }
         // 10.3 b) refcount: keep the declaration if any OTHER in-set Port still registers it
         let registeredElsewhere = participants.contains {
-          $0.port != other.port && $0.port != port && _isForwarding($0.port) &&
+          $0.port != other.port && $0.port != port && $0.port.stpPortState.isForwarding &&
             $0.isRegisteredUnchecked(
               attributeType: attribute.attributeType,
               matching: .matchIndex(attribute.attributeValue),
@@ -389,7 +383,7 @@ extension BaseApplication {
   ) throws {
     let joining = try findParticipant(for: contextIdentifier, port: port)
     let others = findParticipants(for: contextIdentifier)
-      .filter { $0.port != port && _isForwarding($0.port) }
+      .filter { $0.port != port && $0.port.stpPortState.isForwarding }
     // c): each other in-set Port declares what the joining Port has registered
     try _forEachRegistered(of: joining) { attribute in
       for other in others {

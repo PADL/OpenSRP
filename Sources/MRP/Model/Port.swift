@@ -94,6 +94,15 @@ public enum STPPortRole: Sendable {
 
 public enum STPPortState: Sendable {
   case disabled, listening, learning, forwarding, blocking
+
+  // 10.3: MAP propagates only across Ports whose Port State (8.4) is Forwarding.
+  public var isForwarding: Bool { self == .forwarding }
+}
+
+public extension Optional<STPPortState> {
+  // nil (no bridge-port state / AF_UNSPEC) is treated as Forwarding so non-STP setups are
+  // unaffected
+  var isForwarding: Bool { self?.isForwarding ?? true }
 }
 
 public struct STPPortStatus: Sendable {

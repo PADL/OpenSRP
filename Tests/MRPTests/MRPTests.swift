@@ -6504,19 +6504,20 @@ extension MRPTests {
     _ = controller
   }
 
-  // drive a spanning-tree state update through didUpdate. MockPort equality is by id, so the
-  // ports built here replace the cached state for the given ids (others stay Forwarding).
+  // drive a spanning-tree state change through the controller's Forwarding-set trigger (the real
+  // production path); a port not named in `states` is reported Forwarding.
   private func _setStpStates(
     _ msrp: MSRPApplication<MockPort>,
     portIDs: [Int],
     _ states: [Int: STPPortState]
   ) async throws {
-    let ports = Set(portIDs.map { id -> MockPort in
-      var port = MockPort(id: id)
-      port.stpPortState = states[id] ?? .forwarding
-      return port
-    })
-    try await msrp.didUpdate(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
+    for id in portIDs {
+      try await msrp.didChangeForwardingState(
+        port: MockPort(id: id),
+        stpPortState: states[id] ?? .forwarding,
+        for: MAPBaseSpanningTreeContext
+      )
+    }
   }
 
   // a port moving to a blocked (non-Forwarding) spanning-tree state stops propagating and
@@ -6557,6 +6558,42 @@ extension MRPTests {
     try await _setStpStates(msrp, portIDs: [0, 1], [:])
     let restored = await _waitFor { await recorder.fdbRegister.count > regBefore }
     XCTAssertTrue(restored, "restoring Forwarding should reprogram the reservation")
+    _ = controller
+  }
+
+  // a talker's ingress port leaving the Forwarding set (e.g. a link-down delivered via the
+  // controller's didChangeForwardingState) must actively withdraw the talker declaration propagated
+  // onto the surviving ports -- an explicit Leave, not passive aging on the peer.
+  func testTalkerPortNonForwardingWithdrawsPropagatedDeclaration() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1])
+    let streamID = MSRPStreamID(0x0001_0000_0000_0099)
+    try await _drive(
+      msrp,
+      port: 0,
+      attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID),
+      event: .JoinIn
+    )
+    try await _drive(
+      msrp,
+      port: 1,
+      attributeType: .listener,
+      value: MSRPListenerValue(streamID: streamID),
+      event: .JoinIn,
+      subtype: .ready
+    )
+    let declared = await _waitFor { await _isDeclared(msrp, .talkerAdvertise, streamID, port: 1) }
+    XCTAssertTrue(declared, "precondition: talker is propagated to the listener-facing port")
+
+    // the talker's own ingress port (0) leaves the Forwarding set
+    try await msrp.didChangeForwardingState(
+      port: MockPort(id: 0), stpPortState: .disabled, for: MAPBaseSpanningTreeContext
+    )
+    let withdrawn = await _waitFor { await !_isDeclared(msrp, .talkerAdvertise, streamID, port: 1) }
+    XCTAssertTrue(
+      withdrawn,
+      "a talker whose ingress port left the set must withdraw the propagated declaration"
+    )
     _ = controller
   }
 
@@ -7066,11 +7103,10 @@ extension MRPTests {
     // pinned as the guarantee, so the real value must not fail the stream.
     MockPort._ptpNotReady.withLock { _ = $0.remove(1) }
     MockPort._latencyOverrides.withLock { $0[1] = 500_000 }
-    var flapped = MockPort(id: 2, portTcMaxLatency: 0)
-    flapped.stpPortState = .blocking
-    try await msrp.didUpdate(
-      contextIdentifier: MAPBaseSpanningTreeContext,
-      with: [MockPort(id: 0), MockPort(id: 1), flapped]
+    // flap port 2 out of the Forwarding set to force a stream recompute; 10.3 Forwarding-set
+    // transitions arrive via the controller's didChangeForwardingState, not an attribute didUpdate
+    try await msrp.didChangeForwardingState(
+      port: MockPort(id: 2), stpPortState: .blocking, for: MAPBaseSpanningTreeContext
     )
 
     // the recompute withdraws the now-blocked port 2 in the same pass, so its withdrawal signals
@@ -7105,11 +7141,11 @@ extension MRPTests {
     }
     XCTAssertTrue(advertised, "the talker must propagate to the egress port while forwarding")
 
+    // 10.3 Forwarding-set transitions arrive via the controller's didChangeForwardingState; an
+    // intermediate non-Forwarding step (blocking->learning) is a no-op there (no Forwarding edge)
     func setTalkerPortState(_ state: STPPortState) async throws {
-      var p0 = MockPort(id: 0)
-      p0.stpPortState = state
-      try await msrp.didUpdate(
-        contextIdentifier: MAPBaseSpanningTreeContext, with: [p0, MockPort(id: 1)]
+      try await msrp.didChangeForwardingState(
+        port: MockPort(id: 0), stpPortState: state, for: MAPBaseSpanningTreeContext
       )
     }
 
@@ -7263,11 +7299,10 @@ extension MRPTests {
 
     // flap port 2 to force a stream recompute; its withdrawal signals the re-added port 1 has been
     // re-evaluated against the higher latency
-    var flapped = MockPort(id: 2, portTcMaxLatency: 0)
-    flapped.stpPortState = .blocking
-    try await msrp.didUpdate(
-      contextIdentifier: MAPBaseSpanningTreeContext,
-      with: [MockPort(id: 0), MockPort(id: 1), flapped]
+    // flap port 2 out of the Forwarding set to force a stream recompute; 10.3 Forwarding-set
+    // transitions arrive via the controller's didChangeForwardingState, not an attribute didUpdate
+    try await msrp.didChangeForwardingState(
+      port: MockPort(id: 2), stpPortState: .blocking, for: MAPBaseSpanningTreeContext
     )
     let recomputed = await _waitFor {
       await _declaredTalkerAdvertise(msrp, streamID, port: 2) == nil

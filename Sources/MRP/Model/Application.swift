@@ -73,12 +73,13 @@ public protocol Application<P>: Actor, Equatable, Hashable, Sendable {
   func didUpdate(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) async throws
   func didRemove(contextIdentifier: MAPContextIdentifier, with context: MAPContext<P>) async throws
 
-  // A Port's Forwarding-set membership changed (isForwarding = new state). Generic MRP apps
-  // re-propagate declarations per 10.3 c/d/e/f; an application with its own MAP recompute (MSRP)
-  // ignores this and re-derives via its didUpdate recompute instead.
+  // A Port's Forwarding-set membership changed; stpPortState is the new state (nil = AF_UNSPEC,
+  // i.e.
+  // treated as Forwarding). Forwarding is derived (.isForwarding, nil-lenient), not passed. Generic
+  // MRP apps re-propagate per 10.3 c/d/e/f; MSRP re-derives its own declarations via its recompute.
   func didChangeForwardingState(
     port: P,
-    isForwarding: Bool,
+    stpPortState: STPPortState?,
     for contextIdentifier: MAPContextIdentifier
   ) async throws
 

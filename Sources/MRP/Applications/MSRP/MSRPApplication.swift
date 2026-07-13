@@ -346,13 +346,29 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
   nonisolated var _ignoreAsCapable: Bool { _flags.contains(.ignoreAsCapable) }
   public nonisolated var registrarLeaveImmediate: Bool { _flags.contains(.leaveImmediate) }
 
-  // MSRP re-derives declarations in its own recompute (onContextUpdated), so the generic 10.3
-  // Forwarding-set-change handling is a no-op here -- running it would fight the recompute.
+  // MSRP re-derives declarations in its own recompute rather than the generic 10.3 handling: a
+  // Forwarding-set change re-runs the affected streams, so a lost talker source withdraws (emits a
+  // Leave). This is the single authoritative trigger; onContextUpdated no longer samples STP state.
   public func didChangeForwardingState(
     port: P,
-    isForwarding: Bool,
+    stpPortState: STPPortState?,
     for contextIdentifier: MAPContextIdentifier
-  ) throws {}
+  ) throws {
+    guard contextIdentifier == MAPBaseSpanningTreeContext,
+          let index = _portStates.index(forKey: port.id) else { return }
+    let wasForwarding = _portStates.values[index].isForwarding
+    // store a concrete state; the controller's nil-lenient decision maps AF_UNSPEC to Forwarding
+    _portStates.values[index].stpPortState = stpPortState ?? .forwarding
+    guard _portStates.values[index].isForwarding != wasForwarding else { return }
+    _logger
+      .info("MSRP: port \(port) spanning-tree state now \(_portStates.values[index].stpPortState)")
+    // 35.2.2.8.6: a topology change can move worst-case latency, so re-sample. 10.3 a): attributes
+    // re-declared from this port are New.
+    _portStates.values[index].invalidate()
+    _tcDetected.insert(port.id)
+    _forceUpdateActiveStreams()
+    if _streamUpdateTask == nil { _tcDetected.removeAll() }
+  }
 
   fileprivate nonisolated var _talkerPruning: Bool { _flags.contains(.talkerPruning) }
 
@@ -661,35 +677,8 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
       }
     }
 
-    // refresh spanning-tree state from the fresh port (a synchronous read, no actor hop); a change
-    // is a topology change, so invalidate the port's latency state here (the single place STP
-    // clears it) and re-derive the active streams
-    var forwardingChanged = false
-    for port in context {
-      guard let index = _portStates.index(forKey: port.id) else { continue }
-      // nil = an AF_UNSPEC snapshot with no bridge-port state; keep the last-known STP state
-      guard let stpPortState = port.stpPortState else { continue }
-      guard _portStates.values[index].stpPortState != stpPortState else { continue }
-      let wasForwarding = _portStates.values[index].isForwarding
-      _logger.info("MSRP: port \(port) spanning-tree state now \(stpPortState)")
-      _portStates.values[index].stpPortState = stpPortState
-      // 10.3/35.1.3.1: MAP operates over the Forwarding set; every non-Forwarding state is equally
-      // blocked, so only a Forwarding-status change moves the topology (skip the intermediates).
-      if _portStates.values[index].isForwarding != wasForwarding {
-        _portStates.values[index].invalidate()
-        _tcDetected.insert(port.id) // 10.3 a): declarations propagated from this port are New
-        forwardingChanged = true
-      }
-    }
-    if forwardingChanged {
-      // a topology change can move a port's worst-case path latency (35.2.2.8.6): the recompute
-      // below re-samples per-hop latency fresh and fails a stream whose reported latency rose above
-      // its guarantee.
-      _forceUpdateActiveStreams()
-      // no drain in flight means nothing was queued to consume the New marking: clear it now so
-      // it cannot linger and spuriously mark an unrelated declaration New long after the TC
-      if _streamUpdateTask == nil { _tcDetected.removeAll() }
-    }
+    // Forwarding-set transitions arrive via didChangeForwardingState (the controller's single,
+    // nil-lenient trigger), not sampled here: an AF_UNSPEC update carries no bridge-port state.
 
     for port in context {
       _logger.debug("MSRP: re-declaring domains for port \(port)")

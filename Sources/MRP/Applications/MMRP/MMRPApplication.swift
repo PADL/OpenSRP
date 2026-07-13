@@ -73,10 +73,12 @@ public actor MMRPApplication<P: Port>: BaseApplication, BaseApplicationEventObse
   public nonisolated var registrarLeaveImmediate: Bool { false }
   public func didChangeForwardingState(
     port: P,
-    isForwarding: Bool,
+    stpPortState: STPPortState?,
     for contextIdentifier: MAPContextIdentifier
   ) throws {
-    try _applyForwardingStateChange(port: port, isForwarding: isForwarding, for: contextIdentifier)
+    try _applyForwardingStateChange(
+      port: port, isForwarding: stpPortState.isForwarding, for: contextIdentifier
+    )
   }
 
   public nonisolated var validAttributeTypes: ClosedRange<AttributeType> {
