@@ -526,10 +526,11 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
 
     for (attributeType, eventValue) in events {
       let leaveAll = eventValue.values.contains(where: \.isLeaveAll)
-      let attributeEvents = eventValue.values.filter { !$0.isLeaveAll }.map(\.unsafeAttributeEvent)
-        .sorted(by: {
-          $0.attributeValue.index < $1.attributeValue.index
-        })
+      // Sort Int positions against once-read indices, then gather: sorting the class-backed
+      // events (or a tuple) would retain/release -- or instantiate metadata -- on every swap.
+      let events = eventValue.values.filter { !$0.isLeaveAll }.map(\.unsafeAttributeEvent)
+      let keys = events.map(\.attributeValue.index)
+      let attributeEvents = events.indices.sorted { keys[$0] < keys[$1] }.map { events[$0] }
       let attributeEventChunks = _chunkAttributeEvents(attributeEvents)
 
       var vectorAttributes: [VectorAttribute<AnyValue>] = attributeEventChunks
