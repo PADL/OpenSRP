@@ -519,17 +519,21 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
     return chunks
   }
 
+  // swiftformat:disable preferKeyPath
+  // Closures, not \.keyPath: on this transmit hot path a keypath literal over the generic
+  // event type builds a runtime KeyPath object and projects through it; a closure calls the
+  // getter directly. Do not let preferKeyPath rewrite these back.
   private func _packMessages(with events: EnqueuedEvents) throws -> [Message] {
     guard let application else { throw MRPError.internalError }
 
     var messages = [Message]()
 
     for (attributeType, eventValue) in events {
-      let leaveAll = eventValue.values.contains(where: \.isLeaveAll)
+      let leaveAll = eventValue.values.contains { $0.isLeaveAll }
       // Sort Int positions against once-read indices, then gather: sorting the class-backed
       // events (or a tuple) would retain/release -- or instantiate metadata -- on every swap.
-      let events = eventValue.values.filter { !$0.isLeaveAll }.map(\.unsafeAttributeEvent)
-      let keys = events.map(\.attributeValue.index)
+      let events = eventValue.values.filter { !$0.isLeaveAll }.map { $0.unsafeAttributeEvent }
+      let keys = events.map { $0.attributeValue.index }
       let attributeEvents = events.indices.sorted { keys[$0] < keys[$1] }.map { events[$0] }
       let attributeEventChunks = _chunkAttributeEvents(attributeEvents)
 
@@ -548,7 +552,7 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
           return VectorAttribute<AnyValue>(
             leaveAllEvent: leaveAll ? .LeaveAll : .NullLeaveAllEvent,
             firstValue: attributeEventChunk.first!.attributeValue.value,
-            attributeEvents: Array(attributeEventChunk.map(\.attributeEvent)),
+            attributeEvents: Array(attributeEventChunk.map { $0.attributeEvent }),
             applicationEvents: attributeSubtypes
           )
         }
@@ -569,6 +573,8 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
 
     return messages
   }
+
+  // swiftformat:enable preferKeyPath
 
   private func _txEnqueue(_ event: EnqueuedEvent<A>, eventSource: EventSource) {
     _assertIsolatedToApplication()
