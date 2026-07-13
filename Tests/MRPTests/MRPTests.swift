@@ -251,6 +251,34 @@ private func _transmittedTalkerDestinations(
   return dests
 }
 
+// Distinct talker (Advertise+Failed) StreamIDs actually serialized across all TX, plus the largest
+// transmitted MRPDU payload. Parses what MockBridge.tx recorded, expanding each vector value.
+private func _transmittedTalkerStreamsAndMaxSize(
+  _ recorder: MRPTestRecorder, _ msrp: MSRPApplication<MockPort>
+) async -> (streams: Set<UInt64>, maxBytes: Int) {
+  var streams = Set<UInt64>()
+  var maxBytes = 0
+  for packet in await recorder.txPackets {
+    maxBytes = max(maxBytes, packet.payload.count)
+    guard let pdu = try? packet.payload.withParserSpan({ input in
+      try MRPDU(parsing: &input, application: msrp)
+    }) else { continue }
+    for message in pdu.messages where
+      message.attributeType == MSRPAttributeType.talkerAdvertise.rawValue ||
+      message.attributeType == MSRPAttributeType.talkerFailed.rawValue
+    {
+      for vector in message.attributeList {
+        for i in 0..<Int(vector.numberOfValues) {
+          guard let value = try? vector.firstValue.value.makeValue(relativeTo: UInt64(i)),
+                let talker = value as? any MSRPTalkerValue else { continue }
+          streams.insert(talker.streamID.id)
+        }
+      }
+    }
+  }
+  return (streams, maxBytes)
+}
+
 // the srClassVID of each SR class Domain in the captured transmissions
 private func _transmittedDomainVIDs(
   _ recorder: MRPTestRecorder,
@@ -5792,6 +5820,91 @@ extension MRPTests {
     print(
       "SCALECAP ramp=\(rampMs)ms refresh=\(refreshMs)ms talkerProp=\(talkerProp)/150 listenerProp=\(listenerProp)/\(listenerIdx.count)"
     )
+    _ = controller
+  }
+
+  // Does the DUT actually serialize all 150 talkers onto the wire, and does the coalesced MRPDU fit
+  // a 1500-byte MTU? Mirrors the capture; drives 150 peer talkers and inspects recorded TX bytes.
+  func testScale150TransmittedPduCarriesAllStreams() async throws {
+    let (controller, msrp, recorder) = try await _makeScaleBridge()
+    let ids = Array(0x0A...0x9F)
+    @Sendable
+    func sid(_ idx: Int) -> MSRPStreamID {
+      MSRPStreamID(integerLiteral: 0x001B_C50A_CF00_0000 + UInt64(idx))
+    }
+    func dest(_ idx: Int) -> EUI48 { [0x91, 0xE0, 0xF0, 0x00, 0xFE, UInt8(idx)] }
+    func portOf(_ idx: Int) -> Int { idx <= 0x54 ? 0 : 1 }
+    let tSpec = MSRPTSpec(maxFrameSize: 100, maxIntervalFrames: 1)
+    for idx in ids {
+      try await _drive(
+        msrp, port: portOf(idx), attributeType: .talkerAdvertise,
+        value: _talkerAdvertise(
+          sid(idx), dest: dest(idx), priority: .CA, accumulatedLatency: 100_000, rank: true,
+          tSpec: tSpec
+        ), event: .JoinIn
+      )
+    }
+    // let TX opportunities fire and settle
+    _ = await _waitFor(timeoutMs: 5000) {
+      let (s, _) = await _transmittedTalkerStreamsAndMaxSize(recorder, msrp)
+      return s.count >= 150
+    }
+    let (streams, maxBytes) = await _transmittedTalkerStreamsAndMaxSize(recorder, msrp)
+    print("SCALETX distinctTransmittedStreams=\(streams.count)/150 maxPduBytes=\(maxBytes)")
+    XCTAssertEqual(streams.count, 150, "all 150 talkers must be serialized to the wire")
+    _ = controller
+  }
+
+  // The pending-transmit set dedups an attribute keyed on identity (Set.update(with:)); a broken
+  // dedup would encode the same stream twice within one transmit opportunity. Re-declare all 150
+  // repeatedly to churn the dedup path, then assert no streamID repeats within any single PDU.
+  func testScale150ReDeclarationsDoNotDuplicateWithinPdu() async throws {
+    let (controller, msrp, recorder) = try await _makeScaleBridge()
+    let ids = Array(0x0A...0x9F)
+    func sid(_ idx: Int) -> MSRPStreamID {
+      MSRPStreamID(integerLiteral: 0x001B_C50A_CF00_0000 + UInt64(idx))
+    }
+    func dest(_ idx: Int) -> EUI48 { [0x91, 0xE0, 0xF0, 0x00, 0xFE, UInt8(idx)] }
+    func portOf(_ idx: Int) -> Int { idx <= 0x54 ? 0 : 1 }
+    let tSpec = MSRPTSpec(maxFrameSize: 100, maxIntervalFrames: 1)
+    for _ in 0..<3 {
+      for idx in ids {
+        try await _drive(
+          msrp, port: portOf(idx), attributeType: .talkerAdvertise,
+          value: _talkerAdvertise(
+            sid(idx), dest: dest(idx), priority: .CA, accumulatedLatency: 100_000, rank: true,
+            tSpec: tSpec
+          ), event: .JoinIn
+        )
+      }
+    }
+    _ = await _waitFor(timeoutMs: 5000) {
+      let (s, _) = await _transmittedTalkerStreamsAndMaxSize(recorder, msrp)
+      return s.count >= 150
+    }
+    // per transmitted PDU, count each talker streamID; every count must be exactly one
+    var worstDup = 0
+    for packet in await recorder.txPackets {
+      guard let pdu = try? packet.payload.withParserSpan({ input in
+        try MRPDU(parsing: &input, application: msrp)
+      }) else { continue }
+      var perPdu = [UInt64: Int]()
+      for message in pdu.messages where
+        message.attributeType == MSRPAttributeType.talkerAdvertise.rawValue ||
+        message.attributeType == MSRPAttributeType.talkerFailed.rawValue
+      {
+        for vector in message.attributeList {
+          for i in 0..<Int(vector.numberOfValues) {
+            guard let value = try? vector.firstValue.value.makeValue(relativeTo: UInt64(i)),
+                  let talker = value as? any MSRPTalkerValue else { continue }
+            perPdu[talker.streamID.id, default: 0] += 1
+          }
+        }
+      }
+      worstDup = max(worstDup, perPdu.values.max() ?? 0)
+    }
+    print("SCALEDUP worstPerPduStreamCount=\(worstDup)")
+    XCTAssertEqual(worstDup, 1, "no streamID may be encoded twice within a single transmit PDU")
     _ = controller
   }
 

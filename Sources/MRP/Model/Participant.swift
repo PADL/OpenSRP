@@ -47,8 +47,8 @@ enum ParticipantType {
   case applicantOnly
 }
 
-private enum EnqueuedEvent<A: Application>: Equatable, CustomStringConvertible {
-  struct AttributeEvent: Equatable, CustomStringConvertible {
+private enum EnqueuedEvent<A: Application>: CustomStringConvertible {
+  struct AttributeEvent: CustomStringConvertible {
     let attributeEvent: MRP.AttributeEvent
     let attributeValue: _AttributeValue<A>
     let encodingOptional: Bool
@@ -60,6 +60,20 @@ private enum EnqueuedEvent<A: Application>: Equatable, CustomStringConvertible {
 
   case attributeEvent(AttributeEvent)
   case leaveAllEvent(AttributeType)
+
+  enum _Key: Hashable {
+    case attribute(UInt64)
+    case leaveAll
+  }
+
+  var _key: _Key {
+    switch self {
+    case let .attributeEvent(attributeEvent):
+      .attribute(attributeEvent.attributeValue.index)
+    case .leaveAllEvent:
+      .leaveAll
+    }
+  }
 
   var attributeType: AttributeType {
     switch self {
@@ -115,7 +129,7 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
     contextIdentifier.hash(into: &hasher)
   }
 
-  private typealias EnqueuedEvents = [AttributeType: [EnqueuedEvent<A>]]
+  private typealias EnqueuedEvents = [AttributeType: [EnqueuedEvent<A>._Key: EnqueuedEvent<A>]]
 
   private var _attributes = [AttributeType: Set<_AttributeValue<A>>]()
   fileprivate var _generation: UInt64 = 0
@@ -511,8 +525,8 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
     var messages = [Message]()
 
     for (attributeType, eventValue) in events {
-      let leaveAll = eventValue.contains(where: \.isLeaveAll)
-      let attributeEvents = eventValue.filter { !$0.isLeaveAll }.map(\.unsafeAttributeEvent)
+      let leaveAll = eventValue.values.contains(where: \.isLeaveAll)
+      let attributeEvents = eventValue.values.filter { !$0.isLeaveAll }.map(\.unsafeAttributeEvent)
         .sorted(by: {
           $0.attributeValue.index < $1.attributeValue.index
         })
@@ -557,18 +571,7 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
 
   private func _txEnqueue(_ event: EnqueuedEvent<A>, eventSource: EventSource) {
     _assertIsolatedToApplication()
-
-    if let index = _enqueuedEvents.index(forKey: event.attributeType) {
-      if let eventIndex = _enqueuedEvents.values[index]
-        .firstIndex(where: { $0 == event })
-      {
-        _enqueuedEvents.values[index][eventIndex] = event
-      } else {
-        _enqueuedEvents.values[index].append(event)
-      }
-    } else {
-      _enqueuedEvents[event.attributeType] = [event]
-    }
+    _enqueuedEvents[event.attributeType, default: [:]][event._key] = event
   }
 
   fileprivate func _txEnqueue(
