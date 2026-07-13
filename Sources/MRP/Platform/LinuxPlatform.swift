@@ -1345,6 +1345,9 @@ extension LinuxBridge {
     guard let dlport = _devlinkPortByIfIndex[port._rtnl.index] else {
       throw Errno.noSuchAddressOrDevice
     }
+    _logger.debug(
+      "LinuxBridge: port \(port.name) AVB mode -> \(config.avbMode) flags 0x\(String(config.flags.rawValue, radix: 16)) (avb_cfg 0x\(String(config.rawValue, radix: 16)))"
+    )
     try await devlink.setPortParam(
       busName: dlport.busName,
       devName: dlport.devName,
