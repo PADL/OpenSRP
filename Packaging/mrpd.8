@@ -1,6 +1,6 @@
 .\" Copyright (c) 2024 PADL Software Pty Ltd
 .\" Licensed under the Apache License, Version 2.0
-.TH MRPD 8 "2026-07-09" "OpenSRP" "System Manager's Manual"
+.TH MRPD 8 "2026-07-15" "OpenSRP" "System Manager's Manual"
 .SH NAME
 mrpd \- Multiple Registration Protocol / Stream Reservation Protocol daemon
 .SH SYNOPSIS
@@ -93,9 +93,6 @@ Default
 .TP
 .B \-h ", " \-\-help
 Print a usage summary and exit.
-.TP
-.B \-\-version
-Print the version and exit.
 .SS gPTP / AVB capability
 .TP
 .B \-\-ignore\-as\-capable ", " \-\-no\-ignore\-as\-capable
@@ -213,13 +210,14 @@ in-payload VLAN tag only.
 .PP
 A class is filtered only once the port has joined that SR class's domain. Ports
 left unconfigured keep the switch default.
-.SS Bridging
+.SS MVRP behaviour
 .TP
-.B \-\-multicast\-flooding ", " \-\-no\-multicast\-flooding
-Whether to flood multicast on bridge ports. Enabled by default (the 802.1Q
-default); pass
-.B \-\-no\-multicast\-flooding
-to disable flooding so that only registered groups are forwarded.
+.B \-\-declare\-pvid ", " \-\-no\-declare\-pvid
+Whether to declare each port's PVID over MVRP (802.1Q 11.2.1.3). Disabled by
+default; pass
+.B \-\-declare\-pvid
+to advertise the port VLAN identifier as well as the statically configured
+tagged VLANs.
 .SS MRP timers
 All timer intervals are given in seconds (fractional values are accepted).
 .TP
@@ -260,13 +258,24 @@ and
 .BR tc (8).
 A pre\-routing
 .BR nftables (8)
-hook is required so that MMRP/MVRP frames (destination
+drop hook is required for MMRP/MVRP frames (destination
 .B 01:80:c2:00:00:20
 and
 .BR 01:80:c2:00:00:21 )
-are intercepted rather than flooded by the bridge, allowing
+so the bridge does not flood them;
 .B mrpd
-to propagate them itself.
+snoops these frames itself over an ingress raw
+.RB ( AF_PACKET )
+socket and propagates them.
+.PP
+Where an STP daemon is present,
+.B mrpd
+polls
+.BR mstpd (8)
+over its control socket for each port's spanning\-tree role, using it to drive
+MRP topology\-change processing (Flush!/Re\-declare!). Bridges without
+.B mstpd
+simply skip this.
 .PP
 Do not run a second MVRP applicant against a bridge port managed by
 .BR mrpd :
@@ -310,6 +319,7 @@ mrpd --enable-mvrp -b br0 --exclude-vlan 1 --exclude-iface eth0
 .BR ip (8),
 .BR tc (8),
 .BR nft (8),
+.BR mstpd (8),
 .BR ptp4l (8)
 .PP
 IEEE Std 802.1Q (clauses 10, 11, 35), IEEE Std 802.1BA, and the Avnu ProAV

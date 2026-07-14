@@ -11,12 +11,15 @@ OpenSRP is supports bridging with the standard Linux kernel interfaces for forwa
 * MRP: abstract state machine, platform abstraction layer
 * MRPDaemon: MRP daemon
 * PMC: PTP management client library
+* MSTP: native Swift client for the `mstpd` control socket
+
+The netlink port snapshot gives the per-port Forwarding *state* used to gate declarations (802.1Q 35.1.3.1), but not the spanning-tree *role*. For that `mrpd` polls `mstpd` over its control socket (the MSTP module is a pure-Swift, non-blocking client that links no GPL code), and uses the role to drive MRP topology-change events: Flush! on a Root/Alternate→Designated transition (10.7.5.2) and Re-declare! on Designated→Root/Alternate (10.7.5.3). Bridges without `mstpd` simply never see a role change and skip this path.
 
 MMRP, MVRP, and MSRP are "applications" of the generalized MRP protocol and state machine. Aplications are responsible for responding to MRP registrations (e.g. by adding a FDB entry) and also propagating MRP declarations to other bridge ports.
 
 Note that whilst OpenSRP does have a platform abstraction layer, the initial platform is Linux, and we would prefer to push switch-specific functionality into the kernel rather than separate platform backends.
 
-Note: `mrpd` is the sole MVRP entity on the bridge. Each port's statically configured VLANs — its tagged VLANs and its PVID (802.1Q 11.2.1.3), minus any passed with `--exclude-vlan` — are held as *Registration Fixed* (802.1Q 8.8.2, 10.7.2): the registration ignores peer Leaves, and MAP propagation declares the VLAN out the other bridge ports, so peers learn the bridge's membership without waiting for an inbound declaration (this matters when ingress filtering is enabled, and for interoperability). Configure the desired VLANs with `bridge vlan add` (static VLANs added or removed at runtime are picked up automatically), or pass `--configure-sr-vlans` to have `mrpd` statically configure the SR class VLAN itself — the SR_PVID named by its MSRP Domain declarations (both SR classes share the one SR_PVID, 802.1Q 35.2.1.4; override the default VID 2 with `--sr-p-vid`).
+Note: `mrpd` is the sole MVRP entity on the bridge. Each port's statically configured VLANs — its tagged VLANs and its PVID (802.1Q 11.2.1.3), minus any passed with `--exclude-vlan` — are held as *Registration Fixed* (802.1Q 8.8.2, 10.7.2): the registration ignores peer Leaves, and MAP propagation declares the VLAN out the other bridge ports, so peers learn the bridge's membership without waiting for an inbound declaration (this matters when ingress filtering is enabled, and for interoperability). Configure the desired VLANs with `bridge vlan add` (static VLANs added or removed at runtime are picked up automatically), including the SR class VLAN — the SR_PVID named by the MSRP Domain declarations (both SR classes share the one SR_PVID, 802.1Q 35.2.1.4; override the default VID 2 with `--sr-p-vid`).
 
 To distinguish an administrator's static VLAN from one `mrpd` itself added for a peer's dynamic registration, `mrpd` marks its own entries with the `BRIDGE_VLAN_INFO_DYNAMIC` flag (a small kernel patch; `bridge vlan` shows such entries as `dynamic`). Kernels **without** this flag silently ignore it; `mrpd` still tracks its own additions in-process, so behaviour is identical with one exception: after an `mrpd` restart, dynamic entries left in the kernel by the previous run cannot be told apart from static configuration and will be promoted to Registration Fixed (and thus survive the peer's Leave) until they are removed manually or the bridge is reconfigured. On patched kernels leftover dynamic entries are recognised and remain dynamic across restarts.
 
@@ -29,7 +32,7 @@ Because `mrpd` runs its own MVRP applicant/registrar and performs attribute prop
 Configuration prior to running the `mrpd` daemon is left to the administrator, and can be performed with standard Linux tools such as `bridge` and `tc`. The `config-srp.sh` script in the top-level directory is a good starting point, but essentially the assumptions are as follows:
 
 * A Linux bridge is configured with at least two network interfaces
-* A pre-routing nftables hook is configured, to allow `mrpd` to intercept MMRP/MVRP packets before they are bridged (see note below)
+* A pre-routing nftables hook is configured, to drop MMRP/MVRP packets so the bridge does not flood them (`mrpd` snoops and propagates them itself; see note below)
 * The `mqprio` qdisc is configured for class A and B streams according to the documentation [here](https://tsn.readthedocs.io/qdiscs.html).
 
 Note that `mrpd` will adjust the Credit Based Shaper (CBS) parameters dynamically depending on stream reservations (if there are no reservations, the `cbs` qdisc will be replaced with the default `pfifo_fast` one).
@@ -37,12 +40,12 @@ Note that `mrpd` will adjust the Credit Based Shaper (CBS) parameters dynamicall
 The following command ensures that packets destined for the customer bridge MRP group address are not forwarded:
 
 ```bash
-nft add rule bridge nat PREROUTING meta ibrname ${BR} ether daddr 01:80:c2:00:00:21 log group 10 drop
+nft add rule bridge nat PREROUTING meta ibrname ${BR} ether daddr 01:80:c2:00:00:21 drop
 ```
 
-(The use of `nflog` to capture and drop MVRP packets is inspired by Michael Braun's [mvrpd](https://github.com/michael-dev/mvrpd).)
+The rule only needs to `drop`: `mrpd` snoops MVRP/MMRP itself over an ingress raw `AF_PACKET` socket (before the bridge consumes the frame), so the rule's sole job is to stop the bridge from flooding these frames — it no longer has to `log group N` them to userspace. (The approach of dropping MVRP so a userspace daemon can propagate it is inspired by Michael Braun's [mvrpd](https://github.com/michael-dev/mvrpd).)
 
-Note that if you use a group number different to the default (10) you will need to pass that as an option to `mrpd` with `--nf-group`. Similarly, if you wish to use a parent qdisc handle other than 0x9000, you will also need to pass this as an option to `mrpd` with `--q-disc-handle`.
+If you wish to use a parent qdisc handle other than 0x9000, you will need to pass this as an option to `mrpd` with `--q-disc-handle`.
 
 Accurate reporting of the SRP accumulated latency requires a local PTP instance that can report the mean link delay over the PTP management interface. Currently only [LinuxPTP](https://linuxptp.nwtime.org) is supported, although any PTP server that supports PMC over a domain socket as well as the LinuxPTP `GET_PORT_DATA_SET_NP` and `GET_PORT_PROPERTIES_NP` extensions should work.
 
@@ -58,14 +61,22 @@ USAGE: mrpd [<options>] --bridge-interface <bridge-interface>
 OPTIONS:
   -b, --bridge-interface <bridge-interface>
                           Master bridge interface name
-  -n, --nf-group <nf-group>
-                          NetFilter group (default: 10)
   -q, --q-disc-handle <q-disc-handle>
                           Qdisc handle (default: 36864)
   --force-avb-capable     Force ports to advertise as AVB capable
+  --ignore-as-capable/--no-ignore-as-capable
+                          Ignore gPTP asCapable, do not query PTP
+                          (--no-ignore-as-capable enforces 35.2.1) (default:
+                          --ignore-as-capable)
   --enable-talker-pruning Enable MSRP talker pruning
+  --leave-immediate/--no-leave-immediate
+                          MSRP immediate Registrar leave on received Leave
+                          (Avnu §9.2) (default: --leave-immediate)
   --max-fan-in-ports <max-fan-in-ports>
                           Maximum number of MSRP fan-in ports (default: 0)
+  --max-talker-attributes <max-talker-attributes>
+                          Global MSRP Talker attribute limit (0 disables the
+                          limit) (default: 150)
   --class-a-qdisc-handle <class-a-qdisc-handle>
                           MSRP SR class A Qdisc handle (queue) (default: 4)
   --class-b-qdisc-handle <class-b-qdisc-handle>
@@ -79,8 +90,11 @@ OPTIONS:
   --configure-ingress-queues
                           Automatically configure DCBNL ingress queue (PCP) mapping
   --configure-queues      Automatically configure both ingress and egress queues
-  --multicast-flooding/--no-multicast-flooding
-                          Flood multicast on bridge ports (default: --no-multicast-flooding)
+  --configure-ingress-mdb Install an MDB entry on the Talker's ingress port
+                          (secure switch mode)
+  --configure-filtering <configure-filtering>
+                          Per-port AVB admission-control mechanism (marvell,
+                          tcflower) (values: marvell, tcflower)
   --sr-p-vid <sr-p-vid>   MSRP SR PVID (the VLAN both SR classes declare,
                           35.2.1.4) (default: 2)
   --exclude-iface <exclude-iface>
@@ -91,6 +105,9 @@ OPTIONS:
                           Log level (values: trace, debug, info, notice, warning, error, critical; default: info)
   --enable-mmrp           Enable MMRP
   --enable-mvrp           Enable MVRP
+  --declare-pvid/--no-declare-pvid
+                          Declare each port's PVID over MVRP (11.2.1.3)
+                          (default: --no-declare-pvid)
   --enable-msrp           Enable MSRP
   --pmc-uds-path <pmc-uds-path>
                           PTP management client domain socket path
