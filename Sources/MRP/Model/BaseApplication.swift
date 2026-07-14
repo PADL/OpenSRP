@@ -67,11 +67,7 @@ extension BaseApplication {
       nonBaseContextsSupported || participant
         .contextIdentifier == MAPBaseSpanningTreeContext
     )
-    if let index = _participants.index(forKey: participant.contextIdentifier) {
-      _participants.values[index].insert(participant)
-    } else {
-      _participants[participant.contextIdentifier] = Set([participant])
-    }
+    _participants[participant.contextIdentifier, default: []].insert(participant)
   }
 
   public func remove(

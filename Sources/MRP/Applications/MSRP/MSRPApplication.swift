@@ -1715,11 +1715,7 @@ extension MSRPApplication {
       guard let classID = portState
         .reverseMapSrClassPriority(priority: talker.priorityAndRank.dataFramePriority)
       else { continue }
-      if let index = streams.index(forKey: classID) {
-        streams.values[index].append(talker.tSpec)
-      } else {
-        streams[classID] = [talker.tSpec]
-      }
+      streams[classID, default: []].append(talker.tSpec)
     }
 
     _logger.debug("MSRP: adjusting idle slope, port \(port), streams \(streams)")

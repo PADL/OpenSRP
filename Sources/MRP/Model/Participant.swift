@@ -388,11 +388,7 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
       value: filterValue,
       administrativelyRegistered: administrativelyRegistered
     )
-    if let index = _attributes.index(forKey: attributeType) {
-      _attributes.values[index].insert(attributeValue)
-    } else {
-      _attributes[attributeType] = [attributeValue]
-    }
+    _attributes[attributeType, default: []].insert(attributeValue)
     return attributeValue
   }
 
@@ -415,11 +411,7 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
       applicant: attribute.applicant,
       administrativelyRegistered: administrativelyRegistered
     )
-    if let index = _attributes.index(forKey: replacement.attributeType) {
-      _attributes.values[index].insert(replacement)
-    } else {
-      _attributes[replacement.attributeType] = [replacement]
-    }
+    _attributes[replacement.attributeType, default: []].insert(replacement)
     return replacement
   }
 
