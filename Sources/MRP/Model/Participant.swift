@@ -61,17 +61,14 @@ private enum EnqueuedEvent<A: Application>: CustomStringConvertible {
   case attributeEvent(AttributeEvent)
   case leaveAllEvent(AttributeType)
 
-  enum _Key: Hashable {
-    case attribute(UInt64)
-    case leaveAll
-  }
-
-  var _key: _Key {
+  // Coalescing key: the attribute index (nil for LeaveAll). A plain integer
+  // so dedup/sort avoid the existential == on the boxed `any Value`.
+  var index: UInt64? {
     switch self {
     case let .attributeEvent(attributeEvent):
-      .attribute(attributeEvent.attributeValue.index)
+      attributeEvent.attributeValue.index
     case .leaveAllEvent:
-      .leaveAll
+      nil
     }
   }
 
@@ -129,7 +126,7 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
     contextIdentifier.hash(into: &hasher)
   }
 
-  private typealias EnqueuedEvents = [AttributeType: [EnqueuedEvent<A>._Key: EnqueuedEvent<A>]]
+  private typealias EnqueuedEvents = [AttributeType: [UInt64?: EnqueuedEvent<A>]]
 
   private var _attributes = [AttributeType: Set<_AttributeValue<A>>]()
   fileprivate var _generation: UInt64 = 0
@@ -578,7 +575,7 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
 
   private func _txEnqueue(_ event: EnqueuedEvent<A>, eventSource: EventSource) {
     _assertIsolatedToApplication()
-    _enqueuedEvents[event.attributeType, default: [:]][event._key] = event
+    _enqueuedEvents[event.attributeType, default: [:]][event.index] = event
   }
 
   fileprivate func _txEnqueue(
