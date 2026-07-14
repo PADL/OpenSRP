@@ -7737,6 +7737,68 @@ extension MRPTests {
     _ = controller
   }
 
+  // a class-A talker sized to ~35% of the 75% class-A limit on a 1 Gbps link, so two fit
+  // (532,096 kbps <= 750,000) but three exceed: 4 frames * (1000+43) bytes * 64 = 266,048 kbps.
+  private func _thirdLimitClassATalker(
+    _ streamID: MSRPStreamID, dest: EUI48
+  ) -> MSRPTalkerAdvertiseValue {
+    MSRPTalkerAdvertiseValue(
+      streamID: streamID,
+      dataFrameParameters: MSRPDataFrameParameters(destinationAddress: dest, vlanIdentifier: 2),
+      tSpec: MSRPTSpec(maxFrameSize: 1000, maxIntervalFrames: 4),
+      priorityAndRank: MSRPPriorityAndRank(dataFramePriority: .CA, rank: false),
+      accumulatedLatency: 1000
+    )
+  }
+
+  // 35.2.1.2: "if a Talker Advertise is being declared and the required bandwidth ... become[s]
+  // unavailable the Talker Advertise shall be withdrawn and a Talker Failed may be declared."
+  // A stream advertised with no Listener (so consuming no reservation) must still yield to later
+  // reservations that fill the egress, not merely reserved streams that lose their slot.
+  func testRecomputeAdvertisedStreamDemotedWhenReservationsFillEgress() async throws {
+    let (controller, msrp, _) = try await _makeRecomputeMSRP(portIDs: [0, 1, 2, 3])
+    let streamA = MSRPStreamID(0x0001_0000_0000_0071)
+    let streamB = MSRPStreamID(0x0001_0000_0000_0072)
+    let streamC = MSRPStreamID(0x0001_0000_0000_0073)
+
+    // all three advertise out the shared egress (port 3); each ingresses on its own port
+    for (stream, ingress, tail) in [(streamA, 0, 1), (streamB, 1, 2), (streamC, 2, 3)] {
+      try await _drive(
+        msrp, port: ingress, attributeType: .talkerAdvertise,
+        value: _thirdLimitClassATalker(stream, dest: [0x91, 0xE0, 0xF0, 0, 0, UInt8(tail)]),
+        event: .JoinIn
+      )
+    }
+    let cAdvertised = await _waitFor { await _isDeclared(msrp, .talkerAdvertise, streamC, port: 3) }
+    XCTAssertTrue(cAdvertised, "C advertises on the egress while the port has room")
+
+    // reserve A then B on port 3, one at a time, each via a Listener Ready; two fit the class-A
+    // budget. Wait for each to reserve so the second's displacement sees the first (drain order
+    // over the pending set is otherwise unordered).
+    for stream in [streamA, streamB] {
+      try await _drive(
+        msrp, port: 3, attributeType: .listener,
+        value: MSRPListenerValue(streamID: stream), event: .JoinIn, subtype: .ready
+      )
+      let reserved = await _waitFor { await _isDeclared(msrp, .talkerAdvertise, stream, port: 3) }
+      XCTAssertTrue(reserved, "\(stream) reserves on the egress")
+    }
+
+    // the port is now full (A + B), so C's advertise must be withdrawn and re-declared Failed
+    // carrying a bandwidth Failure Code (35.2.2.8.7)
+    let cFailed = await _waitFor {
+      await _declaredTalkerFailureCode(msrp, streamC, port: 3) == .insufficientBandwidth
+    }
+    XCTAssertTrue(cFailed, "C re-declares Talker Failed (insufficientBandwidth) once over budget")
+    // its prior Talker Advertise is withdrawn (Leaving), not still actively declared
+    let advState = await _declaredApplicantState(msrp, .talkerAdvertise, streamC, port: 3)
+    XCTAssertTrue(
+      advState == nil || advState == .LA || advState == .LO,
+      "C's Talker Advertise must be withdrawn, not actively declared (got \(String(describing: advState)))"
+    )
+    _ = controller
+  }
+
   // a class-A talker sized so that two streams together exceed the 75% class-A limit on a
   // 1 Gbps link but one fits: 6 frames * (1000+43) bytes * 64 = 400,512 kbps (limit 750,000).
   private func _halfLimitClassATalker(

@@ -1299,14 +1299,42 @@ extension MSRPApplication {
     talker: any MSRPTalkerValue
   ) -> Set<MSRPStreamID> {
     let provisional = talker.makeAdvertise(accumulatedLatency: 0)
-    let candidates = _candidateTalkers(participant: participant, provisional: provisional)
+    // the streams competing for this egress: those already reserving plus the
+    // unreserved Talker Advertises we currently declare out it. 35.2.1.2
+    // requires an Advertise to be withdrawn and re-declared Talker Failed once
+    // its bandwidth is unavailable, so an unreserved advertise (no reservation
+    // epoch, hence youngest and preempted first) must yield too, not only
+    // reserved ones.
+    let competing = _findReservedTalkers(participant: participant)
+      .union(_declaredAdvertisedTalkers(participant: participant))
+    let candidates = competing
+      .filter { $0.streamID != provisional.streamID }
+      .union([provisional])
     let admitted = _admittedStreamIDs(
       port: participant.port, portState: portState, candidates: candidates
     )
-    // reserved streams that are no longer admitted (excluding this talker itself)
-    return Set(_findReservedTalkers(participant: participant).map(\.streamID))
+    // competing streams (reserved or advertised) no longer admitted, excluding this talker itself
+    return Set(competing.map(\.streamID))
       .subtracting(admitted)
       .subtracting([talker.streamID])
+  }
+
+  // the unreserved Talker Advertises we currently declare (applicant) out this
+  // port; they compete for the port's SR budget under 35.2.1.2 even without a
+  // Listener, so a newly-reserving stream can
+  // push one over budget and force it to withdraw and re-declare Talker Failed on its own recompute
+  private func _declaredAdvertisedTalkers(
+    participant: Participant<MSRPApplication>
+  ) -> Set<MSRPTalkerAdvertiseValue> {
+    Set(
+      participant.findAllAttributesUnchecked(
+        attributeType: MSRPAttributeType.talkerAdvertise.rawValue,
+        matching: .matchAny,
+        isolation: self
+      )
+      .filter(\.isDeclared)
+      .compactMap { $0.attributeValue as? MSRPTalkerAdvertiseValue }
+    )
   }
 
   private func _canBridgeTalker(
