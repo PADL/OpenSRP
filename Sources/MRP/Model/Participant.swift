@@ -306,7 +306,8 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
       let rateLimit = controller.timerConfiguration.joinTime * 1.5
       let now = ContinuousClock.now
 
-      _transmissionOpportunityTimestamps.removeAll { now - $0 >= rateLimit }
+      // keep the window closed on the left so any 1.5xJoinTime period holds <=3
+      _transmissionOpportunityTimestamps.removeAll { now - $0 > rateLimit }
 
       if _transmissionOpportunityTimestamps.count >= 3 {
         if let oldestTimestamp = _transmissionOpportunityTimestamps.first {
