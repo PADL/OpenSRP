@@ -1292,8 +1292,7 @@ extension LinuxBridge: MVRPAwareBridge {
   // after the topology change that raised the New. A single bulk RTM_DELNEIGH matches only
   // non-permanent entries, so our own entries (NUD_PERMANENT) and MDB reservations are left.
   func flushDynamicFdb(vlan: VLAN, on port: P) async throws {
-    guard let rtnl = _bridgePort?._rtnl as? RTNLLinkBridge else { return }
-    try await rtnl.flush(fdbEntriesForLink: port._rtnl, vlan: vlan.vid, socket: _nlLinkSocket)
+    try await port._rtnl.flush(fdbEntriesForVLAN: vlan.vid, socket: _nlLinkSocket)
   }
 }
 
