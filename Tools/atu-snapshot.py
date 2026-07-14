@@ -177,16 +177,30 @@ def find_atu_dev():
 
 
 def live_snapshot(dev, snapshot, length):
+    # The region caps at one snapshot, so drop any existing ones first (parsed
+    # from "region show ... snapshot [N ...]"), let devlink assign the new id,
+    # then delete it when done. (snapshot arg kept for signature compat.)
     region = "%s/atu" % dev
-    subprocess.run(["devlink", "region", "del", region, "snapshot",
-                    str(snapshot)],
-                   stderr=subprocess.DEVNULL, check=False)
-    subprocess.run(["devlink", "region", "new", region, "snapshot",
-                    str(snapshot)], check=True)
-    out = subprocess.check_output(
-        ["devlink", "region", "read", region, "snapshot", str(snapshot),
-         "address", "0", "length", str(length)], text=True)
-    return out
+    try:
+        show = subprocess.check_output(["devlink", "region", "show", region],
+                                       text=True, stderr=subprocess.STDOUT)
+        m = re.search(r"snapshot\s*\[([\d ]+)\]", show)
+        for sid in (m.group(1).split() if m else []):
+            subprocess.run(["devlink", "region", "del", region, "snapshot",
+                            sid], stderr=subprocess.DEVNULL, check=False)
+    except (OSError, subprocess.CalledProcessError):
+        pass
+    out = subprocess.check_output(["devlink", "region", "new", region],
+                                  text=True, stderr=subprocess.STDOUT)
+    m = re.search(r"snapshot\s+(\d+)", out)
+    snap = m.group(1) if m else "0"
+    try:
+        return subprocess.check_output(
+            ["devlink", "region", "read", region, "snapshot", snap,
+             "address", "0", "length", str(length)], text=True)
+    finally:
+        subprocess.run(["devlink", "region", "del", region, "snapshot", snap],
+                       stderr=subprocess.DEVNULL, check=False)
 
 
 def get_text(args):

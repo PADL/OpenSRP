@@ -103,9 +103,10 @@ if [ -z "${CONSTRAINED:-}" ]; then
   gzip -9 -n -c "$SWIFTMRP_DIR/Packaging/mrp.8" > "$WORK_DIR/mrp.8.gz"
   install -D -m0644 "$WORK_DIR/mrp.8.gz" "$stage/usr/share/man/man8/mrp.8.gz"
 fi
-# atu-snapshot: Python tool to snapshot/decode the mv88e6xxx switch ATU via
-# devlink (only python3 + devlink/iproute2, both already in Depends).
+# atu-snapshot/vtu-snapshot: Python tools to snapshot/decode the mv88e6xxx
+# switch ATU/VTU via devlink (only python3 + devlink/iproute2, in Depends).
 install -D -m0755 "$SWIFTMRP_DIR/Tools/atu-snapshot.py" "$stage/usr/bin/atu-snapshot"
+install -D -m0755 "$SWIFTMRP_DIR/Tools/vtu-snapshot.py" "$stage/usr/bin/vtu-snapshot"
 
 # Strip symbols/debug info — static Swift stdlib makes these binaries ~50M each
 # otherwise. Use the cross strip so it understands the target-arch objects. Skipped when
