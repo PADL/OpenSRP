@@ -280,7 +280,9 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
 
     guard let controller else { return }
     let joinTime = controller.timerConfiguration.joinTime
-    let interval: Duration = _type == .pointToPoint ? .zero :
+    // §10.7.11: the transmit provisions follow operPointToPointMAC (the MAC),
+    // independent of whether the point-to-point subset Applicant is in use.
+    let interval: Duration = port.isPointToPoint ? .zero :
       .nanoseconds(Int64.random(in: 0..<joinTime.nanoseconds))
 
     _jointimer.start(interval: interval)
@@ -300,7 +302,7 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
       await controller._propagationBarrier.waitUntilZero()
     }
 
-    if _type == .pointToPoint {
+    if port.isPointToPoint {
       let rateLimit = controller.timerConfiguration.joinTime * 1.5
       let now = ContinuousClock.now
 
@@ -339,7 +341,7 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
     // because _fire() cleared the task reference before calling this callback, but
     // applicant state transitions may have already scheduled a new timer via
     // _requestTxOpportunity(). Only reschedule if we have pending work.
-    if didTransmit, _type == .pointToPoint {
+    if didTransmit, port.isPointToPoint {
       _transmissionOpportunityTimestamps.append(ContinuousClock.now)
     }
 
