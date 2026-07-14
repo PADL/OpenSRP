@@ -289,16 +289,18 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
   private func _onTxOpportunity(isolation: isolated A) async throws {
     _assertIsolatedToApplication()
 
+    guard let controller else { throw MRPError.internalError }
+
     let eventSource = EventSource.joinTimer
 
     // Coalesce a received PDU's propagation into one MRPDU: if its Join/Leave indications are
     // still in flight, park until they drain (resumed the moment the count hits zero) rather than
     // transmitting mid-batch.
-    if let controller, controller._propagationBarrier.count > 0 {
+    if controller._propagationBarrier.count > 0 {
       await controller._propagationBarrier.waitUntilZero()
     }
 
-    if _type == .pointToPoint, let controller {
+    if _type == .pointToPoint {
       let rateLimit = controller.timerConfiguration.joinTime * 1.5
       let now = ContinuousClock.now
 
