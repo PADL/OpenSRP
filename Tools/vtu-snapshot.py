@@ -32,9 +32,23 @@ Examples:
 
 import argparse
 import json
+import os
 import re
+import stat
 import subprocess
 import sys
+
+
+def _stdin_is_data():
+    """True only if stdin is a pipe or regular file (real piped/redirected
+    input), not a tty or /dev/null. A non-interactive run with no input (e.g.
+    under a test harness with stdin=/dev/null) must take a live snapshot, not
+    read empty stdin and decode zero entries."""
+    try:
+        mode = os.fstat(sys.stdin.fileno()).st_mode
+    except (OSError, ValueError):
+        return False
+    return stat.S_ISFIFO(mode) or stat.S_ISREG(mode)
 
 ENTRY_LEN = 16
 MAX_PORTS = 11
@@ -171,7 +185,7 @@ def get_text(args):
     if args.file:
         t = sys.stdin.read() if args.file == "-" else open(args.file).read()
         return t, None
-    if not sys.stdin.isatty() and args.dev is None:
+    if _stdin_is_data() and args.dev is None:
         return sys.stdin.read(), None
     dev = args.dev or find_vtu_dev()
     return live_snapshot(dev, args.length), dev

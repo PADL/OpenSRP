@@ -31,10 +31,24 @@ Examples:
 """
 
 import argparse
+import os
 import re
+import stat
 import subprocess
 import sys
 import time
+
+
+def _stdin_is_data():
+    """True only if stdin is a pipe or regular file (real piped/redirected
+    input), not a tty or /dev/null. A non-interactive run with no input (e.g.
+    under a test harness with stdin=/dev/null) must take a live snapshot, not
+    read empty stdin and decode zero entries."""
+    try:
+        mode = os.fstat(sys.stdin.fileno()).st_mode
+    except (OSError, ValueError):
+        return False
+    return stat.S_ISFIFO(mode) or stat.S_ISREG(mode)
 
 # Entry-state names, by [is_multicast][state]; from global1.h
 # MV88E6XXX_G1_ATU_DATA_STATE_*
@@ -209,7 +223,7 @@ def get_text(args):
     if args.file:
         t = sys.stdin.read() if args.file == "-" else open(args.file).read()
         return t, None
-    if not sys.stdin.isatty() and args.dev is None and not args.watch:
+    if _stdin_is_data() and args.dev is None and not args.watch:
         return sys.stdin.read(), None
     dev = args.dev or find_atu_dev()
     text = live_snapshot(dev, args.snapshot, args.length)
