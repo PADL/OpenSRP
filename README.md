@@ -32,18 +32,17 @@ Because `mrpd` runs its own MVRP applicant/registrar and performs attribute prop
 Configuration prior to running the `mrpd` daemon is left to the administrator, and can be performed with standard Linux tools such as `bridge` and `tc`. The `config-srp.sh` script in the top-level directory is a good starting point, but essentially the assumptions are as follows:
 
 * A Linux bridge is configured with at least two network interfaces
-* A pre-routing nftables hook is configured, to drop MMRP/MVRP packets so the bridge does not flood them (`mrpd` snoops and propagates them itself; see note below)
 * The `mqprio` qdisc is configured for class A and B streams according to the documentation [here](https://tsn.readthedocs.io/qdiscs.html).
 
 Note that `mrpd` will adjust the Credit Based Shaper (CBS) parameters dynamically depending on stream reservations (if there are no reservations, the `cbs` qdisc will be replaced with the default `pfifo_fast` one).
 
-The following command ensures that packets destined for the customer bridge MRP group address are not forwarded:
+By default `mrpd` installs a pre-routing nftables hook itself, dropping the customer-bridge MMRP/MVRP group addresses so the bridge does not flood them: `mrpd` snoops these frames over an ingress raw `AF_PACKET` socket (before the bridge consumes them) and propagates them itself. The table is owned by `mrpd`'s netlink socket, so the kernel removes it automatically when `mrpd` exits or crashes, leaving no stale rule behind. Pass `--no-configure-nft-drop` to disable this (for example to configure the rule out-of-band); the equivalent manual rule is:
 
 ```bash
 nft add rule bridge nat PREROUTING meta ibrname ${BR} ether daddr 01:80:c2:00:00:21 drop
 ```
 
-The rule only needs to `drop`: `mrpd` snoops MVRP/MMRP itself over an ingress raw `AF_PACKET` socket (before the bridge consumes the frame), so the rule's sole job is to stop the bridge from flooding these frames — it no longer has to `log group N` them to userspace. (The approach of dropping MVRP so a userspace daemon can propagate it is inspired by Michael Braun's [mvrpd](https://github.com/michael-dev/mvrpd).)
+(The approach of dropping MVRP so a userspace daemon can propagate it is inspired by Michael Braun's [mvrpd](https://github.com/michael-dev/mvrpd).)
 
 If you wish to use a parent qdisc handle other than 0x9000, you will need to pass this as an option to `mrpd` with `--q-disc-handle`.
 
@@ -92,6 +91,10 @@ OPTIONS:
   --configure-queues      Automatically configure both ingress and egress queues
   --configure-ingress-mdb Install an MDB entry on the Talker's ingress port
                           (secure switch mode)
+  --configure-nft-drop/--no-configure-nft-drop
+                          Install an nftables drop for MMRP/MVRP frames so the
+                          bridge does not flood them (default:
+                          --configure-nft-drop)
   --configure-filtering <configure-filtering>
                           Per-port AVB admission-control mechanism (marvell,
                           tcflower) (values: marvell, tcflower)

@@ -181,6 +181,18 @@ Install an MDB entry on the Talker's ingress port. This enables "secure switch"
 mode, where the ingress port also requires a dynamic reservation entry to admit
 an SR stream to the AVB queues.
 .TP
+.B \-\-configure\-nft\-drop , \-\-no\-configure\-nft\-drop
+Install (the default) or omit a pre-routing nftables hook that drops the enabled
+applications' MMRP/MVRP group addresses, so the bridge does not flood them;
+.B mrpd
+snoops and propagates these frames itself. The table is owned by
+.BR mrpd 's
+netlink socket, so the kernel removes it when
+.B mrpd
+exits. See
+.B USAGE NOTES
+below.
+.TP
 .BI \-\-configure\-filtering " type"
 Enable per-port AVB admission control on each AVB-capable bridge port, using the
 given mechanism. Two
@@ -258,15 +270,20 @@ and
 .BR tc (8).
 A pre\-routing
 .BR nftables (8)
-drop hook is required for MMRP/MVRP frames (destination
+drop hook for MMRP/MVRP frames (destination
 .B 01:80:c2:00:00:20
 and
 .BR 01:80:c2:00:00:21 )
-so the bridge does not flood them;
+stops the bridge flooding them;
 .B mrpd
 snoops these frames itself over an ingress raw
 .RB ( AF_PACKET )
-socket and propagates them.
+socket and propagates them. By default
+.B mrpd
+installs this hook itself in an owner\-scoped nftables table that the kernel
+removes when the daemon exits; pass
+.B \-\-no\-configure\-nft\-drop
+to configure it out\-of\-band instead.
 .PP
 Where an STP daemon is present,
 .B mrpd
