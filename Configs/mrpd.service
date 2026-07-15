@@ -30,15 +30,8 @@ Environment=SWIFT_IORING_QUEUE_ENTRIES=64
 Environment=SWIFT_BACKTRACE=enable=yes,demangle=yes,swift-backtrace=/usr/libexec/swift/swift-backtrace
 EnvironmentFile=/etc/default/avb
 
-#ExecStartPre=/sbin/ip link set br0 type bridge mcast_vlan_snooping 1
-#ExecStartPre=/sbin/bridge vlan set dev br0 vid 1 mcast_querier on
-
+# disable ATU hashing for Marvell 88E6341 switch chip
 ExecStartPre=/bin/sh -c '/usr/sbin/devlink dev param set "$(/usr/sbin/devlink dev show | head -n1)" name ATU_hash value 3 cmode runtime'
-
-# configure MVRP hook
-ExecStartPre=/usr/sbin/nft add table bridge nat
-ExecStartPre=/usr/sbin/nft add chain bridge nat PREROUTING { type filter hook prerouting priority dstnat; policy accept; }
-ExecStartPre=/usr/sbin/nft add rule bridge nat PREROUTING meta ibrname $BR ether daddr 01:80:c2:00:00:21 drop
 
 # enable multicast flooding on all bridge ports (802.1Q default)
 ExecStartPre=/bin/sh -c 'for ETH in $$INTERFACES; do bridge link set dev "$$ETH" mcast_flood on || true; done'
@@ -46,9 +39,5 @@ ExecStartPre=/bin/sh -c 'for ETH in $$INTERFACES; do bridge link set dev "$$ETH"
 # --configure-ingress-mdb: secure-switch mode -- the ingress port also requires a DRE to admit an SR stream to the AVB queues
 ExecStart=/usr/sbin/mrpd --enable-srp -b $BR --configure-egress-queues --configure-ingress-mdb --configure-filtering marvell $MRPD_OPTS
 
-# unconfigure MVRP hook
-ExecStopPost=-/usr/sbin/nft delete table bridge nat
-
 [Install]
 WantedBy=multi-user.target
-
