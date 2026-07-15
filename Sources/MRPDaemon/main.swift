@@ -110,6 +110,13 @@ private final class MRPDaemon: AsyncParsableCommand {
   @Flag(name: .long, help: "Install an MDB entry on the Talker's ingress port (secure switch mode)")
   var configureIngressMdb: Bool = false
 
+  @Flag(
+    name: .long,
+    inversion: .prefixedNo,
+    help: "Install an nftables drop for MMRP/MVRP frames so the bridge does not flood them"
+  )
+  var configureNftDrop: Bool = true
+
   @Option(
     name: .long,
     help: "Per-port AVB admission-control mechanism (\(MSRPFilteringType.allCases.map(\.rawValue).joined(separator: ", ")))"
@@ -188,6 +195,7 @@ private final class MRPDaemon: AsyncParsableCommand {
     case configureIngressQueues
     case configureQueues
     case configureIngressMdb
+    case configureNftDrop
     case configureFiltering
     case excludeIface
     case excludeVlan
@@ -242,6 +250,7 @@ private final class MRPDaemon: AsyncParsableCommand {
 
     var mrpFlags: MRPFlags = []
     if forceFullParticipant { mrpFlags.insert(.forceFullParticipant) }
+    if configureNftDrop { mrpFlags.insert(.configureFrameFiltering) }
 
     let controller = try await MRPController<P>(
       bridge: bridge,

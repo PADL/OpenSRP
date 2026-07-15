@@ -554,6 +554,8 @@ struct MockBridge: MRP.Bridge, CustomStringConvertible {
   func run(controller: isolated MRPController<P>) async throws {}
   func shutdown(controller: isolated MRPController<P>) async throws {}
 
+  func configureMRPFrameFiltering(groupAddresses: [EUI48]) async {}
+
   func tx(
     _ packet: IEEE802Packet,
     on port: P,

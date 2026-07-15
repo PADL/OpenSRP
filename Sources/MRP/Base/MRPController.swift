@@ -40,6 +40,10 @@ public struct MRPFlags: OptionSet, Sendable {
 
   public static let forceFullParticipant = Self(rawValue: 1 << 0)
 
+  // install bridge frame filtering (an nftables drop) for the applications'
+  // group addresses so the bridge does not flood MMRP/MVRP frames
+  public static let configureFrameFiltering = Self(rawValue: 1 << 1)
+
   public static let defaultFlags: Self = []
 }
 
@@ -114,8 +118,20 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
     "MRPController(bridge: \(bridge))"
   }
 
+  // applications' group addresses whose frames the bridge should not flood,
+  // excluding MSRP: its individual-LAN-scope address is not forwarded anyway
+  private var _frameFilterGroupAddresses: [EUI48] {
+    _applications.values
+      .map(\.groupAddress)
+      .filter { !_isEqualMacAddress($0, IndividualLANScopeGroupAddress) }
+  }
+
   private func _run() async throws {
     logger.info("starting MRP for bridge \(bridge)")
+
+    if flags.contains(.configureFrameFiltering) {
+      await bridge.configureMRPFrameFiltering(groupAddresses: _frameFilterGroupAddresses)
+    }
 
     do {
       try await withThrowingTaskGroup(of: Void.self) { group in

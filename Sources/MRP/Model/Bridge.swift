@@ -40,6 +40,10 @@ public protocol Bridge<P>: Sendable {
   func run(controller: isolated MRPController<P>) async throws
   func shutdown(controller: isolated MRPController<P>) async throws
 
+  // Install ingress frame filtering (e.g. an nftables drop) so the bridge does
+  // not flood these group addresses; MRP snoops and propagates them itself.
+  func configureMRPFrameFiltering(groupAddresses: [EUI48]) async
+
   // Bridge provies a unified interface for sending and receiving packets, even
   // though the actual implementation may need separate paths for handling link-
   // local and non-link-local packets

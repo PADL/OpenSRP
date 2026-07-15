@@ -648,6 +648,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   private var _bridgePort: P?
   // Cached mstpd control connection, reused across STP-role polls (see getStpPortStatus).
   private var _mstpClient: MSTPControlClient?
+  private var _mrpFrameFilter: NLNFTablesDropTable?
   // Per-port tagged VLANs (VID -> BRIDGE_VLAN_INFO_DYNAMIC), keyed by port ifindex:
   // seeded from the RTM_GETVLAN dump at startup (the libnl bitmaps carry no flags) and
   // kept live by VLAN DB notifications; _rtnl is a frozen snapshot that won't reflect
@@ -1089,6 +1090,23 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     }
   }
 
+  // Install an nftables prerouting drop for each enabled MRP application group
+  // address, so the bridge does not flood MMRP/MVRP frames (we snoop and
+  // propagate them ourselves). Best-effort: logs and continues on failure.
+  public func configureMRPFrameFiltering(groupAddresses: [EUI48]) async {
+    guard !groupAddresses.isEmpty else { return }
+    do {
+      let filter = try await NLNFTablesDropTable(table: "mrpd")
+      for address in groupAddresses {
+        try await filter.addDrop(bridge: _bridgeName, destinationMAC: (0..<6).map { address[$0] })
+        _logger.debug("installed nftables drop (\(_macAddressToString(address))) on \(_bridgeName)")
+      }
+      _mrpFrameFilter = filter
+    } catch {
+      _logger.error("failed to install nftables MRP frame drop on \(_bridgeName): \(error)")
+    }
+  }
+
   private func _shutdown() throws {
     let portIDs = _linkLocalRxTasks.keys.map(\.portID)
     for portID in portIDs {
@@ -1104,6 +1122,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     _bridgePort = nil
     _bridgeIndex = 0
     _mstpClient = nil
+    _mrpFrameFilter = nil
   }
 
   public func shutdown(controller: MRPController<P>) async throws {
