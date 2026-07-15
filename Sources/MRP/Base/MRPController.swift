@@ -129,6 +129,8 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
   private func _run() async throws {
     logger.info("starting MRP for bridge \(bridge)")
 
+    // must precede bridge.run() (which opens the MRP PDU RX sockets): install the
+    // drop before we start snooping so the bridge never floods MMRP/MVRP meanwhile
     if flags.contains(.configureFrameFiltering) {
       await bridge.configureMRPFrameFiltering(groupAddresses: _frameFilterGroupAddresses)
     }
