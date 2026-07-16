@@ -30,9 +30,6 @@ Environment=SWIFT_IORING_QUEUE_ENTRIES=64
 Environment=SWIFT_BACKTRACE=enable=yes,demangle=yes,swift-backtrace=/usr/libexec/swift/swift-backtrace
 EnvironmentFile=/etc/default/avb
 
-# disable ATU hashing for Marvell 88E6341 switch chip
-ExecStartPre=/bin/sh -c '/usr/sbin/devlink dev param set "$(/usr/sbin/devlink dev show | head -n1)" name ATU_hash value 3 cmode runtime'
-
 # enable multicast flooding on all bridge ports (802.1Q default)
 ExecStartPre=/bin/sh -c 'for ETH in $$INTERFACES; do bridge link set dev "$$ETH" mcast_flood on || true; done'
 

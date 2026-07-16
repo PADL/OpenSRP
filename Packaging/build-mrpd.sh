@@ -166,6 +166,11 @@ fi
 # avb.target groups the stack; referenced (PartOf=) by mrpd and ptp4l.
 install -D -m0644 "$SWIFTMRP_DIR/Configs/avb.target" \
   "$stage/lib/systemd/system/avb.target"
+# Selects the ATU hash before networkd builds the bridge (the mv88e6xxx devlink
+# ATU_hash set is refused once the user ports are up and bridged). Self-gates on
+# an 88E6341 being present, so it is harmless on other boards.
+install -D -m0644 "$SWIFTMRP_DIR/Configs/mv88e6341-atu-hash.service" \
+  "$stage/lib/systemd/system/mv88e6341-atu-hash.service"
 # Shared bridge/interface configuration sourced by mrpd.service and ptp4l.service.
 install -D -m0644 "$SWIFTMRP_DIR/Configs/avb.default" "$stage/etc/default/avb"
 # The CONSTRAINED binary is built without the RestAPI trait, so its mrpd does
@@ -195,4 +200,4 @@ deps="libc6, libstdc++6, libgcc-s1, liburing2, libsystemd0, libnl-3-200, libnl-r
 [ -n "${CONSTRAINED:-}" ] || deps="libcurl4t64, python3-requests, $deps"
 build_deb "$PKG" "$VER" "$stage" "$deps" \
   "OpenSRP MRP/MVRP/MSRP daemon (mrpd) with portmon and pmctool helpers" \
-  mrpd.service avb.target
+  mrpd.service avb.target mv88e6341-atu-hash.service

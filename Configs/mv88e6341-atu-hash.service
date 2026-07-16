@@ -1,0 +1,13 @@
+[Unit]
+Description=Configure Marvell 88E6341 ATU hash before network setup
+Wants=network-pre.target
+Before=network-pre.target
+ConditionPathExists=/usr/sbin/devlink
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'for dev in $(/usr/sbin/devlink dev show); do /usr/sbin/devlink dev info "$dev" 2>/dev/null | grep -q "Marvell 88E6341" && /usr/sbin/devlink dev param set "$dev" name ATU_hash value 3 cmode runtime; done'
+
+[Install]
+WantedBy=multi-user.target
