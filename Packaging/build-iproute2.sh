@@ -9,7 +9,7 @@ set -euo pipefail
 
 src="$(git_checkout iproute2 "$IPROUTE2_GIT" "$IPROUTE2_REF")"
 
-VER="$(resolve_version "$src" "${IPROUTE2_BASE_VERSION:-7.0.0}")"
+VER="$(resolve_version "$src" "${IPROUTE2_BASE_VERSION:-7.1.0}")"
 msg "Building iproute2 ($DEB_ARCH) version $VER"
 
 # configure enables libmnl/libelf/libselinux from the (arch-independent) host
