@@ -159,6 +159,15 @@ let CommonTargets: [Target] = [
     linkerSettings: PlatformLinkerSettings
   ),
   .target(
+    name: "gPTP2d",
+    dependencies: [
+      "SocketAddress",
+    ] + PlatformTargetDependencies,
+    cSettings: PlatformCSettings,
+    swiftSettings: PlatformSwiftSettings,
+    linkerSettings: PlatformLinkerSettings
+  ),
+  .target(
     name: "MSTP",
     dependencies: [
       "SocketAddress",
@@ -175,6 +184,7 @@ let CommonTargets: [Target] = [
       "SocketAddress",
       "PMC",
       "MSTP",
+      "gPTP2d",
       .product(name: "Algorithms", package: "swift-algorithms"),
       .product(name: "OrderedCollections", package: "swift-collections"),
       .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),

@@ -28,7 +28,6 @@ import IORingUtils
 import Logging
 import MSTP
 import NetLink
-import PMC
 import SocketAddress
 import Synchronization
 import SystemPackage
@@ -520,29 +519,20 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
     return _channels.current.tx > 2 || _channels.current.combined > 2
   }
 
-  private func _getMeanLinkDelay() async throws -> PTP.TimeInterval {
-    guard let _bridge else { throw MRPError.internalError }
-    let portNumber = try await _bridge._getPtpPortProperties(for: self).portIdentity.portNumber
-    let portDataSet = try await _bridge._pmc.getPortDataSet(portNumber: portNumber)
-    return portDataSet.meanLinkDelay
-  }
-
   public func getPortTcMaxLatency(for _: SRclassPriority) async throws -> Int {
     // The knowable per-hop terms (b/c/d/e) don't depend on the SR class -- only term a) does, and
     // that one isn't observable here (see srpPortTcMaxLatency), so the class argument is unused.
-    // Wire propagation (d): gPTP meanLinkDelay (PTP timeinterval is ns * 2^16). A not-yet-usable
-    // (negative) value is ptpNotReady, the expected warm-up case the caller treats as provisional.
-    let meanLinkDelay = try await _getMeanLinkDelay()
-    guard meanLinkDelay >= 0 else { throw MRPError.ptpNotReady }
-    return srpPortTcMaxLatency(meanLinkDelayNs: Int(meanLinkDelay >> 16), linkSpeedKbps: linkSpeed)
+    // Wire propagation (d) is the gPTP meanLinkDelay; before gPTP has measured one the client
+    // throws ptpNotReady, the expected warm-up case the caller treats as provisional.
+    guard let _bridge else { throw MRPError.internalError }
+    let meanLinkDelayNs = try await _bridge._timeSync.meanLinkDelayNs(interface: name)
+    return srpPortTcMaxLatency(meanLinkDelayNs: meanLinkDelayNs, linkSpeedKbps: linkSpeed)
   }
 
   public var isAsCapable: Bool {
     get async throws {
       guard let _bridge else { throw MRPError.internalError }
-      let portNumber = try await _bridge._getPtpPortProperties(for: self).portIdentity.portNumber
-      let portDataSet = try await _bridge._pmc.getPortDataSetNP(portNumber: portNumber)
-      return portDataSet.asCapable != 0
+      return try await _bridge._timeSync.isAsCapable(interface: name)
     }
   }
 
@@ -690,8 +680,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   // Multicast view of _vlanRegistrationStream: MVRP and MSRP each observe VLAN membership
   // changes independently (AsyncStream is single-consumer, share() fans out to both).
   private let _vlanRegistrationShared: AnyAsyncSequence<VLANRegistrationNotification<P>>
-  fileprivate let _pmc: PTPManagementClient
-  private var _portPropertiesCache = [P.ID: PortPropertiesNP]()
+  fileprivate let _timeSync: any TimeSyncClient
   private let _portExclusions: Set<String>
   // Member ports for which the ingress (DCBNL) PCP->queue map is currently configured, and
   // whether the switch uses a single global ingress priority map shared by all ports.
@@ -710,7 +699,8 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   public init(
     name: String,
     qDiscHandle: UInt16? = nil,
-    ptpManagementClientSocketPath: String? = nil,
+    timeSyncBackend: TimeSyncBackend = .ptp4l,
+    timeSyncSocketPath: String? = nil,
     portExclusions: Set<String> = [],
     logger: Logger
   ) async throws {
@@ -718,7 +708,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     _nlLinkSocket = try NLSocket(protocol: NETLINK_ROUTE)
     _nlQDiscHandle = qDiscHandle
     _devlink = try? RTNLDevlink()
-    _pmc = try await PTPManagementClient(path: ptpManagementClientSocketPath)
+    _timeSync = try await makeTimeSyncClient(timeSyncBackend, path: timeSyncSocketPath)
     _portExclusions = portExclusions
     _logger = logger
     (_srClassPriorityMapStream, _srClassPriorityMapContinuation) = AsyncStream.makeStream(
@@ -781,7 +771,6 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
         }
       } else {
         try _cancelLinkLocalRxTask(port: port)
-        _portPropertiesCache[port.id] = nil
         _portVLANs.withLock { $0[port.id] = nil }
         _portPVID.withLock { $0[port.id] = nil }
         _portStpState.withLock { $0[port.id] = nil }
@@ -1708,21 +1697,6 @@ extension LinuxBridge: MSRPAwareBridge {
     SRClassPriorityMapNotification<P>
   > {
     _srClassPriorityMapStream.eraseToAnyAsyncSequence()
-  }
-
-  fileprivate func _getPtpPortProperties(for port: P) async throws -> PortPropertiesNP {
-    if let portProperties = _portPropertiesCache[port.id] { return portProperties }
-    let defaultDataSet = try await _pmc.getDefaultDataSet()
-    for portNumber in 1...defaultDataSet.numberPorts {
-      if let portProperties = try? await _pmc.getPortPropertiesNP(portNumber: portNumber),
-         portProperties.interface.description == port.name
-      {
-        _portPropertiesCache[port.id] = portProperties
-        return portProperties
-      }
-    }
-    _portPropertiesCache[port.id] = nil
-    throw PTP.Error.unknownPort
   }
 }
 

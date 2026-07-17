@@ -44,6 +44,8 @@ extension Logger.Level: @retroactive ExpressibleByArgument {
 
 extension MSRPFilteringType: ExpressibleByArgument {}
 
+extension TimeSyncBackend: ExpressibleByArgument {}
+
 @main
 private final class MRPDaemon: AsyncParsableCommand {
   typealias P = LinuxPort
@@ -157,8 +159,11 @@ private final class MRPDaemon: AsyncParsableCommand {
   @Flag(name: .long, help: .hidden)
   var forceFullParticipant: Bool = false
 
-  @Option(name: .long, help: "PTP management client domain socket path")
-  var pmcUdsPath: String? = nil
+  @Option(name: .long, help: "gPTP daemon to query for asCapable and peer delay")
+  var timeSync: TimeSyncBackend = .ptp4l
+
+  @Option(name: .long, help: "gPTP daemon domain socket path (default: the backend's own)")
+  var timeSyncPath: String? = nil
 
   @Option(name: .long, help: "MRP Join time interval")
   var joinTime: Duration = JoinTime
@@ -207,7 +212,8 @@ private final class MRPDaemon: AsyncParsableCommand {
     case enableMSRP
     case enableSRP
     case forceFullParticipant
-    case pmcUdsPath
+    case timeSync
+    case timeSyncPath
     case joinTime
     case leaveTime
     case leaveAllTime
@@ -240,7 +246,8 @@ private final class MRPDaemon: AsyncParsableCommand {
     let bridge = try await B(
       name: bridgeInterface,
       qDiscHandle: qDiscHandle,
-      ptpManagementClientSocketPath: pmcUdsPath,
+      timeSyncBackend: timeSync,
+      timeSyncSocketPath: timeSyncPath,
       portExclusions: Set(excludeIface),
       logger: logger
     )

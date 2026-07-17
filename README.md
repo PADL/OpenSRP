@@ -112,8 +112,10 @@ OPTIONS:
                           Declare each port's PVID over MVRP (11.2.1.3)
                           (default: --no-declare-pvid)
   --enable-msrp           Enable MSRP
-  --pmc-uds-path <pmc-uds-path>
-                          PTP management client domain socket path
+  --time-sync <time-sync> gPTP daemon to query for asCapable and peer delay
+                          (values: ptp4l, gptp2d; default: ptp4l)
+  --time-sync-path <time-sync-path>
+                          gPTP daemon domain socket path (default: the backend's own)
   --join-time <join-time> MRP Join time interval (default: 0.2 seconds)
   --leave-time <leave-time>
                           MRP Leave time interval (default: 5.0 seconds)
