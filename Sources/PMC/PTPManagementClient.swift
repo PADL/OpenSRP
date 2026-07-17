@@ -41,7 +41,9 @@ public actor PTPManagementClient {
 
   public init(path: String? = nil) async throws {
     let isRoot = geteuid() == 0
-    let path = isRoot ? PTPManagementClient.DefaultUDSPath : PTPManagementClient.DefaultUDSROPath
+    // ptp4l serves the read-write socket to root only; unprivileged clients get the RO one.
+    let defaultPath = isRoot ? Self.DefaultUDSPath : Self.DefaultUDSROPath
+    let path = path ?? defaultPath
     let prefix = isRoot ? "/var/run" : "/var/tmp"
     _localAddress = try sockaddr_un(
       family: sa_family_t(AF_LOCAL),
