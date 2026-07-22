@@ -422,7 +422,7 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
     matching filter: AttributeValueFilter = .matchAny
   ) -> (any Value)? {
     _findRegisteredAttributes(attributeType: attributeType, matching: filter)
-      .max { $0.generation < $1.generation }?
+      .max(by: <)?
       .unwrappedValue
   }
 
@@ -1064,6 +1064,14 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
       attributeType: rhs.attributeType,
       matching: .matchIdentity(rhs.unwrappedValue)
     )
+  }
+
+  static func < (lhs: _AttributeValue<A>, rhs: _AttributeValue<A>) -> Bool {
+    guard lhs.generation == rhs.generation else { return lhs.generation < rhs.generation }
+    func rank(_ subtype: AttributeSubtype?) -> UInt16 {
+      subtype.map { UInt16($0) + 1 } ?? 0
+    }
+    return (rank(lhs.attributeSubtype), lhs.index) < (rank(rhs.attributeSubtype), rhs.index)
   }
 
   private let _participant: Weak<P>
