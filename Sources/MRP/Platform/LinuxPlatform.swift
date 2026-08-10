@@ -1713,7 +1713,10 @@ extension LinuxBridge: MSRPAwareBridge {
   fileprivate func _getPtpPortProperties(for port: P) async throws -> PortPropertiesNP {
     if let portProperties = _portPropertiesCache[port.id] { return portProperties }
     let defaultDataSet = try await _pmc.getDefaultDataSet()
-    for portNumber in 1...defaultDataSet.numberPorts {
+    // stride, not a closed range: numberPorts comes off the wire and may be zero
+    for portNumber in stride(from: 1, through: defaultDataSet.numberPorts, by: 1) {
+      // the try? below would otherwise swallow cancellation and walk every port
+      try Task.checkCancellation()
       if let portProperties = try? await _pmc.getPortPropertiesNP(portNumber: portNumber),
          portProperties.interface.description == port.name
       {

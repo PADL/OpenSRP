@@ -95,14 +95,20 @@ enum PTPManagementID: UInt16, SerDes, Sendable {
   case PRIMARY_DOMAIN = 0x4002
   case DELAY_MECHANISM = 0x6000
   case LOG_MIN_PDELAY_REQ_INTERVAL = 0x6001
+  case TIME_STATUS_NP = 0xC000
+  case GRANDMASTER_SETTINGS_NP = 0xC001
   case PORT_DATA_SET_NP = 0xC002
+  case SUBSCRIBE_EVENTS_NP = 0xC003
   case PORT_PROPERTIES_NP = 0xC004
   case PORT_STATS_NP = 0xC005
+  case SYNCHRONIZATION_UNCERTAIN_NP = 0xC006
   case PORT_SERVICE_STATS_NP = 0xC007
   case UNICAST_MASTER_TABLE_NP = 0xC008
   case PORT_HWCLOCK_NP = 0xC009
   case POWER_PROFILE_SETTINGS_NP = 0xC00A
   case CMLDS_INFO_NP = 0xC00B
+  case PORT_CORRECTIONS_NP = 0xC00C
+  case EXTERNAL_GRANDMASTER_PROPERTIES_NP = 0xC00D
 
   func serialize(into serializationContext: inout IEEE802.SerializationContext) throws {
     serializationContext.serialize(uint16: rawValue)
@@ -120,7 +126,7 @@ enum PTPManagementID: UInt16, SerDes, Sendable {
 struct PTPManagementTLV: SerDes, Sendable {
   private let tlvType: PTP.TLVType
   private let lengthField: UInt16
-  private let managementId: PTPManagementID
+  let managementId: PTPManagementID
   private let dataField: [UInt8]
 
   private init(tlvType: PTP.TLVType, managementId: PTPManagementID, dataField: [UInt8]) {
@@ -148,7 +154,13 @@ struct PTPManagementTLV: SerDes, Sendable {
     try self.init(tlvType: .management, managementId: managementId, dataField: data.serialized())
   }
 
+  // the TLV data field is padded to an even length (14.1.1)
+  private var paddedDataField: [UInt8] {
+    dataField.count % 2 == 0 ? dataField : dataField + [0]
+  }
+
   func serialize(into serializationContext: inout IEEE802.SerializationContext) throws {
+    let dataField = paddedDataField
     try tlvType.serialize(into: &serializationContext)
     serializationContext.serialize(uint16: UInt16(dataField.count + 2))
     try managementId.serialize(into: &serializationContext)
@@ -167,7 +179,7 @@ struct PTPManagementTLV: SerDes, Sendable {
   }
 
   var size: Int {
-    2 + 2 + 2 + dataField.count
+    2 + 2 + 2 + paddedDataField.count
   }
 
   var data: PTPManagementRepresentable {
@@ -176,6 +188,10 @@ struct PTPManagementTLV: SerDes, Sendable {
         switch managementId {
         case .NULL_PTP_MANAGEMENT:
           return try Null(parsing: &input)
+        case .CLOCK_DESCRIPTION:
+          return try ClockDescription(parsing: &input)
+        case .USER_DESCRIPTION:
+          return try UserDescription(parsing: &input)
         case .TIME:
           return try Time(parsing: &input)
         case .PRIORITY1:
@@ -186,12 +202,76 @@ struct PTPManagementTLV: SerDes, Sendable {
           return try ClockAccuracy(parsing: &input)
         case .DEFAULT_DATA_SET:
           return try DefaultDataSet(parsing: &input)
+        case .CURRENT_DATA_SET:
+          return try CurrentDataSet(parsing: &input)
+        case .PARENT_DATA_SET:
+          return try ParentDataSet(parsing: &input)
+        case .TIME_PROPERTIES_DATA_SET:
+          return try TimePropertiesDataSet(parsing: &input)
+        case .DOMAIN:
+          return try Domain(parsing: &input)
+        case .SLAVE_ONLY:
+          return try SlaveOnly(parsing: &input)
         case .PORT_DATA_SET:
           return try PortDataSet(parsing: &input)
+        case .LOG_ANNOUNCE_INTERVAL:
+          return try LogAnnounceInterval(parsing: &input)
+        case .ANNOUNCE_RECEIPT_TIMEOUT:
+          return try AnnounceReceiptTimeout(parsing: &input)
+        case .LOG_SYNC_INTERVAL:
+          return try LogSyncInterval(parsing: &input)
+        case .VERSION_NUMBER:
+          return try VersionNumber(parsing: &input)
+        case .ENABLE_PORT:
+          return try EnablePort(parsing: &input)
+        case .DISABLE_PORT:
+          return try DisablePort(parsing: &input)
+        case .TRACEABILITY_PROPERTIES:
+          return try TraceabilityProperties(parsing: &input)
+        case .TIMESCALE_PROPERTIES:
+          return try TimescaleProperties(parsing: &input)
+        case .ALTERNATE_TIME_OFFSET_ENABLE:
+          return try AlternateTimeOffsetEnable(parsing: &input)
+        case .ALTERNATE_TIME_OFFSET_NAME:
+          return try AlternateTimeOffsetName(parsing: &input)
+        case .ALTERNATE_TIME_OFFSET_MAX_KEY:
+          return try AlternateTimeOffsetMaxKey(parsing: &input)
+        case .ALTERNATE_TIME_OFFSET_PROPERTIES:
+          return try AlternateTimeOffsetProperties(parsing: &input)
+        case .MASTER_ONLY:
+          return try MasterOnly(parsing: &input)
+        case .DELAY_MECHANISM:
+          return try DelayMechanism(parsing: &input)
+        case .LOG_MIN_PDELAY_REQ_INTERVAL:
+          return try LogMinPdelayReqInterval(parsing: &input)
+        case .TIME_STATUS_NP:
+          return try TimeStatusNP(parsing: &input)
+        case .GRANDMASTER_SETTINGS_NP:
+          return try GrandmasterSettingsNP(parsing: &input)
         case .PORT_DATA_SET_NP:
           return try PortDataSetNP(parsing: &input)
+        case .SUBSCRIBE_EVENTS_NP:
+          return try SubscribeEventsNP(parsing: &input)
         case .PORT_PROPERTIES_NP:
           return try PortPropertiesNP(parsing: &input)
+        case .PORT_STATS_NP:
+          return try PortStatsNP(parsing: &input)
+        case .SYNCHRONIZATION_UNCERTAIN_NP:
+          return try SynchronizationUncertainNP(parsing: &input)
+        case .PORT_SERVICE_STATS_NP:
+          return try PortServiceStatsNP(parsing: &input)
+        case .UNICAST_MASTER_TABLE_NP:
+          return try UnicastMasterTableNP(parsing: &input)
+        case .PORT_HWCLOCK_NP:
+          return try PortHwclockNP(parsing: &input)
+        case .POWER_PROFILE_SETTINGS_NP:
+          return try PowerProfileSettingsNP(parsing: &input)
+        case .CMLDS_INFO_NP:
+          return try CmldsInfoNP(parsing: &input)
+        case .PORT_CORRECTIONS_NP:
+          return try PortCorrectionsNP(parsing: &input)
+        case .EXTERNAL_GRANDMASTER_PROPERTIES_NP:
+          return try ExternalGrandmasterPropertiesNP(parsing: &input)
         default:
           throw PTP.Error.unsupportedManagementID
         }
@@ -269,7 +349,7 @@ public struct DefaultDataSet: PTPManagementRepresentable {
     }
 
     public static let twoStepFlag = Flags(rawValue: 1 << 0)
-    public static let slaveOnly = Flags(rawValue: 1 << 0)
+    public static let slaveOnly = Flags(rawValue: 1 << 1)
   }
 
   public let flags: Flags

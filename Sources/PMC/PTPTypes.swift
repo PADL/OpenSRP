@@ -359,7 +359,9 @@ public enum PTP {
     }
 
     public func serialize(into serializationContext: inout IEEE802.SerializationContext) throws {
+      guard address.count <= UInt16.max else { throw Error.valueTooLarge }
       serializationContext.serialize(uint16: networkProtocol)
+      serializationContext.serialize(uint16: UInt16(address.count))
       serializationContext.serialize(address)
     }
 
@@ -378,6 +380,8 @@ public enum PTP {
     }
 
     public func serialize(into serializationContext: inout IEEE802.SerializationContext) throws {
+      guard address.count <= UInt16.max else { throw Error.valueTooLarge }
+      serializationContext.serialize(uint16: UInt16(address.count))
       serializationContext.serialize(address)
     }
 
@@ -527,6 +531,10 @@ public enum PTP {
 
     init(text: [UInt8]) {
       self.text = text
+    }
+
+    public init(_ string: String) {
+      text = Array(string.utf8)
     }
 
     public func serialize(into serializationContext: inout IEEE802.SerializationContext) throws {
@@ -786,15 +794,29 @@ public enum PTP {
     }
   }
 
-  public enum TimeSource: UInt8 {
-    case atomicClock = 0x10
-    case gps = 0x20
-    case terrestialRadio = 0x30
-    case ptp = 0x40
-    case ntp = 0x50
-    case handSet = 0x60
-    case other = 0x90
-    case internalOscillator = 0xA0
+  // not an enumeration: 0xF0-0xFE are profile specific, so any value must round-trip
+  public struct TimeSource: RawRepresentable, SerDes, Equatable, Hashable, Sendable {
+    public let rawValue: UInt8
+
+    public init(rawValue: UInt8) { self.rawValue = rawValue }
+
+    public static let atomicClock = TimeSource(rawValue: 0x10)
+    public static let gps = TimeSource(rawValue: 0x20)
+    public static let terrestialRadio = TimeSource(rawValue: 0x30)
+    public static let serialTimeCode = TimeSource(rawValue: 0x39)
+    public static let ptp = TimeSource(rawValue: 0x40)
+    public static let ntp = TimeSource(rawValue: 0x50)
+    public static let handSet = TimeSource(rawValue: 0x60)
+    public static let other = TimeSource(rawValue: 0x90)
+    public static let internalOscillator = TimeSource(rawValue: 0xA0)
+
+    public func serialize(into serializationContext: inout IEEE802.SerializationContext) throws {
+      serializationContext.serialize(uint8: rawValue)
+    }
+
+    public init(parsing input: inout ParserSpan) throws {
+      rawValue = try UInt8(parsing: &input)
+    }
   }
 
   public enum ActionField: UInt8, SerDes, Sendable {

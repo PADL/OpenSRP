@@ -18,43 +18,108 @@ import Glibc
 import PMC
 import SystemPackage
 
-enum Command: CaseIterable {
+enum Command: String, CaseIterable {
   case GET_NULL_PTP_MANAGEMENT
+  case GET_CLOCK_DESCRIPTION
+  case GET_USER_DESCRIPTION
   case GET_DEFAULT_DATA_SET
+  case GET_CURRENT_DATA_SET
+  case GET_PARENT_DATA_SET
+  case GET_TIME_PROPERTIES_DATA_SET
+  case GET_PRIORITY1
+  case GET_PRIORITY2
+  case GET_DOMAIN
+  case GET_SLAVE_ONLY
+  case GET_CLOCK_ACCURACY
+  case GET_TRACEABILITY_PROPERTIES
+  case GET_TIMESCALE_PROPERTIES
   case GET_PORT_DATA_SET
+  case GET_LOG_ANNOUNCE_INTERVAL
+  case GET_ANNOUNCE_RECEIPT_TIMEOUT
+  case GET_LOG_SYNC_INTERVAL
+  case GET_VERSION_NUMBER
+  case GET_MASTER_ONLY
+  case GET_DELAY_MECHANISM
+  case GET_LOG_MIN_PDELAY_REQ_INTERVAL
+  case GET_TIME_STATUS_NP
+  case GET_GRANDMASTER_SETTINGS_NP
+  case GET_SUBSCRIBE_EVENTS_NP
+  case GET_SYNCHRONIZATION_UNCERTAIN_NP
+  case GET_EXTERNAL_GRANDMASTER_PROPERTIES_NP
+  case GET_PORT_DATA_SET_NP
   case GET_PORT_PROPERTIES_NP
+  case GET_PORT_STATS_NP
+  case GET_PORT_SERVICE_STATS_NP
+  case GET_UNICAST_MASTER_TABLE_NP
+  case GET_PORT_HWCLOCK_NP
+  case GET_POWER_PROFILE_SETTINGS_NP
+  case GET_CMLDS_INFO_NP
+  case GET_PORT_CORRECTIONS_NP
+  case ENABLE_PORT
+  case DISABLE_PORT
 }
 
-typealias CommandHandler = (Command, PTPManagementClient, UInt16) async throws -> ()
-
 func usage() -> Never {
-  print(
-    "Usage: \(CommandLine.arguments[0]) [GET_NULL_PTP_MANAGEMENT|GET_DEFAULT_DATA_SET|GET_PORT_DATA_SET|GET_PORT_PROPERTIES_NP] [port]"
-  )
+  print("Usage: \(CommandLine.arguments[0]) <command> [port]")
+  print("Commands:")
+  for command in Command.allCases {
+    print("  \(command.rawValue)")
+  }
   exit(1)
 }
 
-func GET_NULL_PTP_MANAGEMENT(
-  command: Command,
-  pmc: PTPManagementClient,
-  port: UInt16
-) async throws {
-  try await pmc.getNullPtpManagement()
-}
+func run(_ command: Command, _ pmc: PTPManagementClient, _ portArg: UInt16?) async throws {
+  // commands addressed to a port rather than to the clock require the port argument
+  func port() -> UInt16 {
+    guard let portArg else { usage() }
+    return portArg
+  }
 
-func GET_DEFAULT_DATA_SET(command: Command, pmc: PTPManagementClient, port: UInt16) async throws {
-  let defaultDataSet = try await pmc.getDefaultDataSet()
-  print("\(defaultDataSet)")
-}
-
-func GET_PORT_DATA_SET(command: Command, pmc: PTPManagementClient, port: UInt16) async throws {
-  let portDataSet = try await pmc.getPortDataSet(portNumber: port)
-  print("\(portDataSet)")
-}
-
-func GET_PORT_PROPERTIES_NP(command: Command, pmc: PTPManagementClient, port: UInt16) async throws {
-  let portPropertiesNP = try await pmc.getPortPropertiesNP(portNumber: port)
-  print("\(portPropertiesNP)")
+  switch command {
+  case .GET_NULL_PTP_MANAGEMENT: try await pmc.getNullPtpManagement()
+  case .GET_CLOCK_DESCRIPTION: try await print(pmc.getClockDescription(portNumber: port()))
+  case .GET_USER_DESCRIPTION: try await print(pmc.getUserDescription())
+  case .GET_DEFAULT_DATA_SET: try await print(pmc.getDefaultDataSet())
+  case .GET_CURRENT_DATA_SET: try await print(pmc.getCurrentDataSet())
+  case .GET_PARENT_DATA_SET: try await print(pmc.getParentDataSet())
+  case .GET_TIME_PROPERTIES_DATA_SET: try await print(pmc.getTimePropertiesDataSet())
+  case .GET_PRIORITY1: try await print(pmc.getPriority1())
+  case .GET_PRIORITY2: try await print(pmc.getPriority2())
+  case .GET_DOMAIN: try await print(pmc.getDomain())
+  case .GET_SLAVE_ONLY: try await print(pmc.getSlaveOnly())
+  case .GET_CLOCK_ACCURACY: try await print(pmc.getClockAccuracy())
+  case .GET_TRACEABILITY_PROPERTIES: try await print(pmc.getTraceabilityProperties())
+  case .GET_TIMESCALE_PROPERTIES: try await print(pmc.getTimescaleProperties())
+  case .GET_PORT_DATA_SET: try await print(pmc.getPortDataSet(portNumber: port()))
+  case .GET_LOG_ANNOUNCE_INTERVAL: try await print(pmc.getLogAnnounceInterval(portNumber: port()))
+  case .GET_ANNOUNCE_RECEIPT_TIMEOUT:
+    try await print(pmc.getAnnounceReceiptTimeout(portNumber: port()))
+  case .GET_LOG_SYNC_INTERVAL: try await print(pmc.getLogSyncInterval(portNumber: port()))
+  case .GET_VERSION_NUMBER: try await print(pmc.getVersionNumber(portNumber: port()))
+  case .GET_MASTER_ONLY: try await print(pmc.getMasterOnly(portNumber: port()))
+  case .GET_DELAY_MECHANISM: try await print(pmc.getDelayMechanism(portNumber: port()))
+  case .GET_LOG_MIN_PDELAY_REQ_INTERVAL:
+    try await print(pmc.getLogMinPdelayReqInterval(portNumber: port()))
+  case .GET_TIME_STATUS_NP: try await print(pmc.getTimeStatusNP())
+  case .GET_GRANDMASTER_SETTINGS_NP: try await print(pmc.getGrandmasterSettingsNP())
+  case .GET_SUBSCRIBE_EVENTS_NP: try await print(pmc.getSubscribeEventsNP())
+  case .GET_SYNCHRONIZATION_UNCERTAIN_NP: try await print(pmc.getSynchronizationUncertainNP())
+  case .GET_EXTERNAL_GRANDMASTER_PROPERTIES_NP:
+    try await print(pmc.getExternalGrandmasterPropertiesNP())
+  case .GET_PORT_DATA_SET_NP: try await print(pmc.getPortDataSetNP(portNumber: port()))
+  case .GET_PORT_PROPERTIES_NP: try await print(pmc.getPortPropertiesNP(portNumber: port()))
+  case .GET_PORT_STATS_NP: try await print(pmc.getPortStatsNP(portNumber: port()))
+  case .GET_PORT_SERVICE_STATS_NP: try await print(pmc.getPortServiceStatsNP(portNumber: port()))
+  case .GET_UNICAST_MASTER_TABLE_NP: try await print(pmc
+      .getUnicastMasterTableNP(portNumber: port()))
+  case .GET_PORT_HWCLOCK_NP: try await print(pmc.getPortHwclockNP(portNumber: port()))
+  case .GET_POWER_PROFILE_SETTINGS_NP:
+    try await print(pmc.getPowerProfileSettingsNP(portNumber: port()))
+  case .GET_CMLDS_INFO_NP: try await print(pmc.getCmldsInfoNP(portNumber: port()))
+  case .GET_PORT_CORRECTIONS_NP: try await print(pmc.getPortCorrectionsNP(portNumber: port()))
+  case .ENABLE_PORT: try await pmc.enablePort(portNumber: port())
+  case .DISABLE_PORT: try await pmc.disablePort(portNumber: port())
+  }
 }
 
 @main
@@ -64,10 +129,7 @@ enum pmctool {
       usage()
     }
 
-    let command = CommandLine.arguments[1]
-    guard let command = Command.allCases
-      .first(where: { String(describing: $0) == command.uppercased() })
-    else {
+    guard let command = Command(rawValue: CommandLine.arguments[1].uppercased()) else {
       usage()
     }
 
@@ -77,19 +139,8 @@ enum pmctool {
     }
 
     do {
-      let commands: [Command: CommandHandler] = [
-        .GET_NULL_PTP_MANAGEMENT: GET_NULL_PTP_MANAGEMENT,
-        .GET_DEFAULT_DATA_SET: GET_DEFAULT_DATA_SET,
-        .GET_PORT_DATA_SET: GET_PORT_DATA_SET,
-        .GET_PORT_PROPERTIES_NP: GET_PORT_PROPERTIES_NP,
-      ]
       let pmc = try await PTPManagementClient()
-      let commandHandler = commands[command]!
-      try await commandHandler(
-        command,
-        pmc,
-        port ?? 0
-      )
+      try await run(command, pmc, port)
     } catch {
       print("failed to \(command): \(type(of: error)) \(error)")
       exit(3)
