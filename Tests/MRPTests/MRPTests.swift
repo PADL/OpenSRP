@@ -518,6 +518,7 @@ struct MockBridge: MRP.Bridge, CustomStringConvertible {
   var rxPackets = AsyncEmptySequence<(Int, IEEE802Packet)>().eraseToAnyAsyncSequence()
   var ports: Set<MockPort> = [MockPort(id: 0)]
   var recorder = MRPTestRecorder()
+  var numTXQueues: Int? // nil models a bridge whose queue count is unreadable
 
   init() {}
 
@@ -5548,7 +5549,9 @@ extension MRPTests {
     portTcMaxLatency: [Int: Int] = [:],
     leaveTime: Duration? = nil,
     maxTalkerAttributes: Int = 150,
-    vlans: Set<UInt16> = [2]
+    vlans: Set<UInt16> = [2],
+    numTXQueues: Int? = nil,
+    queues: [SRclassID: UInt] = [:]
   ) async throws
     -> (MRPController<MockPort>, MSRPApplication<MockPort>, MRPTestRecorder)
   {
@@ -5556,7 +5559,8 @@ extension MRPTests {
     let ports = Set(portIDs.map {
       MockPort(id: $0, vlans: vlans, portTcMaxLatency: portTcMaxLatency[$0] ?? 0)
     })
-    let bridge = MockBridge(ports: ports, recorder: recorder)
+    var bridge = MockBridge(ports: ports, recorder: recorder)
+    bridge.numTXQueues = numTXQueues
     let controller = try await MRPController(
       bridge: bridge,
       logger: Logger(label: "com.padl.MRPTests.recompute"),
@@ -5565,6 +5569,7 @@ extension MRPTests {
     let msrp = try await MSRPApplication(
       controller: controller,
       flags: flags,
+      queues: queues,
       maxTalkerAttributes: maxTalkerAttributes
     )
     try await msrp.didAdd(contextIdentifier: MAPBaseSpanningTreeContext, with: ports)
@@ -5908,6 +5913,49 @@ extension MRPTests {
     print("SCALEDUP worstPerPduStreamCount=\(worstDup)")
     XCTAssertEqual(worstDup, 1, "no streamID may be encoded twice within a single transmit PDU")
     _ = controller
+  }
+
+  // Class A reserves on the port's highest queue: 4 on a four-queue switch (and when the
+  // count is unreadable), 8 on an eight-queue one, unless configured explicitly.
+  private func _classAReservationQueue(
+    numTXQueues: Int?,
+    queues: [SRclassID: UInt] = [:]
+  ) async throws -> UInt? {
+    let (controller, msrp, recorder) = try await _makeRecomputeMSRP(
+      portIDs: [0, 1],
+      numTXQueues: numTXQueues,
+      queues: queues
+    )
+    let streamID = MSRPStreamID(0x0001_0000_0000_0001)
+    try await _drive(
+      msrp,
+      port: 0,
+      attributeType: .talkerAdvertise,
+      value: _talkerAdvertise(streamID),
+      event: .JoinIn
+    )
+    try await _drive(
+      msrp,
+      port: 1,
+      attributeType: .listener,
+      value: MSRPListenerValue(streamID: streamID),
+      event: .JoinIn,
+      subtype: .ready
+    )
+    _ = await _waitFor { await recorder.cbs.contains { $0.port == 1 && $0.idleSlope > 0 } }
+    _ = controller
+    return await recorder.cbs.first { $0.port == 1 && $0.idleSlope > 0 }?.queue
+  }
+
+  func testSRClassQueuesFollowThePortQueueCount() async throws {
+    var queue = try await _classAReservationQueue(numTXQueues: nil)
+    XCTAssertEqual(queue, 4, "an unreadable queue count must fall back to the four-queue layout")
+    queue = try await _classAReservationQueue(numTXQueues: 4)
+    XCTAssertEqual(queue, 4, "class A takes queue 4 (QPri 3) on a four-queue switch")
+    queue = try await _classAReservationQueue(numTXQueues: 8)
+    XCTAssertEqual(queue, 8, "class A takes queue 8 (QPri 7) on an eight-queue switch")
+    queue = try await _classAReservationQueue(numTXQueues: 8, queues: [.A: 1, .B: 2])
+    XCTAssertEqual(queue, 1, "an explicit assignment (i210 layout) overrides the derived one")
   }
 
   // talker on one port + a Ready listener on another -> reservation programmed on the

@@ -151,12 +151,13 @@ The SR PVID: the single VLAN that both SR classes declare in their MSRP Domain
 .SS Traffic class queues and bandwidth
 .TP
 .BI \-\-class\-a\-qdisc\-handle " n"
-Egress queue (qdisc handle) for SR class A traffic. Default
-.BR 4 .
+Egress queue (qdisc handle) for SR class A traffic. Defaults to the port's
+highest queue (queue 4 on a four-queue switch, 8 on an eight-queue one, and
+4 if the queue count cannot be read).
 .TP
 .BI \-\-class\-b\-qdisc\-handle " n"
-Egress queue (qdisc handle) for SR class B traffic. Default
-.BR 3 .
+Egress queue (qdisc handle) for SR class B traffic. Defaults to the port's
+second highest queue.
 .TP
 .BI \-\-class\-a\-delta\-bandwidth " percent"
 SR class A delta bandwidth, as a percentage. If unset, an implementation

@@ -119,6 +119,18 @@ private func _computeIEEEPriorityMap(
   return map
 }
 
+// "pcp:value" pairs in PCP order, for the queue mapping debug logs.
+private func _formatPriorityMap(_ map: [UInt8: UInt8]?) -> String {
+  (map ?? [:]).sorted { $0.key < $1.key }.map { "\($0.key):\($0.value)" }.joined(separator: " ")
+}
+
+private func _formatPriorityMap(_ apps: [RTNLDCBApp]) -> String {
+  _formatPriorityMap(Dictionary(
+    apps.map { (UInt8(truncatingIfNeeded: $0.protocolID), $0.priority) },
+    uniquingKeysWith: { a, _ in a }
+  ))
+}
+
 // Build the DCBNL APP table entries (PCP selector, DEI=0) for the ingress PCP -> queue map.
 private func _computeIngressDCBApps(
   srClassPriorityMap: SRClassPriorityMap,
@@ -666,6 +678,9 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   // objects report 0. Seeded from a full AF_UNSPEC dump (like `ip -d link`) and kept live by link
   // notifications; a Mutex so LinuxPort.numTXQueues reads it synchronously.
   let _portNumTXQueues = Mutex<[Int: Int]>([:])
+  // Lowest TX queue count across the member ports, seeded in run(). The SR class queue
+  // assignment lands in a switch-wide register, so it has to be valid on every port.
+  private let _numTXQueues = Mutex<Int?>(nil)
   // Authoritative link-volatile per-port state (flags + ethtool settings) by ifindex, so a stale
   // Port value copy reads current duplex/speed. Refreshed at startup and on each link notification.
   let _portLinkState = Mutex<[Int: LinuxPortLinkState]>([:])
@@ -768,6 +783,8 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
           _portStpState.withLock { $0[port.id] = stpState }
         }
         portNotification = .added(port)
+        // a port added later can only lower the queue count the SR classes are sized for
+        if let n = port.numTXQueues { _numTXQueues.withLock { $0 = min($0 ?? n, n) } }
         // seed the live VLAN map from the link's AF_BRIDGE info unless VLAN DB
         // notifications have already populated it (they are the fresher source, and
         // carry the dynamic flag, which the libnl bitmaps do not)
@@ -1067,13 +1084,15 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     // below omits IFLA_NUM_TX_QUEUES. The count is fixed silicon, so a one-time seed suffices.
     let unspecLinks = try await _nlLinkSocket.getLinks(family: sa_family_t(AF_UNSPEC))
     for try await link in unspecLinks {
-      let numTXQueues = Int(link.numTXQueues)
-      if numTXQueues > 0 { _portNumTXQueues.withLock { $0[link.index] = numTXQueues } }
+      let count = Int(link.numTXQueues)
+      if count > 0 { _portNumTXQueues.withLock { $0[link.index] = count } }
     }
 
     await _initDevlinkPortCache()
 
     let ports = try await _getMemberPorts()
+    _numTXQueues.withLock { $0 = ports.compactMap(\.numTXQueues).min() }
+    _logger.debug("LinuxBridge: TX queues per port: \(numTXQueues?.description ?? "unknown")")
     for port in ports {
       _updatePortLinkState(port._rtnl)
       if let pvid = port._pvid { _portPVID.withLock { $0[port.id] = pvid } }
@@ -1532,6 +1551,11 @@ extension LinuxBridge: MSRPAwareBridge {
       legacyQueueOffset: legacyQueueOffset
     )
 
+    _logger
+      .debug(
+        "LinuxBridge: mqprio on \(port): queues \(_formatQueues(queues)) priomap \(_formatPriorityMap(mqprio.priorityMap)) TC0 count \(legacyQueueCount?.description ?? "default") offset \(legacyQueueOffset?.description ?? "default")"
+      )
+
     try await port._rtnl.add(mqprio: mqprio, socket: _nlLinkSocket)
   }
 
@@ -1563,12 +1587,14 @@ extension LinuxBridge: MSRPAwareBridge {
       forceAvbCapable: forceAvbCapable
     )
 
-    return _computeIngressDCBApps(
+    let apps = _computeIngressDCBApps(
       srClassPriorityMap: srClassPriorityMap,
       queues: queues,
       legacyQueueCount: legacyQueueCount,
       legacyQueueOffset: legacyQueueOffset
     )
+    _logger.debug("LinuxBridge: ingress PCP map on \(port): \(_formatPriorityMap(apps))")
+    return apps
   }
 
   func configureIngressQueues(
@@ -1703,6 +1729,8 @@ extension LinuxBridge: MSRPAwareBridge {
     }
     return qDisc.srClassPriorityMap?.1
   }
+
+  nonisolated var numTXQueues: Int? { _numTXQueues.withLock { $0 } }
 
   nonisolated var srClassPriorityMapNotifications: AnyAsyncSequence<
     SRClassPriorityMapNotification<P>

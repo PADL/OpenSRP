@@ -86,11 +86,11 @@ private final class MRPDaemon: AsyncParsableCommand {
   @Option(name: .long, help: "Global MSRP Talker attribute limit (0 disables the limit)")
   var maxTalkerAttributes: Int = 150
 
-  @Option(name: .long, help: "MSRP SR class A Qdisc handle (queue)")
-  var classAQdiscHandle: UInt = 4
+  @Option(name: .long, help: "MSRP SR class A Qdisc handle (queue), default highest queue")
+  var classAQdiscHandle: UInt?
 
-  @Option(name: .long, help: "MSRP SR class B Qdsisc handle (queue)")
-  var classBQdiscHandle: UInt = 3
+  @Option(name: .long, help: "MSRP SR class B Qdisc handle (queue), default second highest")
+  var classBQdiscHandle: UInt?
 
   @Option(name: .long, help: "MSRP SR class A delta bandwidth percentage")
   var classADeltaBandwidth: Int? = nil
@@ -286,7 +286,10 @@ private final class MRPDaemon: AsyncParsableCommand {
       if let classBDeltaBandwidth {
         deltaBandwidths[.B] = classBDeltaBandwidth
       }
-      let queues: [SRclassID: UInt] = [.A: classAQdiscHandle, .B: classBQdiscHandle]
+      // unset classes take the port's highest queues (inverted on the i210, hence the options)
+      var queues = [SRclassID: UInt]()
+      if let classAQdiscHandle { queues[.A] = classAQdiscHandle }
+      if let classBQdiscHandle { queues[.B] = classBQdiscHandle }
       var flags: MSRPApplicationFlags = .defaultFlags
       if enableTalkerPruning { flags.insert(.talkerPruning) }
       if !leaveImmediate { flags.remove(.leaveImmediate) }

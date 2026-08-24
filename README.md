@@ -77,9 +77,11 @@ OPTIONS:
                           Global MSRP Talker attribute limit (0 disables the
                           limit) (default: 150)
   --class-a-qdisc-handle <class-a-qdisc-handle>
-                          MSRP SR class A Qdisc handle (queue) (default: 4)
+                          MSRP SR class A Qdisc handle (queue), default highest
+                          queue
   --class-b-qdisc-handle <class-b-qdisc-handle>
-                          MSRP SR class B Qdsisc handle (queue) (default: 3)
+                          MSRP SR class B Qdisc handle (queue), default second
+                          highest
   --class-a-delta-bandwidth <class-a-delta-bandwidth>
                           MSRP SR class A delta bandwidth percentage
   --class-b-delta-bandwidth <class-b-delta-bandwidth>
@@ -133,7 +135,7 @@ mrpd -b br0 --enable-srp --configure-egress-queues
 
 Note that the `trace` log level will log a _lot_ of messages. `--enable-srp` is a (hidden) synonym which will enable MMRP, MVRP and MSRP.
 
-Higher queue numbers have higher scheduling priority, however this is broken with the Intel i210 driver. With the recommended configuration, you will need to pass `--class-a-qdisc-handle 1 --class-b-qdisc-handle 2` when using this NIC.
+Higher queue numbers have higher scheduling priority, so by default the SR classes take the two highest queues of the port (queues 4 and 3 on a four-queue switch, 8 and 7 on an eight-queue one). This is broken with the Intel i210 driver: with the recommended configuration, you will need to pass `--class-a-qdisc-handle 1 --class-b-qdisc-handle 2` when using this NIC.
 
 ## Testing
 

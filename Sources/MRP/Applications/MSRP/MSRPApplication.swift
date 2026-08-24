@@ -114,6 +114,10 @@ protocol MSRPAwareBridge<P>: Bridge where P: AVBPort {
 
   func getSRClassPriorityMap(port: P) async throws -> SRClassPriorityMap?
 
+  // Lowest TX queue count across the member ports, nil if unknown: the SR class queue
+  // assignment is switch-wide, so it has to be valid on every port.
+  var numTXQueues: Int? { get }
+
   var srClassPriorityMapNotifications: AnyAsyncSequence<SRClassPriorityMapNotification<P>> { get }
 
   // bridge's own System ID (priority + base MAC) for a Talker Failed FailedInfo (35.2.2.8.7)
@@ -121,6 +125,16 @@ protocol MSRPAwareBridge<P>: Bridge where P: AVBPort {
 }
 
 private let DefaultSRClassPriorityMap: SRClassPriorityMap = [.A: .CA, .B: .EE]
+// four-queue (mv88e6341/6352) fallback when the port queue count is unknown
+private let DefaultQueues: [SRclassID: UInt] = [.A: 4, .B: 3]
+
+// "A:8 B:7" in SR class order, for the queue assignment debug logs
+func _formatQueues(_ queues: [SRclassID: UInt]) -> String {
+  queues.sorted { $0.key.rawValue > $1.key.rawValue }
+    .map { "\($0.key):\($0.value)" }
+    .joined(separator: " ")
+}
+
 private let DefaultDeltaBandwidths: [SRclassID: Int] = [.A: 75, .B: 0]
 
 // a programmed per-port reservation: the merged declaration type plus the bound Talker value. Held
@@ -259,7 +273,8 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
   var _participants: [MAPContextIdentifier: Set<Participant<MSRPApplication<P>>>] = [:]
   let _logger: Logger
   let _latencyMaxFrameSize: UInt16
-  let _queues: [SRclassID: UInt]
+  // explicit SR class -> queue overrides; the rest derive from the port queue count
+  let _configuredQueues: [SRclassID: UInt]
 
   let _srPVid: VLAN
   let _deltaBandwidths: [SRclassID: Int]
@@ -343,6 +358,16 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
 
   fileprivate nonisolated var _configureFiltering: Bool { _filtering != nil }
 
+  // SR classes take the highest queues (IEEE 802.1Q Table 8-5): with n queues class A is
+  // queue n and class B queue n-1 (0-based QPri n-1 and n-2).
+  nonisolated var _queues: [SRclassID: UInt] {
+    var queues = DefaultQueues
+    if let count = (controller?.bridge as? any MSRPAwareBridge<P>)?.numTXQueues, count > 2 {
+      queues = [.A: UInt(count), .B: UInt(count - 1)]
+    }
+    return queues.merging(_configuredQueues) { _, configured in configured }
+  }
+
   nonisolated var _ignoreAsCapable: Bool { _flags.contains(.ignoreAsCapable) }
   public nonisolated var registrarLeaveImmediate: Bool { _flags.contains(.leaveImmediate) }
 
@@ -379,7 +404,7 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     latencyMaxFrameSize: UInt16 = 2000,
     srPVid: VLAN = SR_PVID,
     maxSRClass: SRclassID = .B,
-    queues: [SRclassID: UInt] = [.A: 4, .B: 3],
+    queues: [SRclassID: UInt] = [:], // empty derives the assignment from the queue count
     deltaBandwidths: [SRclassID: Int]? = nil,
     maxTalkerAttributes: Int = 150,
     filtering: MSRPFilteringType? = nil
@@ -392,7 +417,7 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     _latencyMaxFrameSize = latencyMaxFrameSize
     _srPVid = srPVid
     _maxSRClass = maxSRClass
-    _queues = queues
+    _configuredQueues = queues
     _deltaBandwidths = deltaBandwidths ?? DefaultDeltaBandwidths
     _maxTalkerAttributes = maxTalkerAttributes
     _mmrp = try? await controller.application(for: MMRPEtherType)
@@ -486,6 +511,7 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     bridge: any MSRPAwareBridge<P>
   ) async throws -> SRClassPriorityMap? {
     guard port.isAvbCapable || _forceAvbCapable else { return nil }
+    _logger.debug("MSRP: port \(port) SR class queues \(_formatQueues(_queues))")
     // Per-port admission control before queues so it is up first; the in-domain
     // filter is added later once the port is in the domain (§6).
     await _applyPortFiltering(port: port, bridge: bridge)
