@@ -290,7 +290,9 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
   func _didAdd(port: P) async throws {
     logger.debug("added port \(port.id): \(port)")
 
-    if timerConfiguration.periodicTime != .zero { _startPeriodicTimer() }
+    if timerConfiguration.periodicTime != .zero {
+      _startPeriodicTimer()
+    }
 
     try await _applyContextIdentifierChanges(beforeAddingOrUpdating: port, isNewPort: true)
     _ports[port.id] = port
@@ -320,8 +322,12 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
     _portContextIdentifiers[port.id] = nil
     _stpPortStatus[port.id] = nil
 
-    if _ports.isEmpty { _stopStpPollTimer() }
-    if timerConfiguration.periodicTime != .zero { _stopPeriodicTimer() }
+    if _ports.isEmpty {
+      _stopStpPollTimer()
+    }
+    if timerConfiguration.periodicTime != .zero {
+      _stopPeriodicTimer()
+    }
   }
 
   // The subset of a port's properties MRP reacts to. Equatable so a no-op netlink update (e.g. a
@@ -356,7 +362,9 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
     // against the last snapshot: re-deriving from the stored port reads the same live cache.
     let previousState = _portMRPState[port.id]
     let state = PortMRPState(port)
-    if previousState == state { return }
+    if previousState == state {
+      return
+    }
     logger.debug("updated port \(port.id): \(port)")
 
     // 10.3 NOTE / 11.2.1.2: a Port removed from the Forwarding set has left the active topology, so
@@ -414,7 +422,9 @@ public actor MRPController<P: Port>: Service, CustomStringConvertible, Sendable 
   private func _handleBridgeNotifications() async throws {
     for try await notification in bridge.notifications {
       do {
-        if _portExclusions.contains(notification.port.name) { continue }
+        if _portExclusions.contains(notification.port.name) {
+          continue
+        }
         switch notification {
         case let .added(port):
           try await ports.contains(port) ? _didUpdate(port: port) : _didAdd(port: port)

@@ -226,7 +226,9 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
 
     for attribute in _attributes {
       for attributeValue in attribute.value {
-        if !attributeValue.matches(attributeType: attributeType, matching: filter) { continue }
+        if !attributeValue.matches(attributeType: attributeType, matching: filter) {
+          continue
+        }
         try block(attributeValue)
       }
     }
@@ -723,7 +725,9 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
   {
     guard let application else { throw MRPError.internalError }
     var flags: StateMachineHandlerFlags = []
-    if _type == .pointToPoint { flags.insert(.operPointToPointMAC) }
+    if _type == .pointToPoint {
+      flags.insert(.operPointToPointMAC)
+    }
     // Registrar (10.7.8) and Applicant (10.7.7) admin controls are orthogonal: derive the
     // Registrar's fixed/forbidden flags and the Applicant's New-Only flag independently.
     let administrativeControl = try application.administrativeControl(for: attributeType)
@@ -741,7 +745,9 @@ public final class Participant<A: Application>: Equatable, Hashable, CustomStrin
     case .newOnlyParticipant:
       flags.insert(.applicantOnlyParticipant)
     }
-    if application.registrarLeaveImmediate { flags.insert(.leaveImmediate) }
+    if application.registrarLeaveImmediate {
+      flags.insert(.leaveImmediate)
+    }
     // TODO: add flags for when attribute is empty, so Applicant State Machine can
     // ignore transition to LO from VO/AO/QO when receiving rLA!, txLA!, or txLAF!
     return flags
@@ -881,10 +887,11 @@ public extension Participant {
 
     // apply a changed subtype even when re-declaring New: an existing attribute (e.g. a merged
     // listener propagated during a topology change) must not emit New carrying the stale subtype.
-    if let attributeSubtype, attribute.attributeSubtype != attributeSubtype { _logger
-      .debug(
-        "\(self): \(eventSource) declared attribute \(attribute) with new subtype \(attributeSubtype); replacing"
-      )
+    if let attributeSubtype, attribute.attributeSubtype != attributeSubtype {
+      _logger
+        .debug(
+          "\(self): \(eventSource) declared attribute \(attribute) with new subtype \(attributeSubtype); replacing"
+        )
 
       try? attribute.willReplace(eventSource: eventSource)
       attribute.attributeSubtype = attributeSubtype
@@ -988,7 +995,7 @@ extension Participant {
   ) -> [AttributeValue] {
     _assertIsolatedToApplication()
 
-    return _attributes.values.flatMap { $0 }
+    return _attributes.values.flatMap(\.self)
       .map { AttributeValue(
         attributeType: $0.attributeType,
         attributeSubtype: $0.attributeSubtype,
@@ -1308,7 +1315,9 @@ private final class _AttributeValue<A: Application>: Sendable, Hashable, Equatab
     try _handleApplicant(context: context, participant: context.participant)
 
     // remove attribute entirely if it is no longer declared or registered
-    if !isReplacingSubtype, canGC { participant._gcAttributeValue(self) }
+    if !isReplacingSubtype, canGC {
+      participant._gcAttributeValue(self)
+    }
   }
 
   private func _handleApplicant(

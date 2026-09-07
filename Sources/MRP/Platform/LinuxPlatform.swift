@@ -356,7 +356,9 @@ private func _readLinkSettings(name: String) -> (ethtool_link_settings, [UInt32]
     fileDescriptor: socket(CInt(AF_PACKET), Int32(SOCK_DGRAM.rawValue), 0),
     closeOnDealloc: true
   ) else { return (ethtool_link_settings(), [0, 0, 0]) }
-  if let settings = try? _getEthLinkSettings(fileHandle: fileHandle, name: name) { return settings }
+  if let settings = try? _getEthLinkSettings(fileHandle: fileHandle, name: name) {
+    return settings
+  }
   if let settings = try? _getEthLinkSettingsCompat(fileHandle: fileHandle, name: name) {
     return settings
   }
@@ -393,7 +395,9 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
   // AF_BRIDGE dump, which omits IFLA_NUM_TX_QUEUES and so reads 0), falling back to _rtnl for a
   // link built from a full-attribute notification. nil if neither source has a usable count.
   var numTXQueues: Int? {
-    if let n = _bridge?._portNumTXQueues.withLock({ $0[id] }), n > 0 { return n }
+    if let n = _bridge?._portNumTXQueues.withLock({ $0[id] }), n > 0 {
+      return n
+    }
     let n = Int(_rtnl.numTXQueues)
     return n > 0 ? n : nil
   }
@@ -441,7 +445,9 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
   // cache (RTM_NEWLINK) so a frozen Port copy reads current state; nil = AF_UNSPEC, keep
   // last-known.
   public var stpPortState: STPPortState? {
-    if let live = _bridge?._portStpState.withLock({ $0[id] }) { return live }
+    if let live = _bridge?._portStpState.withLock({ $0[id] }) {
+      return live
+    }
     return Self._stpPortState(from: _rtnl)
   }
 
@@ -784,7 +790,9 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
         }
         portNotification = .added(port)
         // a port added later can only lower the queue count the SR classes are sized for
-        if let n = port.numTXQueues { _numTXQueues.withLock { $0 = min($0 ?? n, n) } }
+        if let n = port.numTXQueues {
+          _numTXQueues.withLock { $0 = min($0 ?? n, n) }
+        }
         // seed the live VLAN map from the link's AF_BRIDGE info unless VLAN DB
         // notifications have already populated it (they are the fresher source, and
         // carry the dynamic flag, which the libnl bitmaps do not)
@@ -828,7 +836,9 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   // reconnects.
   public func getStpPortStatus(port: P) async -> STPPortStatus? {
     guard _bridgeIndex != 0 else { return nil }
-    if _mstpClient == nil { _mstpClient = try? await MSTPControlClient() }
+    if _mstpClient == nil {
+      _mstpClient = try? await MSTPControlClient()
+    }
     guard let status = await _mstpClient?.cistPortStatus(
       bridgeIndex: Int32(_bridgeIndex),
       portIndex: Int32(port.id)
@@ -1085,7 +1095,9 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     let unspecLinks = try await _nlLinkSocket.getLinks(family: sa_family_t(AF_UNSPEC))
     for try await link in unspecLinks {
       let count = Int(link.numTXQueues)
-      if count > 0 { _portNumTXQueues.withLock { $0[link.index] = count } }
+      if count > 0 {
+        _portNumTXQueues.withLock { $0[link.index] = count }
+      }
     }
 
     await _initDevlinkPortCache()
@@ -1095,7 +1107,9 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     _logger.debug("LinuxBridge: TX queues per port: \(numTXQueues?.description ?? "unknown")")
     for port in ports {
       _updatePortLinkState(port._rtnl)
-      if let pvid = port._pvid { _portPVID.withLock { $0[port.id] = pvid } }
+      if let pvid = port._pvid {
+        _portPVID.withLock { $0[port.id] = pvid }
+      }
       // fall back to the (flagless) AF_BRIDGE info for ports the dump did not cover
       _portVLANs.withLock { map in
         if map[port.id] == nil {
@@ -1370,7 +1384,9 @@ extension LinuxBridge {
   private func _initDevlinkPortCache() async {
     guard let devlink = _devlink, let ports = try? await devlink.ports() else { return }
     for port in ports {
-      if let ifIndex = port.netdevIfIndex { _devlinkPortByIfIndex[Int(ifIndex)] = port }
+      if let ifIndex = port.netdevIfIndex {
+        _devlinkPortByIfIndex[Int(ifIndex)] = port
+      }
     }
   }
 
@@ -1378,7 +1394,9 @@ extension LinuxBridge {
   // port through the startup-initialised cache (refreshed once on a miss to self-heal).
   private func _setAVBPortConfig(on port: P, _ config: MarvellAVBPortConfig) async throws {
     guard let devlink = _devlink else { throw Errno.notSupported }
-    if _devlinkPortByIfIndex[port._rtnl.index] == nil { await _initDevlinkPortCache() }
+    if _devlinkPortByIfIndex[port._rtnl.index] == nil {
+      await _initDevlinkPortCache()
+    }
     guard let dlport = _devlinkPortByIfIndex[port._rtnl.index] else {
       throw Errno.noSuchAddressOrDevice
     }
@@ -1613,7 +1631,9 @@ extension LinuxBridge: MSRPAwareBridge {
     let wasEmpty = _ingressQueuePorts.isEmpty
     _ingressQueuePorts.insert(port.id)
 
-    if _ingressMappingIsGlobal { return }
+    if _ingressMappingIsGlobal {
+      return
+    }
 
     // Reconcile rather than blindly add. DCBNL keys APP entries on (selector, protocol,
     // priority): adding an entry that already exists fails with EEXIST, and adding a PCP whose
@@ -1661,7 +1681,9 @@ extension LinuxBridge: MSRPAwareBridge {
     // On a global-map switch a delete is mirrored to every port, so other member ports still
     // rely on the shared map: only tear it down once the last member port has left. On a
     // per-port switch each port owns its entries and must be torn down individually.
-    if _ingressMappingIsGlobal, !_ingressQueuePorts.isEmpty { return }
+    if _ingressMappingIsGlobal, !_ingressQueuePorts.isEmpty {
+      return
+    }
 
     let apps = try _ingressDCBApps(
       port: port,
@@ -1739,7 +1761,9 @@ extension LinuxBridge: MSRPAwareBridge {
   }
 
   fileprivate func _getPtpPortProperties(for port: P) async throws -> PortPropertiesNP {
-    if let portProperties = _portPropertiesCache[port.id] { return portProperties }
+    if let portProperties = _portPropertiesCache[port.id] {
+      return portProperties
+    }
     let defaultDataSet = try await _pmc.getDefaultDataSet()
     // stride, not a closed range: numberPorts comes off the wire and may be zero
     for portNumber in stride(from: 1, through: defaultDataSet.numberPorts, by: 1) {

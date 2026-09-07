@@ -121,7 +121,9 @@ public actor PTPManagementClient {
 
   private func _allocateSequenceId() -> UInt16 {
     defer { _nextSequenceID &+= 1 }
-    if _nextSequenceID == 0 { _nextSequenceID = 1 }
+    if _nextSequenceID == 0 {
+      _nextSequenceID = 1
+    }
     return _nextSequenceID
   }
 

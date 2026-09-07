@@ -249,8 +249,12 @@ private final class MRPDaemon: AsyncParsableCommand {
     #endif
 
     var mrpFlags: MRPFlags = []
-    if forceFullParticipant { mrpFlags.insert(.forceFullParticipant) }
-    if configureNftDrop { mrpFlags.insert(.configureFrameFiltering) }
+    if forceFullParticipant {
+      mrpFlags.insert(.forceFullParticipant)
+    }
+    if configureNftDrop {
+      mrpFlags.insert(.configureFrameFiltering)
+    }
 
     let controller = try await MRPController<P>(
       bridge: bridge,
@@ -288,16 +292,34 @@ private final class MRPDaemon: AsyncParsableCommand {
       }
       // unset classes take the port's highest queues (inverted on the i210, hence the options)
       var queues = [SRclassID: UInt]()
-      if let classAQdiscHandle { queues[.A] = classAQdiscHandle }
-      if let classBQdiscHandle { queues[.B] = classBQdiscHandle }
+      if let classAQdiscHandle {
+        queues[.A] = classAQdiscHandle
+      }
+      if let classBQdiscHandle {
+        queues[.B] = classBQdiscHandle
+      }
       var flags: MSRPApplicationFlags = .defaultFlags
-      if enableTalkerPruning { flags.insert(.talkerPruning) }
-      if !leaveImmediate { flags.remove(.leaveImmediate) }
-      if forceAvbCapable { flags.insert(.forceAvbCapable) }
-      if ignoreAsCapable { flags.insert(.ignoreAsCapable) }
-      if configureEgressQueues || configureQueues { flags.insert(.configureEgressQueues) }
-      if configureIngressQueues || configureQueues { flags.insert(.configureIngressQueues) }
-      if configureIngressMdb { flags.insert(.configureIngressMdb) }
+      if enableTalkerPruning {
+        flags.insert(.talkerPruning)
+      }
+      if !leaveImmediate {
+        flags.remove(.leaveImmediate)
+      }
+      if forceAvbCapable {
+        flags.insert(.forceAvbCapable)
+      }
+      if ignoreAsCapable {
+        flags.insert(.ignoreAsCapable)
+      }
+      if configureEgressQueues || configureQueues {
+        flags.insert(.configureEgressQueues)
+      }
+      if configureIngressQueues || configureQueues {
+        flags.insert(.configureIngressQueues)
+      }
+      if configureIngressMdb {
+        flags.insert(.configureIngressMdb)
+      }
 
       _ = try await MSRPApplication(
         controller: controller,

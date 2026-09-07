@@ -206,7 +206,9 @@ func calculateBandwidthUsed(
   // msrpLatencyMaxFrameSize is only for latency calculations, not bandwidth (35.2.4.2,
   // 35.2.1.4(g)) and must not cap the reserved bandwidth or CBS credits
   var frameSize = calcFrameSize(tSpec)
-  if !nominalBandwidth { frameSize += 1 }
+  if !nominalBandwidth {
+    frameSize += 1
+  }
   let classMeasurementInterval = try srClassID
     .classMeasurementInterval // number of intervals in usec
   let maxFrameRate = Double(tSpec.maxIntervalFrames) *

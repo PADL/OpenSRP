@@ -61,8 +61,11 @@ public struct IEEE802Packet: Sendable, CustomStringConvertible {
         tci & 0x1000 != 0
       }
       set {
-        if newValue { tci |= 0x1000 }
-        else { tci &= ~0x1000 }
+        if newValue {
+          tci |= 0x1000
+        } else {
+          tci &= ~0x1000
+        }
       }
     }
 

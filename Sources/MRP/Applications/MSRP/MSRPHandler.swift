@@ -260,7 +260,7 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
       self.talker = Talker(participant: participant, attributeValue: attributeValue)
       listener = await application.apply { participant in
         await participant._getStreamListener(streamID: talker.streamID)
-      }.compactMap { $0 }
+      }.compactMap(\.self)
     }
   }
 
@@ -303,7 +303,7 @@ struct MSRPHandler<P: AVBPort>: Sendable, RestApiApplicationHandler {
       // failure would show false here and disagree with admission (which keeps the last-known
       // value)
       let asCapable = await (try? application
-        .withPortState(port: port) { $0.asCapable }).flatMap { $0 }
+        .withPortState(port: port) { $0.asCapable }).flatMap(\.self)
       self.asCapable = asCapable ?? false
       transmitRate = await (try? application._getTransmitRate(for: participant)) ?? 0
       // spanning-tree Forwarding state (an MSTP query), not AVB admission: a blocked port
@@ -895,8 +895,8 @@ fileprivate extension MSRPApplication {
             attributeValue: $0
           )
         }
-        .compactMap { $0 }
-    }.flatMap { $0 }
+        .compactMap(\.self)
+    }.flatMap(\.self)
   }
 
   func _getStreams() async -> [MSRPHandler<P>.Stream] {

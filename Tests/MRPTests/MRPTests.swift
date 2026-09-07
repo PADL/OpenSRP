@@ -83,7 +83,9 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
   static let _latencyOverrides = Mutex([Int: Int]())
   static let _ptpNotReady = Mutex(Set<Int>())
   func getPortTcMaxLatency(for _: SRclassPriority) async throws -> Int {
-    if MockPort._ptpNotReady.withLock({ $0.contains(id) }) { throw MRPError.ptpNotReady }
+    if MockPort._ptpNotReady.withLock({ $0.contains(id) }) {
+      throw MRPError.ptpNotReady
+    }
     return MockPort._latencyOverrides.withLock { $0[id] } ?? _portTcMaxLatency
   }
 
@@ -130,7 +132,11 @@ actor MRPTestRecorder {
   func fdbMembers(mac: EUI48) -> Set<Int> {
     var members = Set<Int>()
     for op in fdbOps where _isEqualMacAddress(op.mac, mac) {
-      if op.register { members.formUnion(op.ports) } else { members.subtract(op.ports) }
+      if op.register {
+        members.formUnion(op.ports)
+      } else {
+        members.subtract(op.ports)
+      }
     }
     return members
   }
@@ -445,7 +451,9 @@ private func _isTalkerRegistered(
     let registered = await participant.findAllAttributes(
       attributeType: type.rawValue, matching: .matchAnyIndex(streamID.id)
     ).contains { $0.registrarState?.isRegistered ?? false }
-    if registered { return true }
+    if registered {
+      return true
+    }
   }
   return false
 }
@@ -3399,7 +3407,9 @@ final class MRPTests: XCTestCase {
     let recorder = MRPTestRecorder()
     let ports = Set(portIDs.map { id -> MockPort in
       var port = MockPort(id: id, pvid: pvid, vlans: vlans, dynamicVlans: dynamicVlans)
-      if blockedPortIDs.contains(id) { port.stpPortState = .blocking }
+      if blockedPortIDs.contains(id) {
+        port.stpPortState = .blocking
+      }
       return port
     })
     let bridge = MockBridge(ports: ports, recorder: recorder)
@@ -5676,7 +5686,9 @@ extension MRPTests {
   ) async -> Bool {
     var waited = 0
     while waited < timeoutMs {
-      if await condition() { return true }
+      if await condition() {
+        return true
+      }
       try? await Task.sleep(nanoseconds: 10_000_000)
       waited += 10
     }
@@ -5802,7 +5814,9 @@ extension MRPTests {
     for idx in ids {
       let adv = await _isDeclared(msrp, .talkerAdvertise, sid(idx), port: otherOf(idx))
       let fail = await _isDeclared(msrp, .talkerFailed, sid(idx), port: otherOf(idx))
-      if adv || fail { talkerProp += 1 }
+      if adv || fail {
+        talkerProp += 1
+      }
     }
     var listenerProp = 0
     for idx in listenerIdx where await _isDeclared(msrp, .listener, sid(idx), port: portOf(idx)) {

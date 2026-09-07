@@ -375,12 +375,16 @@ struct Message {
       guard input.count >= 2 else { break }
       if let attributeListLength {
         let bytesProcessed = startCount - input.count
-        if bytesProcessed == Int(attributeListLength) - 2 { break }
+        if bytesProcessed == Int(attributeListLength) - 2 {
+          break
+        }
       } else {
         // Peek at next 2 bytes to check for EndMark
         var peekSpan = ParserSpan(input.bytes)
         let mark: UInt16 = try UInt16(parsing: &peekSpan, storedAsBigEndian: UInt16.self)
-        if mark == EndMark { break }
+        if mark == EndMark {
+          break
+        }
       }
 
       let vectorAttribute = try VectorAttribute<V>(
@@ -419,11 +423,15 @@ struct Message {
     let startCount = input.count
     repeat {
       if let attributeListLength {
-        if startCount - input.count == Int(attributeListLength) - 2 { break }
+        if startCount - input.count == Int(attributeListLength) - 2 {
+          break
+        }
       } else {
         var peekSpan = ParserSpan(input.bytes)
         let mark = try UInt16(parsing: &peekSpan, storedAsBigEndian: UInt16.self)
-        if mark == EndMark { break }
+        if mark == EndMark {
+          break
+        }
       }
       let vectorHeader = try VectorHeader(parsing: &input)
       let bytesToSkip = Int(attributeLength) + Int.ceil(Int(vectorHeader.numberOfValues), 3)

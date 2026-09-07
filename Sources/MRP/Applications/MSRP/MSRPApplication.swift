@@ -210,7 +210,9 @@ struct MSRPPortState<P: AVBPort>: Sendable {
   mutating func register(streamID: MSRPStreamID) {
     // record the first-reservation instant only; re-registration on later recomputes must not
     // reset the stream's age, or preemption ordering (youngest-first) would be unstable
-    if streamEpochs[streamID] == nil { streamEpochs[streamID] = P.now }
+    if streamEpochs[streamID] == nil {
+      streamEpochs[streamID] = P.now
+    }
   }
 
   mutating func deregister(streamID: MSRPStreamID) {
@@ -392,7 +394,9 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     _portStates.values[index].invalidate()
     _tcDetected.insert(port.id)
     _forceUpdateActiveStreams()
-    if _streamUpdateTask == nil { _tcDetected.removeAll() }
+    if _streamUpdateTask == nil {
+      _tcDetected.removeAll()
+    }
   }
 
   fileprivate nonisolated var _talkerPruning: Bool { _flags.contains(.talkerPruning) }
@@ -787,7 +791,9 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     // revert to clear it: drop the vanished ports so a clean future re-declaration is not failed
     for streamID in Array(_firstValueViolations.keys) {
       _firstValueViolations[streamID]?.subtract(vanishedPortIDs)
-      if _firstValueViolations[streamID]?.isEmpty ?? true { _firstValueViolations[streamID] = nil }
+      if _firstValueViolations[streamID]?.isEmpty ?? true {
+        _firstValueViolations[streamID] = nil
+      }
     }
     // the kernel drops MDB entries on a vanished port; forget any group membership we tracked on
     // one so the cache does not go stale (a stale port would suppress a later re-add)
@@ -991,7 +997,9 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
       throw MRPError.invalidMSRPDeclarationType
     }
     try apply { participant in
-      if let port, port != participant.port { return }
+      if let port, port != participant.port {
+        return
+      }
       // 35.2.6: a Declaration Type change for an existing Listener declaration replaces it
       // (isNew false drives Participant.join's subtype-replacement path)
       let alreadyDeclared = participant.findAllAttributesUnchecked(
@@ -1019,7 +1027,9 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
   ) throws {
     // DEREGISTER_ATTACH.request (35.2.3.1.7): leave the locally declared Listener attribute
     apply { participant in
-      if let port, port != participant.port { return }
+      if let port, port != participant.port {
+        return
+      }
       _leaveDeclaredAttributes(
         participant, streamID: streamID, types: [.listener], eventSource: .application
       )
@@ -1033,7 +1043,9 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     // re-plan every talker: a boundary shift can affect any stream's admission (35.2.1).
     var changed = false
     for participant in findParticipants(for: MAPBaseSpanningTreeContext) {
-      if await _updateAsCapable(port: participant.port) { changed = true }
+      if await _updateAsCapable(port: participant.port) {
+        changed = true
+      }
     }
     guard changed, !_ignoreAsCapable else { return }
     apply(for: MAPBaseSpanningTreeContext) { participant in
@@ -1301,7 +1313,9 @@ extension MSRPApplication {
     let provisional = talker.makeAdvertise(accumulatedLatency: 0)
     let candidates = _candidateTalkers(participant: participant, provisional: provisional)
     let admitted = _admittedStreamIDs(port: port, portState: portState, candidates: candidates)
-    if admitted.contains(talker.streamID) { return nil }
+    if admitted.contains(talker.streamID) {
+      return nil
+    }
     // Preemption (code 6) means a strictly higher Rank (Emergency, rank reset; 35.2.2.8.5) took the
     // bandwidth: true iff removing the strictly-higher-Rank streams would admit this one. A loser to
     // an equal-Rank older stream (streamAge tiebreak, 35.2.4.1) "simply does not fit" -> code 1.
@@ -1576,7 +1590,9 @@ extension MSRPApplication {
       // must not be selected as the bound talker: its declaration is not forwarded out the
       // other ports and no reservation is programmed from it (10.3). Registration is still
       // allowed on any port regardless of state (8.4); only propagation is gated.
-      if requireForwarding, _portStates[participant.port.id]?.isForwarding != true { return }
+      if requireForwarding, _portStates[participant.port.id]?.isForwarding != true {
+        return
+      }
 
       guard let participantTalker = _findTalkerRegistration(
         for: streamID,
@@ -1822,10 +1838,17 @@ extension MSRPApplication {
     isEndStation: Bool
   ) -> Bool? {
     // our own live status (802.1BA §6.4 / 34.5 / 35.2.1), so a link change can never stale it
-    if !portState.msrpPortEnabledStatus { return true }
+    if !portState.msrpPortEnabledStatus {
+      return true
+    }
     if let priority = portState.srClassPriorityMap[srClassID],
-       portState.pfcEnabledPriorities.contains(priority) { return true }
-    if !_ignoreAsCapable, portState.asCapable == false { return true }
+       portState.pfcEnabledPriorities.contains(priority)
+    {
+      return true
+    }
+    if !_ignoreAsCapable, portState.asCapable == false {
+      return true
+    }
     let registered = _registeredDomainPriorities(on: participant, srClassID: srClassID)
     guard let local = portState.srClassPriorityMap[srClassID] else {
       return portState.domainSeen ? true : nil // 35.2.1.4 h.3: class unsupported
@@ -1833,11 +1856,15 @@ extension MSRPApplication {
     if isEndStation {
       // 35.2.2.9: an end station adopts its neighbour; a core port while the adopted priority stays
       // registered (a coexisting stale priority during a change is not a boundary)
-      if registered.contains(local) { return false }
+      if registered.contains(local) {
+        return false
+      }
       return portState.domainSeen ? true : nil
     }
     // bridge: 35.2.1.4 h.1 (no matching registration) / h.2 (a different priority registered)
-    if registered.isEmpty { return portState.domainSeen ? true : nil }
+    if registered.isEmpty {
+      return portState.domainSeen ? true : nil
+    }
     return registered.contains { $0 != local } ? true : false
   }
 
@@ -1862,7 +1889,10 @@ extension MSRPApplication {
         attributeType: type.rawValue, matching: .matchAnyIndex(value.streamID.index)
       ) {
         if let registered = registered as? any MSRPTalkerValue,
-           !registered.isEqualIdentity(to: value) { return true }
+           !registered.isEqualIdentity(to: value)
+        {
+          return true
+        }
       }
     }
     return false
@@ -1938,11 +1968,15 @@ extension MSRPApplication {
         }
       }
       // 10.3 a): remember a received New so the recompute propagates it as New (not JoinMt)
-      if isNew { _receivedNew[talkerValue.streamID, default: []].insert(port.id) }
+      if isNew {
+        _receivedNew[talkerValue.streamID, default: []].insert(port.id)
+      }
       _streamDidUpdate(talkerValue.streamID)
     case .listener:
       let listenerStreamID = (attributeValue as! MSRPListenerValue).streamID
-      if isNew { _receivedNew[listenerStreamID, default: []].insert(port.id) }
+      if isNew {
+        _receivedNew[listenerStreamID, default: []].insert(port.id)
+      }
       _streamDidUpdate(listenerStreamID)
     case .domain:
       let domain = (attributeValue as! MSRPDomainValue)
@@ -1959,7 +1993,9 @@ extension MSRPApplication {
         let ingress = try findParticipant(for: contextIdentifier, port: port)
         // on a point-to-point link a peer priority change re-declares without a Leave, so supersede
         // the stale registration; on shared media keep coexisting peers (the derive handles many)
-        if port.isPointToPoint { _supersedeStaleDomains(on: ingress, for: domain.srClassID) }
+        if port.isPointToPoint {
+          _supersedeStaleDomains(on: ingress, for: domain.srClassID)
+        }
         try withPortState(port: port) {
           $0.domainSeen = true
         } // boundary now derivable (35.2.1.4 h)
@@ -1992,7 +2028,9 @@ extension MSRPApplication {
       catch { _logger.error("MSRP: recompute failed for stream \(streamID): \(error)") }
       // 10.3 a): the propagated declarations carry any New marking now, so consume it -- unless a
       // stale plan was abandoned (stream re-queued), where the replan still needs it.
-      if !_pendingStreams.contains(streamID) { _receivedNew[streamID] = nil }
+      if !_pendingStreams.contains(streamID) {
+        _receivedNew[streamID] = nil
+      }
       // a stream that just reserved may have displaced lower-importance streams (Avnu §9.1);
       // queue them so they re-evaluate admission and declare Failed (drained in this loop)
       for displaced in plan.displacedStreams where displaced != streamID {
@@ -2020,7 +2058,9 @@ extension MSRPApplication {
     // unknown (nil) or a boundary (true) means the Talker sits outside the domain
     if isSrpDomainBoundary(
       for: srClassID, participant: participant, portState: portState, isEndStation: isEndStation
-    ) == false { return nil }
+    ) == false {
+      return nil
+    }
     return MSRPFailure(systemID: _systemID, failureCode: .egressPortIsNotAvbCapable)
   }
 
@@ -2146,7 +2186,9 @@ extension MSRPApplication {
     for (participant, failure) in plan.talkerDeclarations {
       // a newer event re-marked this stream while we awaited: abandon the now-stale plan
       // rather than emitting declarations from it; the pending recompute will reapply (10.3)
-      if _pendingStreams.contains(streamID) { return }
+      if _pendingStreams.contains(streamID) {
+        return
+      }
       if await _shouldPruneTalkerDeclaration(port: participant.port, talker: boundTalker.1) {
         continue // pruned: the sweep below withdraws any existing declaration
       }
@@ -2204,7 +2246,9 @@ extension MSRPApplication {
 
       // re-check after the awaits above: a concurrent withdraw may have re-queued the stream, in
       // which case emitting from this stale plan would advertise a since-withdrawn declaration
-      if _pendingStreams.contains(streamID) { return }
+      if _pendingStreams.contains(streamID) {
+        return
+      }
 
       // 35.2.2.8.6: the reported latency must not increase during the reservation's life. Compare
       // against the value first declared (the initial guarantee); an increase fails the stream
@@ -2282,13 +2326,17 @@ extension MSRPApplication {
     }
 
     // pending streams updated; let the next drain perform reservations
-    if _pendingStreams.contains(streamID) { return }
+    if _pendingStreams.contains(streamID) {
+      return
+    }
 
     let keep = Set(plan.listenerPorts.map(\.participant.port.id))
 
     for (participant, declarationType) in plan.listenerPorts {
       // a newer event re-marked this stream: abandon the stale plan; it will be recomputed
-      if _pendingStreams.contains(streamID) { return }
+      if _pendingStreams.contains(streamID) {
+        return
+      }
 
       let desired = Reservation(declarationType: declarationType, talker: boundTalker.1)
 
@@ -2313,7 +2361,9 @@ extension MSRPApplication {
     }
 
     for (portID, talker) in _reservationsToWithdraw(streamID, keeping: keep) {
-      if _pendingStreams.contains(streamID) { return }
+      if _pendingStreams.contains(streamID) {
+        return
+      }
 
       if let participant = _participant(for: portID) {
         try? await _updatePortParameters(
@@ -2352,7 +2402,9 @@ extension MSRPApplication {
     }
     // a newer event re-marked the stream during the reservation awaits: skip the MDB reconcile and
     // let the next drain program it from a fresh plan (idempotent on the desired set)
-    if _pendingStreams.contains(streamID) { return }
+    if _pendingStreams.contains(streamID) {
+      return
+    }
     // CBS idle-slope (above) and the group MDB entries (here) are deliberately reconciled in
     // separate passes, not interleaved in the old add-FDB-after-credit / remove-FDB-before-credit
     // order; the brief teardown under-credit window this allows is accepted.
@@ -2432,7 +2484,9 @@ extension MSRPApplication {
   private func _participant(for portID: P.ID) -> Participant<MSRPApplication>? {
     var found: Participant<MSRPApplication>?
     apply(for: MAPBaseSpanningTreeContext) { participant in
-      if participant.port.id == portID { found = participant }
+      if participant.port.id == portID {
+        found = participant
+      }
     }
     return found
   }
@@ -2547,7 +2601,9 @@ extension MSRPApplication {
         for (_, value) in participant.findAttributes(
           attributeType: type.rawValue, matching: .matchAny
         ) {
-          if let talker = value as? any MSRPTalkerValue { streamIDs.insert(talker.streamID) }
+          if let talker = value as? any MSRPTalkerValue {
+            streamIDs.insert(talker.streamID)
+          }
         }
       }
     }

@@ -175,10 +175,14 @@ private extension Applicant.State {
       switch self {
       case .VO:
         // Ignored (no transition) if operPointToPointMAC is TRUE
-        if !flags.contains(.operPointToPointMAC) { self = .AO }
+        if !flags.contains(.operPointToPointMAC) {
+          self = .AO
+        }
       case .VP:
         // Ignored (no transition) if operPointToPointMAC is TRUE
-        if !flags.contains(.operPointToPointMAC) { self = .AP }
+        if !flags.contains(.operPointToPointMAC) {
+          self = .AP
+        }
       case .AA:
         self = .QA
       case .AO:
@@ -190,7 +194,9 @@ private extension Applicant.State {
       }
     case .rIn:
       // Ignored (no transition) if operPointToPointMAC is FALSE
-      if self == .AA, flags.contains(.operPointToPointMAC) { self = .QA }
+      if self == .AA, flags.contains(.operPointToPointMAC) {
+        self = .QA
+      }
     case .rJoinMt:
       fallthrough
     case .rMt:
@@ -255,7 +261,9 @@ private extension Applicant.State {
       switch self {
       case .VO:
         action = .s_
-        if event == .txLA, registrarState.isRegistered { self = .LO }
+        if event == .txLA, registrarState.isRegistered {
+          self = .LO
+        }
       case .VP:
         action = event == .txLA ? .s : .sJ
         self = .AA
@@ -286,7 +294,9 @@ private extension Applicant.State {
         fallthrough
       case .QO:
         action = .s_
-        if event == .txLA, registrarState.isRegistered { self = .LO }
+        if event == .txLA, registrarState.isRegistered {
+          self = .LO
+        }
       case .AP:
         action = .sJ
         self = .QA
@@ -324,7 +334,9 @@ private extension Applicant.State {
       case .AO:
         fallthrough
       case .QO:
-        if registrarState.isRegistered { self = .LO }
+        if registrarState.isRegistered {
+          self = .LO
+        }
       case .AP:
         fallthrough
       case .QP:

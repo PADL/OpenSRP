@@ -118,13 +118,27 @@ struct StateMachineHandlerFlags: OptionSet, CustomStringConvertible {
   var description: String {
     var flags = [String]()
 
-    if contains(.operPointToPointMAC) { flags.append("operPointToPointMAC") }
-    if contains(.registrationFixedNewIgnored) { flags.append("registrationFixedNewIgnored") }
-    if contains(.registrationFixedNewPropagated) { flags.append("registrationFixedNewPropagated") }
-    if contains(.registrationForbidden) { flags.append("registrationForbidden") }
-    if contains(.applicantOnlyParticipant) { flags.append("applicantOnlyParticipant") }
-    if contains(.isReplacingSubtype) { flags.append("isReplacingSubtype") }
-    if contains(.leaveImmediate) { flags.append("leaveImmediate") }
+    if contains(.operPointToPointMAC) {
+      flags.append("operPointToPointMAC")
+    }
+    if contains(.registrationFixedNewIgnored) {
+      flags.append("registrationFixedNewIgnored")
+    }
+    if contains(.registrationFixedNewPropagated) {
+      flags.append("registrationFixedNewPropagated")
+    }
+    if contains(.registrationForbidden) {
+      flags.append("registrationForbidden")
+    }
+    if contains(.applicantOnlyParticipant) {
+      flags.append("applicantOnlyParticipant")
+    }
+    if contains(.isReplacingSubtype) {
+      flags.append("isReplacingSubtype")
+    }
+    if contains(.leaveImmediate) {
+      flags.append("leaveImmediate")
+    }
 
     return "[" + flags.joined(separator: ", ") + "]"
   }
@@ -153,7 +167,9 @@ public struct EventCounters<A: Application>: Sendable {
     if context.event._r {
       didReceiveLeaveMessage = context.event == .rLv
       didReceiveLeaveAllMessage = context.event == .rLA
-      if context.event == .rJoinIn { joinInMessagesReceived += 1 }
+      if context.event == .rJoinIn {
+        joinInMessagesReceived += 1
+      }
     }
 
     if let attributeEvent {

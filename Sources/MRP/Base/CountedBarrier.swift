@@ -49,11 +49,15 @@ final class CountedBarrier: Sendable {
   func waitUntilZero() async {
     await withUnsafeContinuation { continuation in
       let drained = _waiters.withLock { waiters -> Bool in
-        if _count.load(ordering: .relaxed) == 0 { return true }
+        if _count.load(ordering: .relaxed) == 0 {
+          return true
+        }
         waiters.append(continuation)
         return false
       }
-      if drained { continuation.resume() }
+      if drained {
+        continuation.resume()
+      }
     }
   }
 }
