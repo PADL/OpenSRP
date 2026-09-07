@@ -16,4 +16,7 @@
 --disable docComments
 --disable wrapPropertyBodies
 --disable wrapFunctionBodies
---swiftversion 5.10
+--disable wrapConditionalBodies
+--disable trailingCommas
+--enable wrapSingleLineComments
+--swiftversion 6.2
