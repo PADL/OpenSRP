@@ -3940,6 +3940,7 @@ final class MRPTests: XCTestCase {
     func boundaryIs(_ expected: Bool) async -> Bool {
       await msrp.isSrpDomainBoundary(for: .A, port: port) == expected
     }
+    nonisolated(nonsending)
     func receiveDomain(priority: SRclassPriority) async throws {
       try await _drive(
         msrp, port: 0, attributeType: .domain,
@@ -7132,6 +7133,7 @@ extension MRPTests {
     // one fits alone. The Emergency stream is tiny (~1%), so it is not why a big stream is
     // rejected.
     let big = MSRPTSpec(maxFrameSize: 1000, maxIntervalFrames: 7)
+    nonisolated(nonsending)
     func reserve(_ id: UInt64, dest: UInt8, rank: Bool, tSpec: MSRPTSpec) async throws {
       let streamID = MSRPStreamID(integerLiteral: id)
       try await _drive(
