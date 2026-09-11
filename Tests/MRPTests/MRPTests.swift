@@ -5132,6 +5132,59 @@ final class MRPTests: XCTestCase {
     await tracker.stopTimer()
   }
 
+  private actor FireCounter {
+    var count = 0
+
+    func increment() {
+      count += 1
+    }
+  }
+
+  func testStoppedTimerDoesNotFire() async throws {
+    let counter = FireCounter()
+    let timer = MRP.Timer(label: "test") { await counter.increment() }
+
+    timer.start(interval: Duration.milliseconds(20))
+    XCTAssertTrue(timer.isRunning)
+    timer.stop()
+    XCTAssertFalse(timer.isRunning)
+
+    try await Task.sleep(for: Duration.milliseconds(100))
+    let count = await counter.count
+    XCTAssertEqual(count, 0, "a stopped timer should not fire")
+  }
+
+  func testTimerRestartSupersedesEarlierDeadline() async throws {
+    let counter = FireCounter()
+    let timer = MRP.Timer(label: "test") { await counter.increment() }
+
+    // 10.7.3 d): a start's time period supersedes that of any previous start
+    timer.start(interval: Duration.milliseconds(20))
+    timer.start(interval: Duration.milliseconds(300))
+
+    try await Task.sleep(for: Duration.milliseconds(150))
+    var count = await counter.count
+    XCTAssertEqual(count, 0, "the first start's deadline should have been superseded")
+    XCTAssertTrue(timer.isRunning)
+
+    try await Task.sleep(for: Duration.milliseconds(400))
+    count = await counter.count
+    XCTAssertEqual(count, 1, "the timer should fire once, at the second start's deadline")
+    XCTAssertFalse(timer.isRunning)
+  }
+
+  func testReleasedTimerDoesNotFire() async throws {
+    let counter = FireCounter()
+    do {
+      let timer = MRP.Timer(label: "test") { await counter.increment() }
+      timer.start(interval: Duration.milliseconds(20))
+    }
+
+    try await Task.sleep(for: Duration.milliseconds(100))
+    let count = await counter.count
+    XCTAssertEqual(count, 0, "a timer its owner has released should be stopped, not fire")
+  }
+
   // MARK: - 802.1Q Table 10-3 Registrar State Tests
 
   func testApplicantLOSuppressionWhenUnregistered_rLA() {
