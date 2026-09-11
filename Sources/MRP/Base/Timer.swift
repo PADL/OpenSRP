@@ -137,10 +137,11 @@ private extension DispatchTime {
     let now = DispatchTime.now()
     guard interval > .zero else { return now }
     let (seconds, attoseconds) = interval.components
-    let (nanoseconds, overflow) = UInt64(seconds).multipliedReportingOverflow(by: 1_000_000_000)
-    let (deadline, lateOverflow) = now.uptimeNanoseconds
-      .addingReportingOverflow(nanoseconds + UInt64(attoseconds / 1_000_000_000))
-    guard !overflow, !lateOverflow else { return .distantFuture }
+    let (wholeSeconds, overflow) = UInt64(seconds).multipliedReportingOverflow(by: 1_000_000_000)
+    let (nanoseconds, subsecondOverflow) = wholeSeconds
+      .addingReportingOverflow(UInt64(attoseconds / 1_000_000_000))
+    let (deadline, lateOverflow) = now.uptimeNanoseconds.addingReportingOverflow(nanoseconds)
+    guard !overflow, !subsecondOverflow, !lateOverflow else { return .distantFuture }
     return DispatchTime(uptimeNanoseconds: deadline)
   }
 }

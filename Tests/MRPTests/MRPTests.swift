@@ -5185,6 +5185,18 @@ final class MRPTests: XCTestCase {
     XCTAssertEqual(count, 0, "a timer its owner has released should be stopped, not fire")
   }
 
+  func testTimerWithOverflowingIntervalArms() {
+    let timer = MRP.Timer(label: "test") {}
+
+    // whole seconds fit in UInt64 nanoseconds, but not with the fraction added
+    timer.start(interval: Duration.seconds(18_446_744_073) + Duration.milliseconds(900))
+    XCTAssertTrue(timer.isRunning)
+    // whole seconds alone overflow UInt64 nanoseconds
+    timer.start(interval: Duration.seconds(Int64(1) << 40) + Duration.milliseconds(900))
+    XCTAssertTrue(timer.isRunning)
+    timer.stop()
+  }
+
   // MARK: - 802.1Q Table 10-3 Registrar State Tests
 
   func testApplicantLOSuppressionWhenUnregistered_rLA() {
