@@ -15,6 +15,7 @@
 //
 
 import ArgumentParser
+import IORing
 import Logging
 import MRP
 import ServiceLifecycle
@@ -220,6 +221,8 @@ private final class MRPDaemon: AsyncParsableCommand {
   var logger: Logger!
 
   func run() async throws {
+    // the executor's threads never exit, and every task runs there: see IORingSwift's README
+    try IORing.installExecutor(policy: .global)
     if SystemdHelpers.isSystemdService {
       LoggingSystem.bootstrap(SystemdJournalLogHandler.init)
     } else {
