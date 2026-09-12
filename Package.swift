@@ -18,7 +18,7 @@ var PlatformLinkerSettings: [LinkerSetting] = []
 PlatformPackageDependencies = [
   .package(
     url: "https://github.com/PADL/IORingSwift",
-    from: "1.0.0"
+    from: "2.0.0"
   ),
   .package(
     url: "https://github.com/PADL/NetLinkSwift",
@@ -69,6 +69,7 @@ PlatformTargets = [
     dependencies: [
       "MRP",
       .product(name: "ArgumentParser", package: "swift-argument-parser"),
+      .product(name: "IORing", package: "IORingSwift"),
       .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
       .product(name: "Systemd", package: "swift-systemd", condition: .when(platforms: [.linux])),
       .product(
