@@ -23,6 +23,7 @@ import CLinuxSockAddr
 import CNetLink
 import Glibc
 import IEEE802
+import IEEE802Linux
 import IORing
 import IORingUtils
 import Logging
@@ -146,72 +147,6 @@ private func _computeIngressDCBApps(
   )
   .sorted { $0.key < $1.key }
   .map { pcp, queue in RTNLDCBApp.pcp(pcp, priority: queue) }
-}
-
-// Classic-BPF (SO_ATTACH_FILTER) accepting only ingress frames whose EtherType is in `etherTypes`
-// and dropping our own TX (PACKET_OUTGOING); lets an ETH_P_ALL socket narrow to MRP in-kernel.
-private func _makeMRPPacketFilter(etherTypes: [UInt16]) -> [SocketFilter] {
-  // opcodes: BPF_LD|B|ABS=0x30, BPF_LD|H|ABS=0x28, BPF_JMP|JEQ|K=0x15, BPF_RET|K=0x06
-  let n = etherTypes.count
-  var program: [SocketFilter] = [
-    SocketFilter(
-      code: 0x30,
-      jt: 0,
-      jf: 0,
-      k: 0xFFFF_F000 &+ 4
-    ), // A = skb->pkt_type (SKF_AD_PKTTYPE)
-    SocketFilter(code: 0x15, jt: UInt8(n + 1), jf: 0, k: 4), // A == PACKET_OUTGOING -> drop
-    SocketFilter(code: 0x28, jt: 0, jf: 0, k: 12), // A = EtherType (offset 12)
-  ]
-  for (i, etherType) in etherTypes.enumerated() {
-    // match -> jump past the remaining tests to the accept; else fall through
-    program.append(SocketFilter(code: 0x15, jt: UInt8(n - i), jf: 0, k: UInt32(etherType)))
-  }
-  program.append(SocketFilter(code: 0x06, jt: 0, jf: 0, k: 0)) // drop
-  program.append(SocketFilter(code: 0x06, jt: 0, jf: 0, k: 0x0004_0000)) // accept
-  return program
-}
-
-private func _makeLinkLayerAddress(
-  family: sa_family_t = sa_family_t(AF_PACKET),
-  macAddress: EUI48? = nil,
-  etherType: UInt16 = UInt16(ETH_P_ALL),
-  packetType: UInt8 = 0,
-  index: Int? = nil
-) -> sockaddr_ll {
-  var sll = sockaddr_ll()
-  sll.sll_family = UInt16(family)
-  sll.sll_protocol = etherType.bigEndian
-  sll.sll_ifindex = CInt(index ?? 0)
-  sll.sll_pkttype = packetType
-  if let macAddress {
-    sll.sll_halen = UInt8(ETH_ALEN)
-    sll.sll_addr.0 = macAddress[0]
-    sll.sll_addr.1 = macAddress[1]
-    sll.sll_addr.2 = macAddress[2]
-    sll.sll_addr.3 = macAddress[3]
-    sll.sll_addr.4 = macAddress[4]
-    sll.sll_addr.5 = macAddress[5]
-  }
-  return sll
-}
-
-private func _makeLinkLayerAddressBytes(
-  family: sa_family_t = sa_family_t(AF_PACKET),
-  macAddress: EUI48? = nil,
-  etherType: UInt16 = UInt16(ETH_P_ALL),
-  packetType: UInt8 = 0,
-  index: Int? = nil
-) -> [UInt8] {
-  var sll = _makeLinkLayerAddress(
-    family: family,
-    macAddress: macAddress,
-    etherType: etherType,
-    index: index
-  )
-  return withUnsafeBytes(of: &sll) {
-    Array($0)
-  }
 }
 
 // TODO: use NetLink to avoid blocking I/O
@@ -1167,7 +1102,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     on port: P,
     controller: MRPController<P>
   ) async throws {
-    let address = _makeLinkLayerAddressBytes(
+    var address = makeLinkLayerAddress(
       macAddress: packet.destMacAddress,
       etherType: packet.etherType,
       index: port.id
@@ -1176,7 +1111,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     var serializationContext = SerializationContext()
     try packet.serialize(into: &serializationContext)
     try await port._txSocket.sendMessage(.init(
-      name: address,
+      name: withUnsafeBytes(of: &address) { Array($0) },
       buffer: serializationContext.bytes
     ))
   }
@@ -1221,14 +1156,14 @@ fileprivate final class FilterRegistration: Equatable, Hashable, Sendable, Custo
       type: SOCK_RAW,
       protocol: 0
     )
-    try rxSocket.attachFilter(_makeMRPPacketFilter(etherTypes: [_etherType]))
-    try rxSocket.bind(to: _makeLinkLayerAddress(
+    try rxSocket.attachFilter(makeEtherTypeFilter(etherTypes: [_etherType]))
+    try rxSocket.bind(to: makeLinkLayerAddress(
       macAddress: port.macAddress,
       etherType: UInt16(ETH_P_ALL),
       packetType: UInt8(PACKET_MULTICAST),
       index: port.id
     ))
-    try rxSocket.addMulticastMembership(for: _makeLinkLayerAddress(
+    try rxSocket.addMulticastMembership(for: makeLinkLayerAddress(
       macAddress: _groupAddress,
       index: port.id
     ))

@@ -28,6 +28,7 @@ PlatformPackageDependencies = [
 ]
 
 PlatformTargetDependencies = [
+  .product(name: "IEEE802Linux", package: "IEEE802Swift"),
   .product(
     name: "NetLink",
     package: "NetLinkSwift"
@@ -129,6 +130,7 @@ let CommonPackageDependencies: [Package.Dependency] = [
   .package(url: "https://github.com/Flight-School/AnyCodable", from: "0.6.7"),
   .package(url: "https://github.com/apple/swift-binary-parsing", from: "0.0.2"),
   .package(url: "https://github.com/dfed/swift-async-queue", from: "1.0.0"),
+  .package(url: "https://github.com/PADL/IEEE802Swift", branch: "main"),
 ]
 
 let CommonProducts: [Product] = [
@@ -140,16 +142,10 @@ let CommonProducts: [Product] = [
 
 let CommonTargets: [Target] = [
   .target(
-    name: "IEEE802",
-    dependencies: [
-      .product(name: "SystemPackage", package: "swift-system"),
-      .product(name: "BinaryParsing", package: "swift-binary-parsing"),
-    ]
-  ),
-  .target(
     name: "PMC",
     dependencies: [
-      "IEEE802",
+      .product(name: "IEEE802", package: "IEEE802Swift"),
+      .product(name: "BinaryParsing", package: "swift-binary-parsing"),
       "AsyncExtensions",
       "SocketAddress",
       .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
@@ -171,7 +167,8 @@ let CommonTargets: [Target] = [
   .target(
     name: "MRP",
     dependencies: [
-      "IEEE802",
+      .product(name: "IEEE802", package: "IEEE802Swift"),
+      .product(name: "BinaryParsing", package: "swift-binary-parsing"),
       "AsyncExtensions",
       "SocketAddress",
       "PMC",
