@@ -7,7 +7,7 @@ OpenSRP is supports bridging with the standard Linux kernel interfaces for forwa
 ## Architecture
 
 * NetLink: Swift structured concurrency wrapper around `libnl-3` (this has now been split into a [separate package](https://github.com/PADL/NetLinkSwift))
-* IEEE802: shared types and serialization APIs
+* IEEE802: shared types and serialization APIs (now a [separate package](https://github.com/PADL/IEEE802Swift))
 * MRP: abstract state machine, platform abstraction layer
 * MRPDaemon: MRP daemon
 * PMC: PTP management client library
