@@ -4992,61 +4992,6 @@ final class MRPTests: XCTestCase {
     // still transition to askingFailed when TalkerFailed is received.
   }
 
-  func testArrayPaddingInitializerExactMultiple() {
-    // Test that arrays with counts that are exact multiples are not padded.
-    let input: [UInt8] = [1, 2, 3]
-    let padded = Array(input, multiple: 3, with: 0)
-
-    XCTAssertEqual(padded.count, 3)
-    XCTAssertEqual(padded, [1, 2, 3])
-  }
-
-  func testArrayPaddingInitializerNeedsPadding() {
-    // Test that arrays are padded to the next multiple.
-    let input: [UInt8] = [1, 2]
-    let padded = Array(input, multiple: 3, with: 0)
-
-    XCTAssertEqual(padded.count, 3)
-    XCTAssertEqual(padded, [1, 2, 0])
-  }
-
-  func testArrayPaddingInitializerSingleElement() {
-    // Test padding a single element to a multiple of 4.
-    let input: [UInt8] = [42]
-    let padded = Array(input, multiple: 4, with: 0)
-
-    XCTAssertEqual(padded.count, 4)
-    XCTAssertEqual(padded, [42, 0, 0, 0])
-  }
-
-  func testArrayPaddingInitializerEmpty() {
-    // Test that empty arrays remain empty (0 is a multiple of any number).
-    let input: [UInt8] = []
-    let padded = Array(input, multiple: 3, with: 0)
-
-    XCTAssertEqual(padded.count, 0)
-    XCTAssertEqual(padded, [])
-  }
-
-  func testArrayPaddingInitializerFromSlice() {
-    // Test that the initializer works with non-Array collections like slices.
-    let input: [UInt8] = [1, 2, 3, 4, 5]
-    let slice = input[1...3] // [2, 3, 4]
-    let padded = Array(slice, multiple: 4, with: 9)
-
-    XCTAssertEqual(padded.count, 4)
-    XCTAssertEqual(padded, [2, 3, 4, 9])
-  }
-
-  func testArrayPaddingInitializerCustomElement() {
-    // Test padding with a non-zero element.
-    let input: [UInt8] = [1, 2]
-    let padded = Array(input, multiple: 5, with: 255)
-
-    XCTAssertEqual(padded.count, 5)
-    XCTAssertEqual(padded, [1, 2, 255, 255, 255])
-  }
-
   func testTimerReschedulingFromCallback() async throws {
     // Test that a timer can reschedule itself from within its own callback
     // without losing the task reference. This verifies the fix where _task
@@ -9614,6 +9559,63 @@ extension MRPTests {
       "port 1 must withdraw VID 200: a blocked Port's registration is outside the set (10.3 b)"
     )
     _ = controller
+  }
+}
+
+final class PackedEncodingTests: XCTestCase {
+  func testPackedEventsPadTheLastOctet() {
+    // events are packed three (or four) to an octet, the last padded with zeros (10.8.2.10)
+    XCTAssertEqual(ThreePackedEvents.chunked([1, 3, 0, 5]).map(\.value), [54, 180])
+    XCTAssertEqual(ThreePackedEvents.chunked([1, 3, 0]).map(\.value), [54])
+    XCTAssertEqual(ThreePackedEvents.chunked([UInt8]()).map(\.value), [])
+    XCTAssertEqual(FourPackedEvents.chunked([1, 2, 3, 0, 2]).map(\.value), [108, 128])
+    let events: [AttributeEvent] = [.JoinIn, .JoinMt, .New, .Lv]
+    XCTAssertEqual(ThreePackedEvents.chunked(events.lazy.map(\.rawValue)).map(\.value), [54, 180])
+  }
+
+  func testVectorAttributeSerializesPackedEvents() throws {
+    let vector = VectorAttribute(
+      leaveAllEvent: .LeaveAll,
+      firstValue: AnyValue(VLAN(vid: 1)),
+      attributeEvents: [.JoinIn, .JoinMt, .New, .Lv],
+      applicationEvents: [1, 2, 3, 0]
+    )
+    var context = SerializationContext()
+    let attributeLength = try vector.serialize(into: &context)
+    XCTAssertEqual(attributeLength, 2)
+    // VectorHeader (LeaveAll, 4 values), FirstValue, ThreePackedEvents, FourPackedEvents
+    XCTAssertEqual(context.bytes, [0x20, 0x04, 0x00, 0x01, 54, 180, 108])
+  }
+
+  func testPTPHeaderRoundTrip() throws {
+    let header = PTP.Header(
+      messageLength: UInt16(PTP.Header.Size),
+      messageTypeSpecific: (0x01, 0x02, 0x03, 0x04),
+      sourcePortIdentity: PTP.PortIdentity(
+        clockIdentity: PTP.ClockIdentity(id: (0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77)),
+        portNumber: 0x0102
+      ),
+      sequenceId: 0xABCD
+    )
+    var context = SerializationContext()
+    try header.serialize(into: &context)
+    let bytes = context.bytes
+    XCTAssertEqual(bytes.count, PTP.Header.Size)
+    // messageTypeSpecific, then sourcePortIdentity
+    XCTAssertEqual(Array(bytes[16..<20]), [0x01, 0x02, 0x03, 0x04])
+    XCTAssertEqual(
+      Array(bytes[20..<30]),
+      [0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x01, 0x02]
+    )
+
+    let parsed = try bytes.withParserSpan { try PTP.Header(parsing: &$0) }
+    let messageTypeSpecific = parsed.messageTypeSpecific
+    XCTAssertEqual(
+      [messageTypeSpecific.0, messageTypeSpecific.1, messageTypeSpecific.2, messageTypeSpecific.3],
+      [0x01, 0x02, 0x03, 0x04]
+    )
+    XCTAssertEqual(parsed.sourcePortIdentity, header.sourcePortIdentity)
+    XCTAssertEqual(parsed.sequenceId, 0xABCD)
   }
 }
 

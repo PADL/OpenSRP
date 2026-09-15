@@ -130,7 +130,7 @@ let CommonPackageDependencies: [Package.Dependency] = [
   .package(url: "https://github.com/Flight-School/AnyCodable", from: "0.6.7"),
   .package(url: "https://github.com/apple/swift-binary-parsing", from: "0.0.2"),
   .package(url: "https://github.com/dfed/swift-async-queue", from: "1.0.0"),
-  .package(url: "https://github.com/PADL/IEEE802Swift", branch: "main"),
+  .package(url: "https://github.com/PADL/IEEE802Swift", from: "0.1.0"),
 ]
 
 let CommonProducts: [Product] = [

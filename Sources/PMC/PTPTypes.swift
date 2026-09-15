@@ -284,20 +284,27 @@ public enum PTP {
     }
 
     public func serialize(into serializationContext: inout IEEE802.SerializationContext) throws {
-      let bytes = [id.0, id.1, id.2, id.3, id.4, id.5, id.6, id.7]
-      serializationContext.serialize(bytes)
+      serializationContext.serialize(uint8: id.0)
+      serializationContext.serialize(uint8: id.1)
+      serializationContext.serialize(uint8: id.2)
+      serializationContext.serialize(uint8: id.3)
+      serializationContext.serialize(uint8: id.4)
+      serializationContext.serialize(uint8: id.5)
+      serializationContext.serialize(uint8: id.6)
+      serializationContext.serialize(uint8: id.7)
     }
 
     public init(parsing input: inout ParserSpan) throws {
-      let bytes = try Array(parsing: &input, byteCount: 8)
-      id.0 = bytes[0]
-      id.1 = bytes[1]
-      id.2 = bytes[2]
-      id.3 = bytes[3]
-      id.4 = bytes[4]
-      id.5 = bytes[5]
-      id.6 = bytes[6]
-      id.7 = bytes[7]
+      id = try (
+        UInt8(parsing: &input),
+        UInt8(parsing: &input),
+        UInt8(parsing: &input),
+        UInt8(parsing: &input),
+        UInt8(parsing: &input),
+        UInt8(parsing: &input),
+        UInt8(parsing: &input),
+        UInt8(parsing: &input)
+      )
     }
 
     public func hash(into hasher: inout Hasher) {
@@ -461,7 +468,12 @@ public enum PTP {
     }
 
     func serialize(into serializationContext: inout IEEE802.SerializationContext) throws {
-      serializationContext.serialize([id.0, id.1, id.2, subtype.0, subtype.1, subtype.2])
+      serializationContext.serialize(uint8: id.0)
+      serializationContext.serialize(uint8: id.1)
+      serializationContext.serialize(uint8: id.2)
+      serializationContext.serialize(uint8: subtype.0)
+      serializationContext.serialize(uint8: subtype.1)
+      serializationContext.serialize(uint8: subtype.2)
     }
 
     init(parsing input: inout ParserSpan) throws {
@@ -755,12 +767,10 @@ public enum PTP {
       try flagField0.serialize(into: &serializationContext)
       try flagField1.serialize(into: &serializationContext)
       serializationContext.serialize(int64: correctionField)
-      serializationContext.serialize([
-        messageTypeSpecific.0,
-        messageTypeSpecific.1,
-        messageTypeSpecific.2,
-        messageTypeSpecific.3,
-      ])
+      serializationContext.serialize(uint8: messageTypeSpecific.0)
+      serializationContext.serialize(uint8: messageTypeSpecific.1)
+      serializationContext.serialize(uint8: messageTypeSpecific.2)
+      serializationContext.serialize(uint8: messageTypeSpecific.3)
       try sourcePortIdentity.serialize(into: &serializationContext)
       serializationContext.serialize(uint16: sequenceId)
       try controlField.serialize(into: &serializationContext)
@@ -784,8 +794,12 @@ public enum PTP {
       flagField0 = try FlagField0(parsing: &input)
       flagField1 = try FlagField1(parsing: &input)
       correctionField = try Int64(parsing: &input, storedAsBigEndian: Int64.self)
-      let bytes = try Array(parsing: &input, byteCount: 4)
-      messageTypeSpecific = (bytes[0], bytes[1], bytes[2], bytes[3])
+      messageTypeSpecific = try (
+        UInt8(parsing: &input),
+        UInt8(parsing: &input),
+        UInt8(parsing: &input),
+        UInt8(parsing: &input)
+      )
       sourcePortIdentity = try PortIdentity(parsing: &input)
       sequenceId = try UInt16(parsing: &input, storedAsBigEndian: UInt16.self)
       controlField = try ControlField(parsing: &input)

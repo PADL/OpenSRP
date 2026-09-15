@@ -14,7 +14,6 @@
 // limitations under the License.
 //
 
-import Algorithms
 import BinaryParsing
 import IEEE802
 
@@ -46,10 +45,14 @@ struct ThreePackedEvents: Equatable, CustomStringConvertible {
     "ThreePackedEvents(tuple: \(tuple))"
   }
 
-  static func chunked(_ values: [UInt8]) -> [ThreePackedEvents] {
-    values.chunks(ofCount: 3).map { chunk in
-      let array = Array(chunk, multiple: 3, with: 0)
-      return ThreePackedEvents((array[0], array[1], array[2]))
+  /// Packs `values` three to an octet, padding the last octet with zeros.
+  static func chunked(_ values: some RandomAccessCollection<UInt8>) -> [ThreePackedEvents] {
+    stride(from: 0, to: values.count, by: 3).map { offset in
+      ThreePackedEvents((
+        values._element(at: offset),
+        values._element(at: offset + 1),
+        values._element(at: offset + 2)
+      ))
     }
   }
 }
@@ -82,11 +85,23 @@ struct FourPackedEvents: Equatable, CustomStringConvertible {
     "FourPackedEvents(tuple: \(tuple))"
   }
 
-  static func chunked(_ values: [UInt8]) -> [FourPackedEvents] {
-    values.chunks(ofCount: 4).map { chunk in
-      let array = Array(chunk, multiple: 4, with: 0)
-      return FourPackedEvents((array[0], array[1], array[2], array[3]))
+  /// Packs `values` four to an octet, padding the last octet with zeros.
+  static func chunked(_ values: some RandomAccessCollection<UInt8>) -> [FourPackedEvents] {
+    stride(from: 0, to: values.count, by: 4).map { offset in
+      FourPackedEvents((
+        values._element(at: offset),
+        values._element(at: offset + 1),
+        values._element(at: offset + 2),
+        values._element(at: offset + 3)
+      ))
     }
+  }
+}
+
+private extension RandomAccessCollection<UInt8> {
+  /// The element `offset` positions from the start, or zero past the end.
+  func _element(at offset: Int) -> UInt8 {
+    offset < count ? self[index(startIndex, offsetBy: offset)] : 0
   }
 }
 
@@ -262,7 +277,7 @@ struct VectorAttribute<V: Value>: Sendable, Equatable {
       leaveAllEvent: leaveAllEvent,
       numberOfValues: UInt16(attributeEvents.count),
       firstValue: firstValue,
-      threePackedEvents: ThreePackedEvents.chunked(attributeEvents.map(\.rawValue)),
+      threePackedEvents: ThreePackedEvents.chunked(attributeEvents.lazy.map(\.rawValue)),
       fourPackedEvents: fourPackedEvents
     )
   }
@@ -288,23 +303,42 @@ struct VectorAttribute<V: Value>: Sendable, Equatable {
       throw MRPError.badPduLength
     }
 
-    let numberOfValueOctets = Int.ceil(Int(vectorHeader.numberOfValues), 3)
-    let threePacketEvents = try Array(parsing: &input, byteCount: numberOfValueOctets)
-
-    let fourPackedEvents: [UInt8]?
-
-    if application.hasAttributeSubtype(for: attributeType) {
-      let numberOfValueOctets = Int.ceil(Int(vectorHeader.numberOfValues), 4)
-      fourPackedEvents = try Array(parsing: &input, byteCount: numberOfValueOctets)
+    let threePackedEvents = try Self._parsePackedEvents(
+      count: Int.ceil(Int(vectorHeader.numberOfValues), 3),
+      from: &input,
+      ThreePackedEvents.init
+    )
+    let fourPackedEvents: [FourPackedEvents]? = if application
+      .hasAttributeSubtype(for: attributeType)
+    {
+      try Self._parsePackedEvents(
+        count: Int.ceil(Int(vectorHeader.numberOfValues), 4),
+        from: &input,
+        FourPackedEvents.init
+      )
     } else {
-      fourPackedEvents = nil
+      nil
     }
     self.init(
       vectorHeader: vectorHeader,
       firstValue: firstValue,
-      threePackedEvents: threePacketEvents,
+      threePackedEvents: threePackedEvents,
       fourPackedEvents: fourPackedEvents
     )
+  }
+
+  private static func _parsePackedEvents<Events>(
+    count: Int,
+    from input: inout ParserSpan,
+    _ makeEvents: (UInt8) -> Events
+  ) throws -> [Events] {
+    guard input.count >= count else { throw MRPError.badPduLength }
+    var events = [Events]()
+    events.reserveCapacity(count)
+    for _ in 0..<count {
+      try events.append(makeEvents(UInt8(parsing: &input)))
+    }
+    return events
   }
 
   func serialize(into serializationContext: inout SerializationContext) throws
@@ -315,9 +349,11 @@ struct VectorAttribute<V: Value>: Sendable, Equatable {
     let oldPosition = serializationContext.position
     try firstValue.serialize(into: &serializationContext)
     attributeLength = AttributeLength(serializationContext.position - oldPosition)
-    serializationContext.serialize(threePackedEvents.map(\.value))
-    if let fourPackedEvents {
-      serializationContext.serialize(fourPackedEvents.map(\.value))
+    for events in threePackedEvents {
+      serializationContext.serialize(uint8: events.value)
+    }
+    for events in fourPackedEvents ?? [] {
+      serializationContext.serialize(uint8: events.value)
     }
     return attributeLength
   }
