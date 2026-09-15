@@ -411,7 +411,7 @@ private func _vlanJoinCount(
   _ recorder: MRPTestRecorder, _ mvrp: MVRPApplication<MockPort>, port: Int, vid: UInt16
 ) async -> Int {
   await _transmittedVLANEvents(recorder, mvrp, port: port, vid: vid)
-    .filter { $0 == .JoinIn || $0 == .JoinMt || $0 == .New }.count
+    .count(where: { $0 == .JoinIn || $0 == .JoinMt || $0 == .New })
 }
 
 // is a group MAC declared (Applicant) by MMRP on a port?
@@ -2240,11 +2240,11 @@ final class MRPTests: XCTestCase {
     let declared = await _waitFor { await recorder.txPackets.contains { $0.port == 0 } }
     XCTAssertTrue(declared, "MSRP must declare its domains on the port")
     try await Task.sleep(for: .milliseconds(500))
-    let before = await (recorder.txPackets).filter { $0.port == 0 }.count
+    let before = await (recorder.txPackets).count(where: { $0.port == 0 })
     // a periodic tick must do nothing for MSRP
     try await msrp.periodic(for: nil)
     try await Task.sleep(for: .milliseconds(500))
-    let after = await (recorder.txPackets).filter { $0.port == 0 }.count
+    let after = await (recorder.txPackets).count(where: { $0.port == 0 })
     XCTAssertEqual(after, before, "MSRP periodic() must not re-transmit (Avnu §9.1)")
     _ = controller
   }
@@ -6288,14 +6288,14 @@ extension MRPTests {
     )
     _ = await _waitFor { await recorder.fdbMembers(mac: group) == Set([0, 1]) }
     let port0Registers = await recorder.fdbRegister
-      .filter { _isEqualMacAddress($0.mac, group) && $0.ports.contains(0) }.count
+      .count(where: { _isEqualMacAddress($0.mac, group) && $0.ports.contains(0) })
     XCTAssertEqual(
       port0Registers,
       1,
       "the ingress entry is registered once; recompute is idempotent"
     )
     let port0Deregisters = await recorder.fdbDeregister
-      .filter { _isEqualMacAddress($0.mac, group) && $0.ports.contains(0) }.count
+      .count(where: { _isEqualMacAddress($0.mac, group) && $0.ports.contains(0) })
     XCTAssertEqual(port0Deregisters, 0, "a later recompute must not churn the offloaded entry")
     _ = controller
   }
@@ -6593,7 +6593,7 @@ extension MRPTests {
       subtype: .ready
     )
     _ = await _waitFor { await recorder.cbs.contains { $0.port == 1 } }
-    let before = await recorder.cbs.filter { $0.port == 1 }.count
+    let before = await recorder.cbs.count(where: { $0.port == 1 })
 
     try await msrp.didRemove(
       contextIdentifier: MAPBaseSpanningTreeContext,
@@ -6612,7 +6612,7 @@ extension MRPTests {
       subtype: .ready
     )
 
-    let reprogrammed = await _waitFor { await recorder.cbs.filter { $0.port == 1 }.count > before }
+    let reprogrammed = await _waitFor { await recorder.cbs.count(where: { $0.port == 1 }) > before }
     XCTAssertTrue(
       reprogrammed,
       "reservation must be reprogrammed after a port is removed and re-added"
@@ -8837,7 +8837,7 @@ extension MRPTests {
     XCTAssertTrue(advCleared, "talkerAdvertise must clear after advertise -> failed")
 
     // Failed -> Advertise
-    let regBefore = await recorder.fdbRegister.filter { $0.ports.contains(1) }.count
+    let regBefore = await recorder.fdbRegister.count(where: { $0.ports.contains(1) })
     try await _drive(
       msrp,
       port: 0,
@@ -8846,7 +8846,7 @@ extension MRPTests {
       event: .JoinIn
     )
     let reestablished = await _waitFor {
-      await recorder.fdbRegister.filter { $0.ports.contains(1) }.count > regBefore
+      await recorder.fdbRegister.count(where: { $0.ports.contains(1) }) > regBefore
     }
     XCTAssertTrue(reestablished, "failed -> advertise must re-establish the reservation")
 
@@ -9614,5 +9614,18 @@ extension MRPTests {
       "port 1 must withdraw VID 200: a blocked Port's registration is outside the set (10.3 b)"
     )
     _ = controller
+  }
+}
+
+final class OrganizationExtensionTLVTests: XCTestCase {
+  func testOrganizationExtensionTLVRoundTrip() throws {
+    // organizationId 00-80-C2, organizationSubType 00-00-01
+    let bytes: [UInt8] = [0x00, 0x80, 0xC2, 0x00, 0x00, 0x01]
+    let tlv = try bytes.withParserSpan { try PTP.OrganizationExtensionTLV(parsing: &$0) }
+    XCTAssertEqual([tlv.id.0, tlv.id.1, tlv.id.2], [0x00, 0x80, 0xC2])
+    XCTAssertEqual([tlv.subtype.0, tlv.subtype.1, tlv.subtype.2], [0x00, 0x00, 0x01])
+    var context = SerializationContext()
+    try tlv.serialize(into: &context)
+    XCTAssertEqual(context.bytes, bytes)
   }
 }

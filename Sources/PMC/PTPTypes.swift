@@ -465,9 +465,8 @@ public enum PTP {
     }
 
     init(parsing input: inout ParserSpan) throws {
-      let bytes = try Array(parsing: &input, byteCount: 6)
-      id = (bytes[0], bytes[1], bytes[3])
-      subtype = (bytes[3], bytes[4], bytes[5])
+      id = try (UInt8(parsing: &input), UInt8(parsing: &input), UInt8(parsing: &input))
+      subtype = try (UInt8(parsing: &input), UInt8(parsing: &input), UInt8(parsing: &input))
     }
   }
 
