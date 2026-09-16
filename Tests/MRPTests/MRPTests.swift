@@ -9336,7 +9336,7 @@ extension MRPTests {
       priorityAndRank: MSRPPriorityAndRank(),
       accumulatedLatency: 0
     )
-    let domain = try MSRPDomainValue(srClassID: .A, srClassPriority: .CA, srClassVID: SR_PVID.vid)
+    let domain = MSRPDomainValue(srClassID: .A, srClassPriority: .CA, srClassVID: SR_PVID.vid)
     let messages = [
       Message(
         attributeType: MSRPAttributeType.talkerAdvertise.rawValue,

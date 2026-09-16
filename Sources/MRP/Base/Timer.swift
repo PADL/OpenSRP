@@ -106,9 +106,10 @@ final class Timer: CustomStringConvertible, Sendable {
     }
     guard isCurrent else { return }
 
-    // Now call the callback - if it calls start(), the timer is armed again
+    // Now call the callback - if it calls start(), the timer is armed again.
+    // An error from an expiry action is discarded: a timer has no caller to throw to.
     Task(priority: priority) {
-      try await _onExpiry()
+      try? await _onExpiry()
     }
   }
 
