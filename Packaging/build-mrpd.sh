@@ -70,8 +70,10 @@ else
   sdk_sel=(--swift-sdk "$SWIFT_SDK")
 fi
 # Swift 6.4 defaults to swiftbuild, which drops CNetLink's pkg-config include
-# path when cross-compiling; keep the native build system.
-build_args=(-c "$BUILD_CONFIG" "${sdk_sel[@]}" --static-swift-stdlib --build-system native)
+# path when cross-compiling; keep the native build system. Per-arch scratch path,
+# as host macro plugins built by one arch's toolchain can't load in another's.
+build_args=(-c "$BUILD_CONFIG" "${sdk_sel[@]}" --static-swift-stdlib --build-system native
+            --scratch-path "$WORK_DIR/mrpd-build-$DEB_ARCH")
 if [ -n "${CONSTRAINED:-}" ]; then
   msg "CONSTRAINED profile: REST API off, -Osize (small-RAM/flash target)"
   build_args+=(-Xswiftc -Osize)
