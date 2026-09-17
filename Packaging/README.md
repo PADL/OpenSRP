@@ -110,7 +110,7 @@ short git hash, e.g. `4.4+gitc2cd7cc`, which sorts just after the base release.
 
 | Component | Base    | Override env             |
 |-----------|---------|--------------------------|
-| mrpd      | `0.2.1` | `MRPD_BASE_VERSION`      |
+| mrpd      | `0.2.2` | `MRPD_BASE_VERSION`      |
 | mstpd     | `0.2.0` | `MSTPD_BASE_VERSION`     |
 | linuxptp  | `4.4`   | `LINUXPTP_BASE_VERSION`  |
 | iproute2  | `7.0.0` | `IPROUTE2_BASE_VERSION`  |
