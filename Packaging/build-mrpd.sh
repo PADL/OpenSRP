@@ -8,8 +8,8 @@ cd "$SWIFTMRP_DIR"
 
 # Build with the swiftly toolchain that matches the cross SDK: a different
 # compiler cannot import the SDK's stdlib. common.sh sets SWIFT_TOOLCHAIN per
-# arch (arm64 -> 6.3.0 for the 6.3-RELEASE artifactbundle; armhf -> 6.3.2 for
-# the armhf-debian SDK). Override the version with SWIFT_TOOLCHAIN.
+# arch (arm64 -> 6.4.0 for the 6.4.0-RELEASE artifactbundle; armhf -> 6.3.2
+# for the armhf-debian SDK). Override the version with SWIFT_TOOLCHAIN.
 tc_bin="$HOME/.local/share/swiftly/toolchains/$SWIFT_TOOLCHAIN/usr/bin"
 if [ -d "$tc_bin" ]; then
   export PATH="$tc_bin:$PATH"
@@ -69,7 +69,9 @@ else
   [ -n "$SWIFT_SDK" ] || die "no Swift SDK: set SWIFT_SDK ($DEB_ARCH artifactbundle id) or SWIFT_DESTINATION_JSON (armhf)"
   sdk_sel=(--swift-sdk "$SWIFT_SDK")
 fi
-build_args=(-c "$BUILD_CONFIG" "${sdk_sel[@]}" --static-swift-stdlib)
+# Swift 6.4 defaults to swiftbuild, which drops CNetLink's pkg-config include
+# path when cross-compiling; keep the native build system.
+build_args=(-c "$BUILD_CONFIG" "${sdk_sel[@]}" --static-swift-stdlib --build-system native)
 if [ -n "${CONSTRAINED:-}" ]; then
   msg "CONSTRAINED profile: REST API off, -Osize (small-RAM/flash target)"
   build_args+=(-Xswiftc -Osize)

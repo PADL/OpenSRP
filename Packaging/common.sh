@@ -23,11 +23,10 @@ export DEB_ARCH="${DEB_ARCH:-arm64}"
 # matches the SDK (swiftly id), and the Swift SDK selector. arm64 uses a modern
 # artifactbundle (SWIFT_SDK, --swift-sdk). armhf has no swift.org SDK: it uses
 # the swift-embedded-linux armv7 destination JSON in /opt (SWIFT_DESTINATION_
-# JSON, --destination), built with Swift 6.3.2 against an Ubuntu noble sysroot —
-# so its toolchain must be 6.3.2, not the arm64 default of 6.3.0.
+# JSON, --destination), which has no 6.4 release yet, so armhf stays on 6.3.2.
 _def_dest_json=""
 case "$DEB_ARCH" in
-  arm64) _def_triple=aarch64-linux-gnu;   _def_karch=arm64; _def_sdk="6.3-RELEASE_ubuntu_noble_aarch64"; _def_tc=6.3.0 ;;
+  arm64) _def_triple=aarch64-linux-gnu;   _def_karch=arm64; _def_sdk="6.4.0-RELEASE_ubuntu_noble_aarch64"; _def_tc=6.4.0 ;;
   armhf) _def_triple=arm-linux-gnueabihf; _def_karch=arm;   _def_sdk=""; _def_tc=6.3.2
          # Use the *-static.json destination: its resource-dir/rpaths point at
          # usr/lib/swift_static, where static-stdlib-args.lnk lives. mrpd always

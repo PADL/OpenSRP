@@ -28,21 +28,21 @@ regeneration) and is configured with the Armada switch config kept in
   `DPKG_FLAGS=-d` so noble's debhelper 13 satisfies the source's
   `debhelper-compat (= 12)`).
 - For **mrpd** (Swift):
-  - The cross SDK `6.3-RELEASE_ubuntu_noble_aarch64` (`swift sdk list`).
+  - The cross SDK `6.4.0-RELEASE_ubuntu_noble_aarch64` (`swift sdk list`).
     Regenerate with
     [swift-sdk-generator](https://github.com/swiftlang/swift-sdk-generator) if needed.
   - A Swift **toolchain whose version matches the SDK** (the SDK is
-    `6.3-RELEASE`, so toolchain `6.3.0`). Swift refuses to import a stdlib built
+    `6.4.0-RELEASE`, so toolchain `6.4.0`). Swift refuses to import a stdlib built
     by a different compiler version. `build-mrpd.sh` selects the swiftly
-    toolchain in `$SWIFT_TOOLCHAIN` (default `6.3.0`); install it with
-    `swiftly install 6.3.0`.
+    toolchain in `$SWIFT_TOOLCHAIN` (default `6.4.0`); install it with
+    `swiftly install 6.4.0`.
   - The SDK sysroot must be **augmented** once with arm64 `liburing` and
     `libsystemd` (not shipped in the stock SDK) — run `./augment-sysroot.sh`.
 
 ### One-time setup for mrpd
 
 ```sh
-swiftly install 6.3.0      # toolchain matching the SDK
+swiftly install 6.4.0      # toolchain matching the SDK
 ./augment-sysroot.sh       # adds arm64 liburing + libsystemd to the SDK sysroot
 ```
 
@@ -130,9 +130,9 @@ Set as environment variables (see `common.sh` for the full list):
 |-------------------|--------------------------------------|-------------------------------|
 | `DEB_ARCH`        | `arm64`                              | target Debian architecture    |
 | `CROSS_COMPILE`   | `aarch64-linux-gnu-`                 | cross toolchain prefix        |
-| `SWIFT_SDK`       | `6.3-RELEASE_ubuntu_noble_aarch64`   | Swift cross SDK id (arm64)    |
+| `SWIFT_SDK`       | `6.4.0-RELEASE_ubuntu_noble_aarch64` | Swift cross SDK id (arm64)    |
 | `SWIFT_DESTINATION_JSON` | `/opt/swift-6.3.2-RELEASE-ubuntu-noble-armv7/ubuntu-noble-static.json` | armhf `--destination` SDK |
-| `SWIFT_TOOLCHAIN` | `6.3.0`                              | swiftly toolchain for mrpd    |
+| `SWIFT_TOOLCHAIN` | `6.4.0`                              | swiftly toolchain for mrpd    |
 | `MSTPD_GIT`       | `github.com/mstpd/mstpd.git`         | mstpd upstream                |
 | `LINUXPTP_GIT` / `LINUXPTP_REF` | `PADL/linuxptp` / `inferno` | linuxptp repo + branch    |
 | `IPROUTE2_GIT` / `IPROUTE2_REF` | `PADL/iproute2` / `brport-filter-stream-reserved` | iproute2 repo + branch |
