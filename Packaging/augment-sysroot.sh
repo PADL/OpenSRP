@@ -5,8 +5,7 @@
 #   liburing   -> IORingSwift (CIORingShims)
 #   libsystemd -> swift-systemd (sd_notify, Type=notify units)
 #   libnl-3    -> NetLinkSwift (nl-3, nl-route-3, nl-nf-3, nl-genl-3)
-#   libmnl     -> NetLinkSwift (CNFTables: nf_tables via libmnl/libnftnl)
-#   libnftnl   -> NetLinkSwift (CNFTables: nf_tables via libmnl/libnftnl)
+#   libmnl     -> NetLinkSwift (CNFTables: nf_tables via libmnl)
 #   libcurl    -> FoundationNetworking (dragged in by the RestAPI trait under
 #                 static linking). The SDK ships only the static libcurl.a,
 #                 whose optional backends (rtmp/gssapi/ssh) have unresolved
@@ -46,11 +45,11 @@ case "$DEB_ARCH" in
   armhf) _pkgs_default="liburing2 liburing-dev \
     libnl-3-200 libnl-3-dev libnl-route-3-200 libnl-route-3-dev \
     libnl-nf-3-200 libnl-nf-3-dev libnl-genl-3-200 libnl-genl-3-dev \
-    libmnl0 libmnl-dev libnftnl11 libnftnl-dev" ;;
+    libmnl0 libmnl-dev" ;;
   *)     _pkgs_default="liburing2 liburing-dev libsystemd0 libsystemd-dev \
     libnl-3-200 libnl-3-dev libnl-route-3-200 libnl-route-3-dev \
     libnl-nf-3-200 libnl-nf-3-dev libnl-genl-3-200 libnl-genl-3-dev \
-    libmnl0 libmnl-dev libnftnl11 libnftnl-dev \
+    libmnl0 libmnl-dev \
     libcurl4t64" ;;
 esac
 PKGS="${SYSROOT_PKGS:-$_pkgs_default}"
