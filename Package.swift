@@ -123,7 +123,7 @@ let CommonPackageDependencies: [Package.Dependency] = [
   .package(url: "https://github.com/apple/swift-system", from: "1.2.1"),
   .package(url: "https://github.com/apple/swift-argument-parser", from: "1.2.0"),
   .package(url: "https://github.com/PADL/SocketAddress", from: "0.4.5"),
-  .package(url: "https://github.com/lhoward/AsyncExtensions", from: "0.9.2"),
+  .package(url: "https://github.com/lhoward/AsyncExtensions", from: "0.10.0"),
   .package(url: "https://github.com/swift-server/swift-service-lifecycle", from: "2.3.0"),
   .package(url: "https://github.com/swhitty/FlyingFox", branch: "main"),
   .package(url: "https://github.com/swhitty/FlyingFoxMacros", branch: "main"),
