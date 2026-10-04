@@ -123,14 +123,14 @@ let CommonPackageDependencies: [Package.Dependency] = [
   .package(url: "https://github.com/apple/swift-system", from: "1.2.1"),
   .package(url: "https://github.com/apple/swift-argument-parser", from: "1.2.0"),
   .package(url: "https://github.com/PADL/SocketAddress", from: "0.4.5"),
-  .package(url: "https://github.com/lhoward/AsyncExtensions", from: "0.10.0"),
+  .package(url: "https://github.com/sideeffect-io/AsyncExtensions", from: "0.7.0"),
   .package(url: "https://github.com/swift-server/swift-service-lifecycle", from: "2.3.0"),
   .package(url: "https://github.com/swhitty/FlyingFox", branch: "main"),
   .package(url: "https://github.com/swhitty/FlyingFoxMacros", branch: "main"),
   .package(url: "https://github.com/Flight-School/AnyCodable", from: "0.6.7"),
   .package(url: "https://github.com/apple/swift-binary-parsing", from: "0.0.2"),
   .package(url: "https://github.com/dfed/swift-async-queue", from: "1.0.0"),
-  .package(url: "https://github.com/PADL/IEEE802Swift", from: "0.1.0"),
+  .package(url: "https://github.com/PADL/IEEE802Swift", from: "0.2.1"),
 ]
 
 let CommonProducts: [Product] = [
