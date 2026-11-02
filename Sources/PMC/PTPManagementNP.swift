@@ -117,12 +117,29 @@ public struct SubscribeEventsNP: PTPManagementRepresentable {
   public let duration: UInt16 // seconds
   private let bitmask: [UInt8]
 
+  // struct subscribe_events_np (linuxptp tlv.h): a duration in seconds, then a 64-byte
+  // bitmask with event n at bit n % 8 of byte n / 8 (notification.h event_bitmask_set).
+  // A zero bitmask removes the subscription; UInt16.max never expires (clock.c).
+  public init(duration: UInt16, events: Set<Event>) {
+    var bitmask = [UInt8](repeating: 0, count: Self.EventBitmaskCount)
+    for event in events {
+      bitmask[event.rawValue / 8] |= UInt8(1 << (event.rawValue % 8))
+    }
+    self.duration = duration
+    self.bitmask = bitmask
+  }
+
   public func isSubscribed(to event: Event) -> Bool {
     bitmask[event.rawValue / 8] & UInt8(1 << (event.rawValue % 8)) != 0
   }
 
   public var events: [Event] {
     Event.allCases.filter { isSubscribed(to: $0) }
+  }
+
+  // whether this (a GET reply) shows ptp4l holding exactly the given subscription
+  func holds(_ subscription: SubscribeEventsNP) -> Bool {
+    duration > 0 && bitmask == subscription.bitmask
   }
 
   public func serialize(into serializationContext: inout IEEE802.SerializationContext) throws {

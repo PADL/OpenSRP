@@ -57,6 +57,7 @@ enum Command: String, CaseIterable {
   case GET_PORT_CORRECTIONS_NP
   case ENABLE_PORT
   case DISABLE_PORT
+  case SUBSCRIBE_EVENTS_NP
 }
 
 func usage() -> Never {
@@ -119,6 +120,11 @@ func run(_ command: Command, _ pmc: PTPManagementClient, _ portArg: UInt16?) asy
   case .GET_PORT_CORRECTIONS_NP: try await print(pmc.getPortCorrectionsNP(portNumber: port()))
   case .ENABLE_PORT: try await pmc.enablePort(portNumber: port())
   case .DISABLE_PORT: try await pmc.disablePort(portNumber: port())
+  case .SUBSCRIBE_EVENTS_NP:
+    // prints ptp4l's push notifications until interrupted; needs the read-write socket
+    for try await event in pmc.events() {
+      print(event)
+    }
   }
 }
 

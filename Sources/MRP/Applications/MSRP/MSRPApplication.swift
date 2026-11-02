@@ -120,6 +120,12 @@ protocol MSRPAwareBridge<P>: Bridge where P: AVBPort {
 
   var srClassPriorityMapNotifications: AnyAsyncSequence<SRClassPriorityMapNotification<P>> { get }
 
+  // ports whose gPTP asCapable the PTP daemon notified a change for (802.1AS 10.2.5.1)
+  var asCapableNotifications: AnyAsyncSequence<P.ID> { get }
+  // whether the bridge notifies asCapable changes on this port, so the periodic tick need not
+  // resample a known value
+  func notifiesAsCapable(port: P) async -> Bool
+
   // bridge's own System ID (priority + base MAC) for a Talker Failed FailedInfo (35.2.2.8.7)
   var systemID: MSRPSystemID { get async }
 }
@@ -290,6 +296,7 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
   fileprivate let _mmrp: MMRPApplication<P>?
   fileprivate var _priorityMapNotificationTask: Task<(), Error>?
   fileprivate var _vlanRegistrationNotificationTask: Task<(), Error>?
+  fileprivate var _asCapableNotificationTask: Task<(), Error>?
   // bridge System ID cached from the (async) bridge base MAC for the synchronous recompute path
   fileprivate var _bridgeSystemID: MSRPSystemID?
 
@@ -438,6 +445,12 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
 
       try? await _observeVlanRegistrationNotifications(bridge: bridge, controller: controller)
     }
+    _asCapableNotificationTask = Task { [weak self] in
+      guard let self, let controller = self.controller,
+            let bridge = controller.bridge as? any MSRPAwareBridge<P> else { return }
+
+      try? await _observeAsCapableNotifications(bridge: bridge, controller: controller)
+    }
   }
 
   // Workaround for Swift 6.3 SIL verification crash: the optimizer incorrectly
@@ -468,9 +481,23 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     }
   }
 
+  // a notified asCapable change moves the SR domain boundary (35.2.1) with no MRP event
+  private func _observeAsCapableNotifications<B: MSRPAwareBridge>(
+    bridge: B,
+    controller: MRPController<P>
+  ) async throws where B.P == P {
+    for try await portID in bridge.asCapableNotifications {
+      guard let port = try? await controller.port(with: portID) else { continue }
+      if await _updateAsCapable(port: port), !_ignoreAsCapable {
+        _replanRegisteredTalkers()
+      }
+    }
+  }
+
   deinit {
     _priorityMapNotificationTask?.cancel()
     _vlanRegistrationNotificationTask?.cancel()
+    _asCapableNotificationTask?.cancel()
     _streamUpdateTask?.cancel()
   }
 
@@ -1038,16 +1065,29 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
 
   public func periodic(for _: MAPContextIdentifier? = nil) async throws {
     // MSRP does no PeriodicTransmission (Avnu §9.1); the tick resamples gPTP asCapable, which
-    // changes
-    // with no MRP event -- keeping the cache the recompute and REST view read fresh. On any change,
-    // re-plan every talker: a boundary shift can affect any stream's admission (35.2.1).
+    // changes with no MRP event, on the ports where the PTP daemon does not notify it (see
+    // _observeAsCapableNotifications) -- keeping the cache the recompute and REST view read fresh.
+    let bridge = controller?.bridge as? any MSRPAwareBridge<P>
     var changed = false
     for participant in findParticipants(for: MAPBaseSpanningTreeContext) {
+      // a notifying port still needs a first sample once MSRP enables it (or after invalidate()):
+      // the notification only reports changes, and may have arrived while the port was not enabled
+      if await bridge?.notifiesAsCapable(port: participant.port) == true,
+         _portStates[participant.port.id]?.asCapable != nil
+      {
+        continue
+      }
       if await _updateAsCapable(port: participant.port) {
         changed = true
       }
     }
     guard changed, !_ignoreAsCapable else { return }
+    _replanRegisteredTalkers()
+  }
+
+  // on an asCapable change re-plan every talker: a boundary shift can affect any stream's
+  // admission (35.2.1)
+  private func _replanRegisteredTalkers() {
     apply(for: MAPBaseSpanningTreeContext) { participant in
       for type in [MSRPAttributeType.talkerAdvertise, .talkerFailed] {
         for attribute in participant.findAllAttributesUnchecked(
@@ -1156,10 +1196,9 @@ extension MSRPApplication {
   }
 
   // Refresh the boundary decision's input (consumed by the sync recompute in _makeStreamPlan, which
-  // cannot query PTP) and the REST view. Sampled per indication and on the 1 s periodic() tick,
-  // since
-  // a gPTP asCapable change carries no link event to invalidate a cache. Returns whether it
-  // changed;
+  // cannot query PTP) and the REST view. Sampled per indication, on a notified change and, where
+  // the PTP daemon does not notify it, on the 1 s periodic() tick, since a gPTP asCapable change
+  // carries no link event to invalidate a cache. Returns whether it changed;
   // an unreadable PMC is unknown, not false, so keep the last-known value (35.2.1).
   @discardableResult
   private func _updateAsCapable(port: P) async -> Bool {
@@ -2018,7 +2057,8 @@ extension MSRPApplication {
   }
 
   private func _applyPendingStreamUpdates() async {
-    // asCapable is kept fresh by periodic() (1 s) and the per-indication resample, so plan straight
+    // asCapable is kept fresh by the notified changes (or the 1 s periodic() resample where they
+    // are not notified) and the per-indication resample, so plan straight
     // from the cache rather than re-query PTP for every port here (35.2.1).
     let isEndStation = await controller?.isEndStation ?? false
     while !_pendingStreams.isEmpty {
