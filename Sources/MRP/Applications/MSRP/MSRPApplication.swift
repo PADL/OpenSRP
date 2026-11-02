@@ -120,10 +120,11 @@ protocol MSRPAwareBridge<P>: Bridge where P: AVBPort {
 
   var srClassPriorityMapNotifications: AnyAsyncSequence<SRClassPriorityMapNotification<P>> { get }
 
-  // ports whose gPTP asCapable the PTP daemon pushed a change for (802.1AS 10.2.5.1)
+  // ports whose gPTP asCapable the PTP daemon notified a change for (802.1AS 10.2.5.1)
   var asCapableNotifications: AnyAsyncSequence<P.ID> { get }
-  // whether asCapable on this port is pushed, so the periodic tick need not resample a known value
-  func isAsCapablePushed(port: P) async -> Bool
+  // whether the bridge notifies asCapable changes on this port, so the periodic tick need not
+  // resample a known value
+  func notifiesAsCapable(port: P) async -> Bool
 
   // bridge's own System ID (priority + base MAC) for a Talker Failed FailedInfo (35.2.2.8.7)
   var systemID: MSRPSystemID { get async }
@@ -480,7 +481,7 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
     }
   }
 
-  // a pushed asCapable change moves the SR domain boundary (35.2.1) with no MRP event
+  // a notified asCapable change moves the SR domain boundary (35.2.1) with no MRP event
   private func _observeAsCapableNotifications<B: MSRPAwareBridge>(
     bridge: B,
     controller: MRPController<P>
@@ -1064,14 +1065,14 @@ public actor MSRPApplication<P: AVBPort>: BaseApplication, BaseApplicationEventO
 
   public func periodic(for _: MAPContextIdentifier? = nil) async throws {
     // MSRP does no PeriodicTransmission (Avnu §9.1); the tick resamples gPTP asCapable, which
-    // changes with no MRP event, on the ports where the PTP daemon does not push it (see
+    // changes with no MRP event, on the ports where the PTP daemon does not notify it (see
     // _observeAsCapableNotifications) -- keeping the cache the recompute and REST view read fresh.
     let bridge = controller?.bridge as? any MSRPAwareBridge<P>
     var changed = false
     for participant in findParticipants(for: MAPBaseSpanningTreeContext) {
-      // a pushed port still needs a first sample once MSRP enables it (or after invalidate()):
-      // the push only reports changes, and may have arrived while the port was not enabled
-      if await bridge?.isAsCapablePushed(port: participant.port) == true,
+      // a notifying port still needs a first sample once MSRP enables it (or after invalidate()):
+      // the notification only reports changes, and may have arrived while the port was not enabled
+      if await bridge?.notifiesAsCapable(port: participant.port) == true,
          _portStates[participant.port.id]?.asCapable != nil
       {
         continue
@@ -1195,8 +1196,8 @@ extension MSRPApplication {
   }
 
   // Refresh the boundary decision's input (consumed by the sync recompute in _makeStreamPlan, which
-  // cannot query PTP) and the REST view. Sampled per indication, on a pushed change and, where
-  // the PTP daemon does not push it, on the 1 s periodic() tick, since a gPTP asCapable change
+  // cannot query PTP) and the REST view. Sampled per indication, on a notified change and, where
+  // the PTP daemon does not notify it, on the 1 s periodic() tick, since a gPTP asCapable change
   // carries no link event to invalidate a cache. Returns whether it changed;
   // an unreadable PMC is unknown, not false, so keep the last-known value (35.2.1).
   @discardableResult
@@ -2056,8 +2057,9 @@ extension MSRPApplication {
   }
 
   private func _applyPendingStreamUpdates() async {
-    // asCapable is kept fresh by the pushed changes (or the 1 s periodic() resample where they are
-    // not pushed) and the per-indication resample, so plan straight
+    // asCapable is kept fresh by the notified changes (or the 1 s periodic() resample where they
+    // are
+    // not notified) and the per-indication resample, so plan straight
     // from the cache rather than re-query PTP for every port here (35.2.1).
     let isEndStation = await controller?.isEndStation ?? false
     while !_pendingStreams.isEmpty {

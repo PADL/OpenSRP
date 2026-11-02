@@ -529,8 +529,8 @@ struct MockBridge: MRP.Bridge, CustomStringConvertible {
   var ports: Set<MockPort> = [MockPort(id: 0)]
   var recorder = MRPTestRecorder()
   var numTXQueues: Int? // nil models a bridge whose queue count is unreadable
-  // ports whose asCapable the PTP daemon pushes a change for; nil models one that pushes none
-  var asCapablePushes: AsyncStream<Int>?
+  // ports whose asCapable the PTP daemon notifies a change for; nil models one that notifies none
+  var asCapableChanges: AsyncStream<Int>?
 
   init() {}
 
@@ -649,11 +649,11 @@ extension MockBridge: MSRPAwareBridge {
   }
 
   var asCapableNotifications: AnyAsyncSequence<P.ID> {
-    asCapablePushes?.eraseToAnyAsyncSequence() ?? AsyncEmptySequence<P.ID>()
+    asCapableChanges?.eraseToAnyAsyncSequence() ?? AsyncEmptySequence<P.ID>()
       .eraseToAnyAsyncSequence()
   }
 
-  func isAsCapablePushed(port: P) async -> Bool { asCapablePushes != nil }
+  func notifiesAsCapable(port: P) async -> Bool { asCapableChanges != nil }
 
   var systemID: MSRPSystemID { MSRPSystemID(id: 0x8000_FFFF_FFFF_FFFF) }
 }
@@ -4028,20 +4028,20 @@ final class MRPTests: XCTestCase {
     _ = controller
   }
 
-  // With the PTP daemon pushing asCapable, a pushed change reaches the port state at once and
+  // With the PTP daemon notifying asCapable, a notified change reaches the port state at once and
   // the periodic tick no longer resamples a known value -- but still takes the first sample
-  // after the port state was invalidated, since a push only reports changes.
-  func testPushedAsCapableChangeReplacesPeriodicResample() async throws {
+  // after the port state was invalidated, since a notification only reports changes.
+  func testNotifiedAsCapableChangeReplacesPeriodicResample() async throws {
     let recorder = MRPTestRecorder()
-    let (pushes, push) = AsyncStream.makeStream(of: Int.self)
+    let (changes, notify) = AsyncStream.makeStream(of: Int.self)
     // an id no other test uses: the asCapable overrides are process-wide
     let port = MockPort(id: 7)
     var bridge = MockBridge(ports: [port, MockPort(id: 8)], recorder: recorder)
-    bridge.asCapablePushes = pushes
+    bridge.asCapableChanges = changes
     defer { MockPort._asCapableOverrides.withLock { $0[7] = nil } }
     let controller = try await MRPController(
       bridge: bridge,
-      logger: Logger(label: "com.padl.MRPTests.asCapablePush")
+      logger: Logger(label: "com.padl.MRPTests.asCapableNotify")
     )
     let msrp = try await MSRPApplication(controller: controller)
     try await controller._didAdd(port: port)
@@ -4051,27 +4051,27 @@ final class MRPTests: XCTestCase {
     }
 
     MockPort._asCapableOverrides.withLock { $0[7] = false }
-    push.yield(7)
+    notify.yield(7)
     let lost = await _waitFor { await asCapable() == false }
-    XCTAssertTrue(lost, "a pushed asCapable change must reach the port state")
+    XCTAssertTrue(lost, "a notified asCapable change must reach the port state")
 
-    // gPTP changes without a push: the tick leaves the pushed value alone
+    // gPTP changes without a notification: the tick leaves the notified value alone
     MockPort._asCapableOverrides.withLock { $0[7] = true }
     try await msrp.periodic(for: nil)
     let afterTick = await asCapable()
-    XCTAssertEqual(afterTick, false, "the periodic tick must not resample a known pushed value")
+    XCTAssertEqual(afterTick, false, "the periodic tick must not resample a known notified value")
 
-    push.yield(7)
+    notify.yield(7)
     let regained = await _waitFor { await asCapable() == true }
     XCTAssertTrue(regained)
 
-    // a link change invalidates the port state; no push follows, so the tick samples it
+    // a link change invalidates the port state; no notification follows, so the tick samples it
     MockPort._asCapableOverrides.withLock { $0[7] = false }
     try await msrp.withPortState(port: port) { $0.invalidate() }
     try await msrp.periodic(for: nil)
     let resampled = await asCapable()
-    XCTAssertEqual(resampled, false, "an invalidated pushed port must be resampled by the tick")
-    push.finish()
+    XCTAssertEqual(resampled, false, "an invalidated notifying port must be resampled by the tick")
+    notify.finish()
     _ = controller
   }
 

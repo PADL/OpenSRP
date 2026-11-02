@@ -664,7 +664,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   // bumped on every (un)subscription, so a reply that straddled one is not cached
   private var _ptpGeneration = 0
   private var _ptpEventsTask: Task<(), Never>?
-  // ports whose pushed asCapable changed; buffered so a slow MSRP never stalls the PMC
+  // ports whose notified asCapable changed; buffered so a slow MSRP never stalls the PMC
   private let _asCapableStream: AsyncStream<P.ID>
   private let _asCapableContinuation: AsyncStream<P.ID>.Continuation
   private let _portExclusions: Set<String>
@@ -1384,7 +1384,7 @@ extension LinuxBridge: MSRPAwareBridge {
     _asCapableStream.eraseToAnyAsyncSequence()
   }
 
-  func isAsCapablePushed(port: P) -> Bool {
+  func notifiesAsCapable(port: P) -> Bool {
     guard _ptpSubscribed,
           let portNumber = _portPropertiesCache[port.id]?.portIdentity.portNumber
     else { return false }
