@@ -61,7 +61,10 @@ enum Command: String, CaseIterable {
 }
 
 func usage() -> Never {
-  print("Usage: \(CommandLine.arguments[0]) <command> [port]")
+  print("Usage: \(CommandLine.arguments[0]) [-s path] [-t transportSpecific] <command> [port]")
+  print("  -s path               ptp4l UDS path (default \(PTPManagementClient.DefaultUDSPath),")
+  print("                        or \(PTPManagementClient.DefaultUDSROPath) when not root)")
+  print("  -t transportSpecific  hex, as ptp4l's UDS port has it (default 1, as in gPTP.cfg)")
   print("Commands:")
   for command in Command.allCases {
     print("  \(command.rawValue)")
@@ -131,21 +134,37 @@ func run(_ command: Command, _ pmc: PTPManagementClient, _ portArg: UInt16?) asy
 @main
 enum pmctool {
   static func main() async throws {
-    if CommandLine.arguments.count < 2 {
-      usage()
+    var arguments = CommandLine.arguments.dropFirst()
+    var path: String?
+    var transportSpecific = PTPManagementClient.DefaultTransportSpecific
+
+    // the same option letters as linuxptp's pmc
+    while let option = arguments.first, option.hasPrefix("-") {
+      arguments = arguments.dropFirst()
+      guard let value = arguments.popFirst() else { usage() }
+      switch option {
+      case "-s": path = value
+      case "-t":
+        let digits = value.lowercased().hasPrefix("0x") ? String(value.dropFirst(2)) : value
+        guard let value = UInt8(digits, radix: 16), value <= 0x0F else { usage() }
+        transportSpecific = value
+      default: usage()
+      }
     }
 
-    guard let command = Command(rawValue: CommandLine.arguments[1].uppercased()) else {
+    guard let argument = arguments.popFirst(),
+          let command = Command(rawValue: argument.uppercased())
+    else {
       usage()
     }
 
     var port: UInt16?
-    if CommandLine.arguments.count > 2 {
-      port = UInt16(CommandLine.arguments[2])
+    if let argument = arguments.popFirst() {
+      port = UInt16(argument)
     }
 
     do {
-      let pmc = try await PTPManagementClient()
+      let pmc = try await PTPManagementClient(path: path, transportSpecific: transportSpecific)
       try await run(command, pmc, port)
     } catch {
       print("failed to \(command): \(type(of: error)) \(error)")
