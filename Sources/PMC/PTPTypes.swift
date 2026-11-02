@@ -670,7 +670,7 @@ public enum PTP {
     public let logMessageInterval: UInt8
 
     public var majorSdoId: UInt8 {
-      majorSdoId_messageType & Self.MajorSdoIdMask >> 4
+      (majorSdoId_messageType & Self.MajorSdoIdMask) >> 4
     }
 
     public var messageType: MessageType {

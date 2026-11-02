@@ -117,6 +117,17 @@ state from the local gPTP daemon (e.g.
 Relevant only when
 .B \-\-no\-ignore\-as\-capable
 is in effect.
+.TP
+.BI \-\-pmc\-transport\-specific " value"
+transportSpecific (majorSdoId, 0\-15) the PTP management client sends in its
+requests and requires in replies. Default 1, as 802.1AS and linuxptp's
+.I gPTP.cfg
+have it.
+.B ptp4l
+drops management requests whose transportSpecific differs from its UDS port's;
+a configuration that sets
+.I transportSpecific
+per port rather than globally leaves the UDS port at 0, which needs 0 here.
 .SS MSRP behaviour
 .TP
 .B \-\-enable\-talker\-pruning

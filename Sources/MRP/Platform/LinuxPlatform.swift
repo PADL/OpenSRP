@@ -686,6 +686,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     name: String,
     qDiscHandle: UInt16? = nil,
     ptpManagementClientSocketPath: String? = nil,
+    ptpManagementClientTransportSpecific: UInt8 = PTPManagementClient.DefaultTransportSpecific,
     portExclusions: Set<String> = [],
     logger: Logger
   ) async throws {
@@ -693,7 +694,10 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     _nlLinkSocket = try NLSocket(protocol: NETLINK_ROUTE)
     _nlQDiscHandle = qDiscHandle
     _devlink = try? RTNLDevlink()
-    _pmc = try await PTPManagementClient(path: ptpManagementClientSocketPath)
+    _pmc = try await PTPManagementClient(
+      path: ptpManagementClientSocketPath,
+      transportSpecific: ptpManagementClientTransportSpecific
+    )
     _portExclusions = portExclusions
     _logger = logger
     (_srClassPriorityMapStream, _srClassPriorityMapContinuation) = AsyncStream.makeStream(

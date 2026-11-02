@@ -88,7 +88,9 @@ final class PMCEventTests: XCTestCase {
     )
     XCTAssertEqual(captured.count, 120)
 
+    // pmc -u sends transportSpecific 0 unless given -t
     let request = try PTPManagementClient._makeRequest(
+      transportSpecific: 0,
       domainNumber: 0,
       sourcePortIdentity: PTP.PortIdentity(
         clockIdentity: PTP.ClockIdentity(id: (0, 0, 0, 0, 0, 0, 0, 0x1F)),
@@ -109,11 +111,11 @@ final class PMCEventTests: XCTestCase {
     XCTAssertEqual(Array(bytes[34...]), Array(captured[34...]))
     XCTAssertEqual(Array(bytes[2..<4]), Array(captured[2..<4])) // messageLength
     XCTAssertEqual(Array(bytes[20..<32]), Array(captured[20..<32])) // source, sequenceId
-    XCTAssertEqual(bytes[0] & 0x0F, captured[0] & 0x0F) // messageType
+    XCTAssertEqual(bytes[0], captured[0]) // transportSpecific, messageType
     // header fields this client has always sent differently, which ptp4l ignores here:
-    // majorSdoId, minor version, flags, controlField, logMessageInterval
+    // minor version, flags, controlField, logMessageInterval
     let differing = Set((0..<34).filter { bytes[$0] != captured[$0] })
-    XCTAssertTrue(differing.isSubset(of: [0, 1, 6, 7, 32, 33]), "\(differing.sorted())")
+    XCTAssertTrue(differing.isSubset(of: [1, 6, 7, 32, 33]), "\(differing.sorted())")
   }
 
   func testSubscriptionHoldsOnlyMatchingUnexpiredReply() throws {
