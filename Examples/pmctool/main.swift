@@ -145,7 +145,8 @@ enum pmctool {
       switch option {
       case "-s": path = value
       case "-t":
-        guard let value = UInt8(value, radix: 16), value <= 0x0F else { usage() }
+        let digits = value.lowercased().hasPrefix("0x") ? String(value.dropFirst(2)) : value
+        guard let value = UInt8(digits, radix: 16), value <= 0x0F else { usage() }
         transportSpecific = value
       default: usage()
       }

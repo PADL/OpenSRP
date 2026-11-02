@@ -128,6 +128,9 @@ drops management requests whose transportSpecific differs from its UDS port's;
 a configuration that sets
 .I transportSpecific
 per port rather than globally leaves the UDS port at 0, which needs 0 here.
+Replies always carry the UDS port's value, even where
+.I ignore_transport_specific
+lets ptp4l accept any request, so the option must match it then too.
 .SS MSRP behaviour
 .TP
 .B \-\-enable\-talker\-pruning

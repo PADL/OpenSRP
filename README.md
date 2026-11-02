@@ -48,7 +48,7 @@ If you wish to use a parent qdisc handle other than 0x9000, you will need to pas
 
 Accurate reporting of the SRP accumulated latency requires a local PTP instance that can report the mean link delay over the PTP management interface. Currently only [LinuxPTP](https://linuxptp.nwtime.org) is supported, although any PTP server that supports PMC over a domain socket as well as the LinuxPTP `GET_PORT_DATA_SET_NP` and `GET_PORT_PROPERTIES_NP` extensions should work.
 
-The management client sends transportSpecific (majorSdoId) 1, as 802.1AS has it, and accepts only replies that carry the same value. `ptp4l` silently drops a management request whose transportSpecific differs from its UDS port's. With LinuxPTP's `gPTP.cfg` this is 1 globally, which matches; a configuration that sets `transportSpecific` per port instead leaves the UDS port at 0, so pass `--pmc-transport-specific 0` to `mrpd` (or `-t 0` to `pmctool`).
+The management client sends transportSpecific (majorSdoId) 1, as 802.1AS has it, and accepts only replies that carry the same value. `ptp4l` silently drops a management request whose transportSpecific differs from its UDS port's. With LinuxPTP's `gPTP.cfg` this is 1 globally, which matches; a configuration that sets `transportSpecific` per port instead leaves the UDS port at 0, so pass `--pmc-transport-specific 0` to `mrpd` (or `-t 0` to `pmctool`). ptp4l always replies with its UDS port's own value, even when `ignore_transport_specific` lets it accept any request (as linuxptp's CMLDS server configurations do, with `transportSpecific 2`), so set the option to the UDS port's value in that case too.
 
 There are various parameters to `mrpd` which can be listed with the `--help` option.
 

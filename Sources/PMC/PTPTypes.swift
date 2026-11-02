@@ -130,7 +130,7 @@ public enum PTP {
     public init(rawValue: RawValue) { self.rawValue = rawValue }
 
     public static let ieee8021AS = MajorSdoId(rawValue: 1 << 0)
-    public static let cmlds = MajorSdoId(rawValue: 1 << 0)
+    public static let cmlds = MajorSdoId(rawValue: 1 << 1)
   }
 
   public struct FlagField0: OptionSet, SerDes, Sendable {

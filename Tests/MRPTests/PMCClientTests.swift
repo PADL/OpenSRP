@@ -94,7 +94,7 @@ final class PMCClientTests: XCTestCase {
     do {
       _ = try await pmc.getPriority1()
       XCTFail("a reply with transportSpecific 1 was accepted")
-    } catch {}
+    } catch PTP.Error.responseTimedOut {}
     XCTAssertEqual(server.requestTransportSpecifics, [0, 0])
   }
 
@@ -130,7 +130,11 @@ private final class _FakePTP4L: @unchecked Sendable {
         bind(_fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
       }
     }
-    guard _fd >= 0, result == 0 else { throw Errno(rawValue: errno) }
+    guard _fd >= 0, result == 0 else {
+      let error = Errno(rawValue: errno)
+      Glibc.close(_fd)
+      throw error
+    }
     var timeout = timeval(tv_sec: 2, tv_usec: 0)
     setsockopt(_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
   }
