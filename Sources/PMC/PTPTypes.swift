@@ -45,8 +45,10 @@ public enum PTP {
       serializationContext.serialize(uint8: rawValue)
     }
 
+    // the high nibble is minorVersionPTP (IEEE 1588-2019 13.3.2.4), which linuxptp sets to 1
+    // unless configured with ptp_minor_version 0
     public init(parsing input: inout ParserSpan) throws {
-      let rawValue = try UInt8(parsing: &input)
+      let rawValue = try UInt8(parsing: &input) & 0x0F
       guard let value = Self(rawValue: rawValue) else {
         throw Error.unknownEnumerationValue
       }
