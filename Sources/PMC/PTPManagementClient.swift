@@ -29,6 +29,9 @@ import Darwin
 public actor PTPManagementClient {
   public static let DefaultUDSPath = "/var/run/ptp/ptp4l"
   public static let DefaultUDSROPath = "/var/run/ptp/ptp4lro"
+  // 802.1AS (gPTP.cfg); ptp4l drops management messages whose transportSpecific is not its
+  // UDS port's, so a client of a ptp4l configured otherwise must be told
+  public static let DefaultTransportSpecific: UInt8 = 1
 
   // FIXME: using a continuation only allows for one response per request
   private typealias Continuation = CheckedContinuation<PTPManagementRepresentable, Error>
@@ -69,21 +72,33 @@ public actor PTPManagementClient {
   #if os(Linux)
   private let _socket: Socket
   private let _path: String
+  private let _transportSpecific: UInt8
   private let _localPath: String
   private let _peerAddress: sockaddr_un
   private var _rxTask: Task<(), Error>?
 
   private static let _nextSubscriber = Mutex<UInt8>(0)
 
-  public init(path: String? = nil) async throws {
-    try await self.init(path: path, subscriber: 0, events: nil)
+  // transportSpecific (majorSdoId) is sent in every request and must match in every reply
+  public init(
+    path: String? = nil,
+    transportSpecific: UInt8 = PTPManagementClient.DefaultTransportSpecific
+  ) async throws {
+    try await self.init(
+      path: path,
+      transportSpecific: transportSpecific,
+      subscriber: 0,
+      events: nil
+    )
   }
 
   private init(
     path: String?,
+    transportSpecific: UInt8,
     subscriber: UInt8,
     events: AsyncThrowingStream<PTPManagementEvent, Error>.Continuation?
   ) async throws {
+    guard transportSpecific <= 0x0F else { throw PTP.Error.valueTooLarge }
     let isRoot = geteuid() == 0
     // ptp4l serves the read-write socket to root only; unprivileged clients get the RO one.
     let defaultPath = isRoot ? Self.DefaultUDSPath : Self.DefaultUDSROPath
@@ -91,6 +106,7 @@ public actor PTPManagementClient {
     let prefix = isRoot ? "/var/run" : "/var/tmp"
     let suffix = subscriber == 0 ? "" : ".events\(subscriber)"
     _path = path
+    _transportSpecific = transportSpecific
     _localPath = "\(prefix)/pmc.\(getpid())\(suffix)"
     _sourcePortIdentity = Self._makeSourcePortIdentity(subscriber: subscriber)
     _eventContinuation = events
@@ -137,6 +153,8 @@ public actor PTPManagementClient {
     _eventContinuation = nil
   }
   #else
+  private let _transportSpecific = PTPManagementClient.DefaultTransportSpecific
+
   private func _tx(_ buffer: [UInt8]) async throws {
     throw PTP.Error.notImplemented
   }
@@ -145,6 +163,12 @@ public actor PTPManagementClient {
   // a datagram that cannot be attributed to a request is dropped: throwing here would
   // tear down the receive task and silently deafen the client for its remaining lifetime
   private func _rx(_ buffer: [UInt8]) async {
+    // FIXME: avoid decoding Header twice
+    guard let header = try? buffer.withParserSpan({ input in
+      try PTP.Header(parsing: &input)
+    }), header.majorSdoId == _transportSpecific else {
+      return
+    }
     do {
       let tlv = try buffer.withParserSpan { input in
         try PTP.ManagementMessage(parsing: &input)
@@ -155,12 +179,7 @@ public actor PTPManagementClient {
     } catch {
       // a rejected request throws its PTPManagementError out of the TLV parse; any other
       // parse failure cannot be attributed (it may be a notification sharing a sequence ID)
-      // FIXME: avoid decoding Header twice
-      guard error is PTPManagementError, let header = try? buffer.withParserSpan({ input in
-        try PTP.Header(parsing: &input)
-      }) else {
-        return
-      }
+      guard error is PTPManagementError else { return }
       _resume(sequenceId: header.sequenceId, with: .failure(error))
     }
   }
@@ -236,6 +255,7 @@ public actor PTPManagementClient {
   }
 
   static func _makeRequest(
+    transportSpecific: UInt8 = PTPManagementClient.DefaultTransportSpecific,
     domainNumber: UInt8,
     sourcePortIdentity: PTP.PortIdentity,
     targetPortIdentity: PTP.PortIdentity,
@@ -244,6 +264,7 @@ public actor PTPManagementClient {
     managementTLV: PTPManagementTLV
   ) -> PTP.ManagementMessage {
     let header = PTP.Header(
+      majorSdoId: PTP.MajorSdoId(rawValue: transportSpecific),
       messageType: .Management,
       messageLength: UInt16(PTP.ManagementMessage.Size + managementTLV.size),
       domainNumber: domainNumber,
@@ -268,6 +289,7 @@ public actor PTPManagementClient {
     managementTLV: PTPManagementTLV
   ) async throws -> T {
     let request = Self._makeRequest(
+      transportSpecific: _transportSpecific,
       domainNumber: domainNumber,
       sourcePortIdentity: sourcePortIdentity ?? _sourcePortIdentity,
       targetPortIdentity: targetPortIdentity ?? PTP.PortIdentity(),
@@ -922,11 +944,13 @@ public extension PTPManagementClient {
     )
     #if os(Linux)
     let path = _path
+    let transportSpecific = _transportSpecific
     let task = Task {
       let subscriber: PTPManagementClient
       do {
         subscriber = try await PTPManagementClient(
           path: path,
+          transportSpecific: transportSpecific,
           subscriber: Self._allocateSubscriber(),
           events: continuation
         )

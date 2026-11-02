@@ -161,6 +161,12 @@ private final class MRPDaemon: AsyncParsableCommand {
   @Option(name: .long, help: "PTP management client domain socket path")
   var pmcUdsPath: String? = nil
 
+  @Option(
+    name: .long,
+    help: "PTP management client transportSpecific, which must match ptp4l's UDS port (0-15)"
+  )
+  var pmcTransportSpecific: UInt8 = 1
+
   @Option(name: .long, help: "MRP Join time interval")
   var joinTime: Duration = JoinTime
 
@@ -209,6 +215,7 @@ private final class MRPDaemon: AsyncParsableCommand {
     case enableSRP
     case forceFullParticipant
     case pmcUdsPath
+    case pmcTransportSpecific
     case joinTime
     case leaveTime
     case leaveAllTime
@@ -219,6 +226,12 @@ private final class MRPDaemon: AsyncParsableCommand {
   }
 
   var logger: Logger!
+
+  func validate() throws {
+    guard pmcTransportSpecific <= 0x0F else {
+      throw ValidationError("--pmc-transport-specific must be 0-15")
+    }
+  }
 
   func run() async throws {
     // the executor's threads never exit, and every task runs there: see IORingSwift's README
@@ -244,6 +257,7 @@ private final class MRPDaemon: AsyncParsableCommand {
       name: bridgeInterface,
       qDiscHandle: qDiscHandle,
       ptpManagementClientSocketPath: pmcUdsPath,
+      ptpManagementClientTransportSpecific: pmcTransportSpecific,
       portExclusions: Set(excludeIface),
       logger: logger
     )

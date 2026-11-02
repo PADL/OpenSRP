@@ -130,7 +130,7 @@ public enum PTP {
     public init(rawValue: RawValue) { self.rawValue = rawValue }
 
     public static let ieee8021AS = MajorSdoId(rawValue: 1 << 0)
-    public static let cmlds = MajorSdoId(rawValue: 1 << 0)
+    public static let cmlds = MajorSdoId(rawValue: 1 << 1)
   }
 
   public struct FlagField0: OptionSet, SerDes, Sendable {
@@ -670,7 +670,7 @@ public enum PTP {
     public let logMessageInterval: UInt8
 
     public var majorSdoId: UInt8 {
-      majorSdoId_messageType & Self.MajorSdoIdMask >> 4
+      (majorSdoId_messageType & Self.MajorSdoIdMask) >> 4
     }
 
     public var messageType: MessageType {
