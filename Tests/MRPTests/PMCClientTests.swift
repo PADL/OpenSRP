@@ -46,6 +46,38 @@ final class PMCClientTests: XCTestCase {
     }
   }
 
+  // MARK: - local address
+
+  func testRequestClientAndSubscriberAutobindDistinctAbstractAddresses() async throws {
+    #if os(Linux)
+    let requests = try await PTPManagementClient(path: "/nonexistent")
+    let subscriber = try await PTPManagementClient(
+      path: "/nonexistent",
+      transportSpecific: PTPManagementClient.DefaultTransportSpecific,
+      subscriber: 1,
+      events: nil
+    )
+    let pathOffset = try XCTUnwrap(MemoryLayout<sockaddr_un>.offset(of: \.sun_path))
+    var addresses = [[UInt8]]()
+    for client in [requests, subscriber] {
+      let address = try await client._localAddress
+      let family = address.withUnsafeBytes { $0.load(as: sa_family_t.self) }
+      XCTAssertEqual(family, sa_family_t(AF_LOCAL))
+      // unix(7): an autobound name is abstract, a NUL followed by five hex digits
+      XCTAssertEqual(address[pathOffset], 0)
+      XCTAssertTrue(address[(pathOffset + 1)...].contains { $0 != 0 })
+      addresses.append(address)
+    }
+    XCTAssertNotEqual(addresses[0], addresses[1])
+    // ptp4l keys subscriptions by source port identity, so these must differ as well
+    let requestsIdentity = await requests._sourcePortIdentity
+    let subscriberIdentity = await subscriber._sourcePortIdentity
+    XCTAssertNotEqual(requestsIdentity, subscriberIdentity)
+    #else
+    throw XCTSkip("Linux autobind only")
+    #endif
+  }
+
   #if os(Linux)
   func testRepliesAreAcceptedOnlyWithTheConfiguredTransportSpecific() async throws {
     let server = try _FakePTP4L()

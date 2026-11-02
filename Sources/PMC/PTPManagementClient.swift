@@ -59,7 +59,7 @@ public actor PTPManagementClient {
     )
   }
 
-  private var _sourcePortIdentity = PTPManagementClient._makeSourcePortIdentity(subscriber: 0)
+  private(set) var _sourcePortIdentity = PTPManagementClient._makeSourcePortIdentity(subscriber: 0)
 
   // an event subscriber's stream; nil on a request client, which ptp4l never notifies
   private var _eventContinuation: AsyncThrowingStream<PTPManagementEvent, Error>.Continuation?
@@ -73,7 +73,6 @@ public actor PTPManagementClient {
   private let _socket: Socket
   private let _path: String
   private let _transportSpecific: UInt8
-  private let _localPath: String
   private let _peerAddress: sockaddr_un
   private var _rxTask: Task<(), Error>?
 
@@ -92,7 +91,8 @@ public actor PTPManagementClient {
     )
   }
 
-  private init(
+  // subscriber 0 is a request client; 1...255 an event subscriber (see events())
+  init(
     path: String?,
     transportSpecific: UInt8,
     subscriber: UInt8,
@@ -103,25 +103,12 @@ public actor PTPManagementClient {
     // ptp4l serves the read-write socket to root only; unprivileged clients get the RO one.
     let defaultPath = isRoot ? Self.DefaultUDSPath : Self.DefaultUDSROPath
     let path = path ?? defaultPath
-    let prefix = isRoot ? "/var/run" : "/var/tmp"
-    let suffix = subscriber == 0 ? "" : ".events\(subscriber)"
     _path = path
     _transportSpecific = transportSpecific
-    _localPath = "\(prefix)/pmc.\(getpid())\(suffix)"
     _sourcePortIdentity = Self._makeSourcePortIdentity(subscriber: subscriber)
     _eventContinuation = events
-    let localAddress = try sockaddr_un(
-      family: sa_family_t(AF_LOCAL),
-      presentationAddress: _localPath
-    )
     _peerAddress = try sockaddr_un(family: sa_family_t(AF_LOCAL), presentationAddress: path)
-    _socket = try Socket(ring: IORing.shared, domain: sa_family_t(AF_LOCAL), type: SOCK_DGRAM)
-    // a socket file left by an earlier process with our PID would fail the bind; only a
-    // subscriber's, since that is the one a kill leaves behind while ptp4l still sends to it
-    if subscriber != 0 {
-      unlink(_localPath)
-    }
-    try _socket.bind(to: localAddress)
+    _socket = try Self._makeAutoboundSocket()
     _rxTask = Task {
       repeat {
         do {
@@ -130,6 +117,35 @@ public actor PTPManagementClient {
           }
         } catch Errno.interrupted {} // restart on interrupted system call
       } while !Task.isCancelled
+    }
+  }
+
+  // Linux autobind (unix(7)): binding the address family alone gets a unique abstract name,
+  // to which ptp4l replies (uds.c recvfrom() then sendto()) and which goes with the socket,
+  // so no file is left behind for a later client to trip over
+  private static func _makeAutoboundSocket() throws -> Socket {
+    let fileHandle = try FileHandle(
+      fileDescriptor: socket(AF_LOCAL, Int32(SOCK_DGRAM.rawValue), 0),
+      closeOnDealloc: true
+    )
+    var address = sockaddr_un()
+    address.sun_family = sa_family_t(AF_LOCAL)
+    _ = try withUnsafePointer(to: &address) { pointer in
+      try pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+        try Errno.throwingGlobalErrno {
+          bind(fileHandle.fileDescriptor, sa, socklen_t(MemoryLayout<sa_family_t>.size))
+        }
+      }
+    }
+    return Socket(ring: IORing.shared, fileHandle: fileHandle, domain: sa_family_t(AF_LOCAL))
+  }
+
+  // the kernel-assigned local address, as getsockname() returns it
+  var _localAddress: [UInt8] {
+    get throws {
+      try _socket.localAddress.withSockAddr { sa, size in
+        Array(UnsafeRawBufferPointer(start: sa, count: Int(size)))
+      }
     }
   }
 
@@ -144,11 +160,10 @@ public actor PTPManagementClient {
   }
 
   // ends the receive task, whose capture of self is what keeps this client alive, so the
-  // socket closes once the last request returns; the socket file goes now
+  // socket closes once the last request returns
   private func _shutdown() {
     _rxTask?.cancel()
     _rxTask = nil
-    unlink(_localPath)
     _eventContinuation?.finish()
     _eventContinuation = nil
   }
