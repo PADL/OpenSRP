@@ -476,6 +476,9 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
   private func _getMeanLinkDelay() async throws -> PTP.TimeInterval {
     guard let _bridge else { throw MRPError.internalError }
     let portNumber = try await _bridge._getPtpPortProperties(for: self).portIdentity.portNumber
+    if let linkState = await _bridge._getPushedPtpLinkState(portNumber: portNumber) {
+      return linkState.meanLinkDelay
+    }
     let portDataSet = try await _bridge._pmc.getPortDataSet(portNumber: portNumber)
     return portDataSet.meanLinkDelay
   }
@@ -494,6 +497,9 @@ public struct LinuxPort: Port, AVBPort, Sendable, CustomStringConvertible {
     get async throws {
       guard let _bridge else { throw MRPError.internalError }
       let portNumber = try await _bridge._getPtpPortProperties(for: self).portIdentity.portNumber
+      if let linkState = await _bridge._getPushedPtpLinkState(portNumber: portNumber) {
+        return linkState.asCapable != 0
+      }
       let portDataSet = try await _bridge._pmc.getPortDataSetNP(portNumber: portNumber)
       return portDataSet.asCapable != 0
     }
@@ -648,6 +654,19 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
   private let _vlanRegistrationShared: AnyAsyncSequence<VLANRegistrationNotification<P>>
   fileprivate let _pmc: PTPManagementClient
   private var _portPropertiesCache = [P.ID: PortPropertiesNP]()
+  // gPTP link state (asCapable, meanLinkDelay) by PTP port number: fetched once, then kept
+  // current by ptp4l's NOTIFY_CMLDS push while _ptpSubscribed. Empty otherwise, and then
+  // LinuxPort polls ptp4l instead. See _handlePtpEvent.
+  private var _ptpLinkStates = [UInt16: CmldsInfoNP]()
+  private var _ptpSubscribed = false
+  // Common_P2P ports take asCapable from the CMLDS with no notification (port.c), so stay polled
+  private var _ptpPolledPorts = Set<UInt16>()
+  // bumped on every (un)subscription, so a reply that straddled one is not cached
+  private var _ptpGeneration = 0
+  private var _ptpEventsTask: Task<(), Never>?
+  // ports whose notified asCapable changed; buffered so a slow MSRP never stalls the PMC
+  private let _asCapableStream: AsyncStream<P.ID>
+  private let _asCapableContinuation: AsyncStream<P.ID>.Continuation
   private let _portExclusions: Set<String>
   // Member ports for which the ingress (DCBNL) PCP->queue map is currently configured, and
   // whether the switch uses a single global ingress priority map shared by all ports.
@@ -667,6 +686,7 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     name: String,
     qDiscHandle: UInt16? = nil,
     ptpManagementClientSocketPath: String? = nil,
+    ptpManagementClientTransportSpecific: UInt8 = PTPManagementClient.DefaultTransportSpecific,
     portExclusions: Set<String> = [],
     logger: Logger
   ) async throws {
@@ -674,7 +694,10 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     _nlLinkSocket = try NLSocket(protocol: NETLINK_ROUTE)
     _nlQDiscHandle = qDiscHandle
     _devlink = try? RTNLDevlink()
-    _pmc = try await PTPManagementClient(path: ptpManagementClientSocketPath)
+    _pmc = try await PTPManagementClient(
+      path: ptpManagementClientSocketPath,
+      transportSpecific: ptpManagementClientTransportSpecific
+    )
     _portExclusions = portExclusions
     _logger = logger
     (_srClassPriorityMapStream, _srClassPriorityMapContinuation) = AsyncStream.makeStream(
@@ -683,6 +706,10 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     )
     (_vlanRegistrationStream, _vlanRegistrationContinuation) = AsyncStream.makeStream(
       of: VLANRegistrationNotification<P>.self,
+      bufferingPolicy: .bufferingNewest(256)
+    )
+    (_asCapableStream, _asCapableContinuation) = AsyncStream.makeStream(
+      of: P.ID.self,
       bufferingPolicy: .bufferingNewest(256)
     )
     _vlanRegistrationShared = _vlanRegistrationStream
@@ -1082,6 +1109,10 @@ public actor LinuxBridge: Bridge, CustomStringConvertible {
     }
 
     _nlLinkMonitorTask?.cancel()
+    // left set (not nil) so a late PTP read cannot start a new subscription
+    _ptpEventsTask?.cancel()
+    _ptpSubscribed = false
+    _ptpLinkStates = [:]
 
     try? _nlLinkSocket.unsubscribeBridgeVLANs()
     try? _nlLinkSocket.unsubscribeTC()
@@ -1349,6 +1380,17 @@ extension LinuxBridge {
 }
 
 extension LinuxBridge: MSRPAwareBridge {
+  nonisolated var asCapableNotifications: AnyAsyncSequence<P.ID> {
+    _asCapableStream.eraseToAnyAsyncSequence()
+  }
+
+  func notifiesAsCapable(port: P) -> Bool {
+    guard _ptpSubscribed,
+          let portNumber = _portPropertiesCache[port.id]?.portIdentity.portNumber
+    else { return false }
+    return _ptpLinkStates[portNumber] != nil
+  }
+
   // Per-port AVB admission control via the mv88e6xxx devlink mode: secure (checks
   // the ingress reservation) or enhanced. filterBadAvb is a single per-port bit
   // (all SR classes), so enable it only when every SR class the port supports is
@@ -1713,6 +1755,97 @@ extension LinuxBridge: MSRPAwareBridge {
     }
     _portPropertiesCache[port.id] = nil
     throw PTP.Error.unknownPort
+  }
+
+  // MARK: - gPTP events
+
+  // The pushed link state for a PTP port, or nil when ptp4l does not push it and the caller
+  // has to poll. The first call starts the subscription; the first call per port after it is
+  // held fetches CMLDS_INFO_NP, which a ptp4l without NOTIFY_CMLDS (< 4.3) also lacks.
+  fileprivate func _getPushedPtpLinkState(portNumber: UInt16) async -> CmldsInfoNP? {
+    _startPtpEvents()
+    guard _ptpSubscribed, !_ptpPolledPorts.contains(portNumber) else { return nil }
+    if let linkState = _ptpLinkStates[portNumber] { return linkState }
+    let generation = _ptpGeneration
+    guard let portDataSet = try? await _pmc.getPortDataSet(portNumber: portNumber),
+          generation == _ptpGeneration else { return nil }
+    guard portDataSet.delayMechanism != .commonP2P else {
+      _ptpPolledPorts.insert(portNumber)
+      return nil
+    }
+    guard let linkState = try? await _pmc.getCmldsInfoNP(portNumber: portNumber),
+          generation == _ptpGeneration else { return nil }
+    // a notification that arrived during the await is newer than the reply
+    if _ptpLinkStates[portNumber] == nil {
+      _ptpLinkStates[portNumber] = linkState
+    }
+    return _ptpLinkStates[portNumber]
+  }
+
+  private func _startPtpEvents() {
+    guard _ptpEventsTask == nil else { return }
+    // NOTIFY_CMLDS carries asCapable and meanLinkDelay; NOTIFY_PORT_STATE covers the
+    // transitions (port disabled or faulty) that reset asCapable without a CMLDS push
+    // a short duration: the renewal (every duration / 3) is what notices a restarted ptp4l,
+    // whose ports start not asCapable while our cache still says otherwise
+    let events = _pmc.events([.portState, .cmlds], duration: 6)
+    _ptpEventsTask = Task { [weak self] in
+      do {
+        for try await event in events {
+          guard let self else { return }
+          await _handlePtpEvent(event)
+        }
+      } catch {
+        self?._logger.info("LinuxBridge: gPTP events unavailable, polling ptp4l: \(error)")
+      }
+      await self?._handlePtpEvent(.unsubscribed)
+    }
+  }
+
+  private func _ptpPortID(portNumber: UInt16) -> P.ID? {
+    _portPropertiesCache.first { $0.value.portIdentity.portNumber == portNumber }?.key
+  }
+
+  private func _handlePtpEvent(_ event: PTPManagementEvent) {
+    // an event already pulled from the stream when _shutdown cancelled it
+    if case .subscribed = event, _ptpEventsTask?.isCancelled ?? true { return }
+    switch event {
+    case .subscribed:
+      // ptp4l (re)started or forgot us: its ports may have been renumbered and anything
+      // pushed before is stale, so drop both and have MSRP resample every known port
+      _logger.debug("LinuxBridge: subscribed to gPTP events")
+      let portIDs = Array(_portPropertiesCache.keys)
+      _portPropertiesCache = [:]
+      _ptpLinkStates = [:]
+      _ptpPolledPorts = []
+      _ptpGeneration += 1
+      _ptpSubscribed = true
+      for portID in portIDs {
+        _asCapableContinuation.yield(portID)
+      }
+    case .unsubscribed:
+      if _ptpSubscribed {
+        _logger.info("LinuxBridge: gPTP event subscription lost, polling ptp4l")
+      }
+      _ptpSubscribed = false
+      _ptpLinkStates = [:]
+      _ptpPolledPorts = []
+      _ptpGeneration += 1
+    case let .cmlds(portIdentity, linkState):
+      let portNumber = portIdentity.portNumber
+      guard _ptpSubscribed, !_ptpPolledPorts.contains(portNumber) else { return }
+      let previous = _ptpLinkStates.updateValue(linkState, forKey: portNumber)
+      guard previous?.asCapable != linkState.asCapable,
+            let portID = _ptpPortID(portNumber: portNumber) else { return }
+      _asCapableContinuation.yield(portID)
+    case let .portState(portDataSet):
+      let portNumber = portDataSet.portIdentity.portNumber
+      guard _ptpLinkStates.removeValue(forKey: portNumber) != nil,
+            let portID = _ptpPortID(portNumber: portNumber) else { return }
+      _asCapableContinuation.yield(portID)
+    case .timeSync, .parentDataSet:
+      break
+    }
   }
 }
 

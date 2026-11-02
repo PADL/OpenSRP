@@ -45,8 +45,10 @@ public enum PTP {
       serializationContext.serialize(uint8: rawValue)
     }
 
+    // the high nibble is minorVersionPTP (IEEE 1588-2019 13.3.2.4), which linuxptp sets to 1
+    // unless configured with ptp_minor_version 0
     public init(parsing input: inout ParserSpan) throws {
-      let rawValue = try UInt8(parsing: &input)
+      let rawValue = try UInt8(parsing: &input) & 0x0F
       guard let value = Self(rawValue: rawValue) else {
         throw Error.unknownEnumerationValue
       }
@@ -128,7 +130,7 @@ public enum PTP {
     public init(rawValue: RawValue) { self.rawValue = rawValue }
 
     public static let ieee8021AS = MajorSdoId(rawValue: 1 << 0)
-    public static let cmlds = MajorSdoId(rawValue: 1 << 0)
+    public static let cmlds = MajorSdoId(rawValue: 1 << 1)
   }
 
   public struct FlagField0: OptionSet, SerDes, Sendable {
@@ -668,7 +670,7 @@ public enum PTP {
     public let logMessageInterval: UInt8
 
     public var majorSdoId: UInt8 {
-      majorSdoId_messageType & Self.MajorSdoIdMask >> 4
+      (majorSdoId_messageType & Self.MajorSdoIdMask) >> 4
     }
 
     public var messageType: MessageType {
