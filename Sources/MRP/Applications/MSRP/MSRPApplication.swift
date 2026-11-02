@@ -2058,8 +2058,7 @@ extension MSRPApplication {
 
   private func _applyPendingStreamUpdates() async {
     // asCapable is kept fresh by the notified changes (or the 1 s periodic() resample where they
-    // are
-    // not notified) and the per-indication resample, so plan straight
+    // are not notified) and the per-indication resample, so plan straight
     // from the cache rather than re-query PTP for every port here (35.2.1).
     let isEndStation = await controller?.isEndStation ?? false
     while !_pendingStreams.isEmpty {
