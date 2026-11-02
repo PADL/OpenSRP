@@ -15,6 +15,7 @@
 //
 
 import IEEE802
+import Synchronization
 import SystemPackage
 #if os(Linux)
 import CLinuxSockAddr
@@ -41,12 +42,13 @@ public actor PTPManagementClient {
   private var _nextSequenceID: UInt16 = 1
 
   // ptp4l keys event subscriptions on the source port identity, so it must be unique per
-  // client; linuxptp's own pmc derives it from the process ID in the same way
-  private nonisolated static func _sourcePortIdentity() -> PTP.PortIdentity {
+  // client; linuxptp's own pmc derives it from the process ID in the same way. Each event
+  // subscriber (see events()) is a further client, told apart by its index.
+  private nonisolated static func _makeSourcePortIdentity(subscriber: UInt8) -> PTP.PortIdentity {
     let pid = UInt32(bitPattern: getpid())
     return PTP.PortIdentity(
       clockIdentity: PTP.ClockIdentity(id: (
-        0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, subscriber,
         UInt8(truncatingIfNeeded: pid >> 24),
         UInt8(truncatingIfNeeded: pid >> 16)
       )),
@@ -54,25 +56,56 @@ public actor PTPManagementClient {
     )
   }
 
+  private var _sourcePortIdentity = PTPManagementClient._makeSourcePortIdentity(subscriber: 0)
+
+  // an event subscriber's stream; nil on a request client, which ptp4l never notifies
+  private var _eventContinuation: AsyncThrowingStream<PTPManagementEvent, Error>.Continuation?
+
+  // a subscriber that falls behind keeps the newest events: each carries a whole data set,
+  // so a newer one supersedes an older one for the same port or clock
+  public static let EventBufferDepth = 256
+  public static let DefaultSubscriptionDuration: UInt16 = 30
+
   #if os(Linux)
   private let _socket: Socket
-  private let _localAddress: sockaddr_un
+  private let _path: String
+  private let _localPath: String
   private let _peerAddress: sockaddr_un
   private var _rxTask: Task<(), Error>?
 
+  private static let _nextSubscriber = Mutex<UInt8>(0)
+
   public init(path: String? = nil) async throws {
+    try await self.init(path: path, subscriber: 0, events: nil)
+  }
+
+  private init(
+    path: String?,
+    subscriber: UInt8,
+    events: AsyncThrowingStream<PTPManagementEvent, Error>.Continuation?
+  ) async throws {
     let isRoot = geteuid() == 0
     // ptp4l serves the read-write socket to root only; unprivileged clients get the RO one.
     let defaultPath = isRoot ? Self.DefaultUDSPath : Self.DefaultUDSROPath
     let path = path ?? defaultPath
     let prefix = isRoot ? "/var/run" : "/var/tmp"
-    _localAddress = try sockaddr_un(
+    let suffix = subscriber == 0 ? "" : ".events\(subscriber)"
+    _path = path
+    _localPath = "\(prefix)/pmc.\(getpid())\(suffix)"
+    _sourcePortIdentity = Self._makeSourcePortIdentity(subscriber: subscriber)
+    _eventContinuation = events
+    let localAddress = try sockaddr_un(
       family: sa_family_t(AF_LOCAL),
-      presentationAddress: "\(prefix)/pmc.\(getpid())"
+      presentationAddress: _localPath
     )
     _peerAddress = try sockaddr_un(family: sa_family_t(AF_LOCAL), presentationAddress: path)
     _socket = try Socket(ring: IORing.shared, domain: sa_family_t(AF_LOCAL), type: SOCK_DGRAM)
-    try _socket.bind(to: _localAddress)
+    // a socket file left by an earlier process with our PID would fail the bind; only a
+    // subscriber's, since that is the one a kill leaves behind while ptp4l still sends to it
+    if subscriber != 0 {
+      unlink(_localPath)
+    }
+    try _socket.bind(to: localAddress)
     _rxTask = Task {
       repeat {
         do {
@@ -93,6 +126,16 @@ public actor PTPManagementClient {
   deinit {
     _rxTask?.cancel()
   }
+
+  // ends the receive task, whose capture of self is what keeps this client alive, so the
+  // socket closes once the last request returns; the socket file goes now
+  private func _shutdown() {
+    _rxTask?.cancel()
+    _rxTask = nil
+    unlink(_localPath)
+    _eventContinuation?.finish()
+    _eventContinuation = nil
+  }
   #else
   private func _tx(_ buffer: [UInt8]) async throws {
     throw PTP.Error.notImplemented
@@ -106,11 +149,14 @@ public actor PTPManagementClient {
       let tlv = try buffer.withParserSpan { input in
         try PTP.ManagementMessage(parsing: &input)
       }
-      _resume(sequenceId: tlv.header.sequenceId, with: .success(tlv))
+      if !_resume(sequenceId: tlv.header.sequenceId, with: .success(tlv)) {
+        _notify(tlv)
+      }
     } catch {
-      // a rejected request throws its PTPManagementError out of the TLV parse
+      // a rejected request throws its PTPManagementError out of the TLV parse; any other
+      // parse failure cannot be attributed (it may be a notification sharing a sequence ID)
       // FIXME: avoid decoding Header twice
-      guard let header = try? buffer.withParserSpan({ input in
+      guard error is PTPManagementError, let header = try? buffer.withParserSpan({ input in
         try PTP.Header(parsing: &input)
       }) else {
         return
@@ -127,15 +173,28 @@ public actor PTPManagementClient {
     return _nextSequenceID
   }
 
-  private func _resume(sequenceId: UInt16, with result: Result<PTP.ManagementMessage, Error>) {
-    guard let request = _requests[sequenceId] else { return }
+  // a subscriber's only requests are for SUBSCRIBE_EVENTS_NP, which ptp4l never pushes, so
+  // whatever it cannot match to a request is a notification
+  private func _notify(_ message: PTP.ManagementMessage) {
+    guard let _eventContinuation,
+          let event = try? PTPManagementEvent(notification: message) else { return }
+    _eventContinuation.yield(event)
+  }
+
+  // returns whether the message answered a pending request
+  @discardableResult
+  private func _resume(
+    sequenceId: UInt16,
+    with result: Result<PTP.ManagementMessage, Error>
+  ) -> Bool {
+    guard let request = _requests[sequenceId] else { return false }
 
     // an unsolicited response carries a sequence ID from ptp4l's own counter, so a
     // matching ID alone does not identify our reply
     if case let .success(message) = result,
        message.managementTLV.managementId != request.managementId
     {
-      return
+      return false
     }
 
     let result: Result<PTPManagementRepresentable, Error> = result.flatMap { result in
@@ -149,6 +208,7 @@ public actor PTPManagementClient {
 
     request.continuation.resume(with: result)
     _requests[sequenceId] = nil
+    return true
   }
 
   private func _request(
@@ -175,6 +235,31 @@ public actor PTPManagementClient {
     })
   }
 
+  static func _makeRequest(
+    domainNumber: UInt8,
+    sourcePortIdentity: PTP.PortIdentity,
+    targetPortIdentity: PTP.PortIdentity,
+    sequenceId: UInt16,
+    action actionField: PTP.ActionField,
+    managementTLV: PTPManagementTLV
+  ) -> PTP.ManagementMessage {
+    let header = PTP.Header(
+      messageType: .Management,
+      messageLength: UInt16(PTP.ManagementMessage.Size + managementTLV.size),
+      domainNumber: domainNumber,
+      sourcePortIdentity: sourcePortIdentity,
+      sequenceId: sequenceId
+    )
+    return PTP.ManagementMessage(
+      header: header,
+      targetPortIdentity: targetPortIdentity,
+      startingBoundaryHops: 0,
+      boundaryHops: 0,
+      actionField: actionField,
+      managementTLV: managementTLV
+    )
+  }
+
   private func _request<T: PTPManagementRepresentable>(
     domainNumber: UInt8 = 0,
     sourcePortIdentity: PTP.PortIdentity? = nil,
@@ -182,19 +267,12 @@ public actor PTPManagementClient {
     action actionField: PTP.ActionField,
     managementTLV: PTPManagementTLV
   ) async throws -> T {
-    let header = PTP.Header(
-      messageType: .Management,
-      messageLength: UInt16(PTP.ManagementMessage.Size + managementTLV.size),
+    let request = Self._makeRequest(
       domainNumber: domainNumber,
-      sourcePortIdentity: sourcePortIdentity ?? Self._sourcePortIdentity(),
-      sequenceId: _allocateSequenceId()
-    )
-    let request = PTP.ManagementMessage(
-      header: header,
+      sourcePortIdentity: sourcePortIdentity ?? _sourcePortIdentity,
       targetPortIdentity: targetPortIdentity ?? PTP.PortIdentity(),
-      startingBoundaryHops: 0,
-      boundaryHops: 0,
-      actionField: actionField,
+      sequenceId: _allocateSequenceId(),
+      action: actionField,
       managementTLV: managementTLV
     )
     return try await withThrowingTimeout(of: .seconds(0.1)) {
@@ -637,9 +715,14 @@ public actor PTPManagementClient {
     try await _request(domainNumber: domainNumber, action: .get)
   }
 
-  // no setter: ptp4l pushes subscribed events as unsolicited responses carrying its own
-  // sequence IDs and the very management IDs we also GET, so they cannot be told apart
-  // from replies. Arming them needs a notification delivery path this client lacks.
+  // ptp4l sends the events to whichever socket last SET the subscription for this source port
+  // identity, so events() subscribes from a client of its own rather than through this one
+  func setSubscribeEventsNP(
+    _ subscription: SubscribeEventsNP,
+    domainNumber: UInt8 = 0
+  ) async throws -> SubscribeEventsNP {
+    try await _request(domainNumber: domainNumber, action: .set, subscription)
+  }
 
   public func getSynchronizationUncertainNP(
     domainNumber: UInt8 = 0
@@ -816,3 +899,108 @@ public actor PTPManagementClient {
     )
   }
 }
+
+// MARK: - event subscription (SUBSCRIBE_EVENTS_NP)
+
+public extension PTPManagementClient {
+  // Subscribes to ptp4l's push notifications and returns them as a stream that starts with
+  // .subscribed once ptp4l holds the subscription. The subscription is renewed three times per
+  // `duration` seconds, each renewal doubling as a keepalive: a ptp4l that stops answering
+  // yields .unsubscribed, and one that restarted yields .subscribed again once re-subscribed.
+  // While ptp4l is unreachable the renewal is retried every second.
+  //
+  // The stream throws only if ptp4l refuses the subscription (a PTPManagementError, e.g. on
+  // the read-only socket, which ptp4l does not let subscribe). Ending iteration unsubscribes.
+  nonisolated func events(
+    _ events: Set<SubscribeEventsNP.Event> = Set(SubscribeEventsNP.Event.allCases),
+    duration: UInt16 = PTPManagementClient.DefaultSubscriptionDuration,
+    domainNumber: UInt8 = 0
+  ) -> AsyncThrowingStream<PTPManagementEvent, Error> {
+    let (stream, continuation) = AsyncThrowingStream.makeStream(
+      of: PTPManagementEvent.self,
+      bufferingPolicy: .bufferingNewest(Self.EventBufferDepth)
+    )
+    #if os(Linux)
+    let path = _path
+    let task = Task {
+      let subscriber: PTPManagementClient
+      do {
+        subscriber = try await PTPManagementClient(
+          path: path,
+          subscriber: Self._allocateSubscriber(),
+          events: continuation
+        )
+      } catch {
+        continuation.finish(throwing: error)
+        return
+      }
+      await subscriber._keepSubscribed(
+        SubscribeEventsNP(duration: duration, events: events),
+        domainNumber: domainNumber
+      )
+    }
+    continuation.onTermination = { _ in task.cancel() }
+    #else
+    continuation.finish(throwing: PTP.Error.notImplemented)
+    #endif
+    return stream
+  }
+}
+
+#if os(Linux)
+private extension PTPManagementClient {
+  // 1...255: index 0 is every request client's identity
+  static func _allocateSubscriber() -> UInt8 {
+    _nextSubscriber.withLock { index in
+      index = index == UInt8.max ? 1 : index + 1
+      return index
+    }
+  }
+
+  // runs until the stream's consumer goes away (cancelling us) or ptp4l refuses
+  func _keepSubscribed(_ subscription: SubscribeEventsNP, domainNumber: UInt8) async {
+    var state = PTPEventSubscriptionState(duration: subscription.duration)
+    let subscription = SubscribeEventsNP(
+      duration: state.duration,
+      events: Set(subscription.events)
+    )
+
+    while !Task.isCancelled {
+      let step: PTPEventSubscriptionState.Step
+      do {
+        let wasHeld = try await state.needsProbe
+          ? getSubscribeEventsNP(domainNumber: domainNumber).holds(subscription)
+          : false
+        _ = try await setSubscribeEventsNP(subscription, domainNumber: domainNumber)
+        step = state.renewed(wasHeld: wasHeld)
+      } catch is CancellationError {
+        break
+      } catch let error as PTPManagementError {
+        _eventContinuation?.finish(throwing: error)
+        break
+      } catch {
+        step = state.failed()
+      }
+      switch step.transition {
+      case .subscribed: _eventContinuation?.yield(.subscribed)
+      case .unsubscribed: _eventContinuation?.yield(.unsubscribed)
+      case nil: break
+      }
+      do {
+        try await Task.sleep(for: step.delay)
+      } catch {
+        break
+      }
+    }
+
+    // this task is cancelled, which would fail the request at once; an unstructured task is not
+    Task {
+      _ = try? await setSubscribeEventsNP(
+        SubscribeEventsNP(duration: 0, events: []),
+        domainNumber: domainNumber
+      )
+      _shutdown()
+    }
+  }
+}
+#endif
