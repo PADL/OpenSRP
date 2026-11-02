@@ -73,7 +73,9 @@ struct MockPort: MRP.Port, Equatable, Hashable, Identifiable, Sendable, CustomSt
   // a full-duplex link and a link speed of at least 100 Mb/s (IEEE 802.1BA-2011 §6.4 / Table 6.1)
   var isAvbCapable: Bool { _mtu <= AVBMaxFrameSize && _isFullDuplex && _linkSpeed >= 100_000 }
 
-  var isAsCapable: Bool { true }
+  // a live per-id asCapable a test can flip, as gPTP would; absent one the port is asCapable
+  static let _asCapableOverrides = Mutex([Int: Bool]())
+  var isAsCapable: Bool { MockPort._asCapableOverrides.withLock { $0[id] } ?? true }
 
   let _portTcMaxLatency: Int
   // A real LinuxPort re-reads gPTP on every sample, so its per-hop latency can rise without the
@@ -527,6 +529,8 @@ struct MockBridge: MRP.Bridge, CustomStringConvertible {
   var ports: Set<MockPort> = [MockPort(id: 0)]
   var recorder = MRPTestRecorder()
   var numTXQueues: Int? // nil models a bridge whose queue count is unreadable
+  // ports whose asCapable the PTP daemon notifies a change for; nil models one that notifies none
+  var asCapableChanges: AsyncStream<Int>?
 
   init() {}
 
@@ -643,6 +647,13 @@ extension MockBridge: MSRPAwareBridge {
   var srClassPriorityMapNotifications: AnyAsyncSequence<SRClassPriorityMapNotification<P>> {
     AsyncEmptySequence<SRClassPriorityMapNotification<P>>().eraseToAnyAsyncSequence()
   }
+
+  var asCapableNotifications: AnyAsyncSequence<P.ID> {
+    asCapableChanges?.eraseToAnyAsyncSequence() ?? AsyncEmptySequence<P.ID>()
+      .eraseToAnyAsyncSequence()
+  }
+
+  func notifiesAsCapable(port: P) async -> Bool { asCapableChanges != nil }
 
   var systemID: MSRPSystemID { MSRPSystemID(id: 0x8000_FFFF_FFFF_FFFF) }
 }
@@ -4014,6 +4025,53 @@ final class MRPTests: XCTestCase {
     try await msrp.periodic(for: nil)
     let asCapable = try await msrp.withPortState(port: port) { $0.asCapable }
     XCTAssertNil(asCapable, "a not-enabled port must keep asCapable nil, not a stale PMC true")
+    _ = controller
+  }
+
+  // With the PTP daemon notifying asCapable, a notified change reaches the port state at once and
+  // the periodic tick no longer resamples a known value -- but still takes the first sample
+  // after the port state was invalidated, since a notification only reports changes.
+  func testNotifiedAsCapableChangeReplacesPeriodicResample() async throws {
+    let recorder = MRPTestRecorder()
+    let (changes, notify) = AsyncStream.makeStream(of: Int.self)
+    // an id no other test uses: the asCapable overrides are process-wide
+    let port = MockPort(id: 7)
+    var bridge = MockBridge(ports: [port, MockPort(id: 8)], recorder: recorder)
+    bridge.asCapableChanges = changes
+    defer { MockPort._asCapableOverrides.withLock { $0[7] = nil } }
+    let controller = try await MRPController(
+      bridge: bridge,
+      logger: Logger(label: "com.padl.MRPTests.asCapableNotify")
+    )
+    let msrp = try await MSRPApplication(controller: controller)
+    try await controller._didAdd(port: port)
+    try await controller._didAdd(port: MockPort(id: 8))
+    let asCapable: @Sendable () async -> Bool? = {
+      await (try? msrp.withPortState(port: port) { $0.asCapable }) ?? nil
+    }
+
+    MockPort._asCapableOverrides.withLock { $0[7] = false }
+    notify.yield(7)
+    let lost = await _waitFor { await asCapable() == false }
+    XCTAssertTrue(lost, "a notified asCapable change must reach the port state")
+
+    // gPTP changes without a notification: the tick leaves the notified value alone
+    MockPort._asCapableOverrides.withLock { $0[7] = true }
+    try await msrp.periodic(for: nil)
+    let afterTick = await asCapable()
+    XCTAssertEqual(afterTick, false, "the periodic tick must not resample a known notified value")
+
+    notify.yield(7)
+    let regained = await _waitFor { await asCapable() == true }
+    XCTAssertTrue(regained)
+
+    // a link change invalidates the port state; no notification follows, so the tick samples it
+    MockPort._asCapableOverrides.withLock { $0[7] = false }
+    try await msrp.withPortState(port: port) { $0.invalidate() }
+    try await msrp.periodic(for: nil)
+    let resampled = await asCapable()
+    XCTAssertEqual(resampled, false, "an invalidated notifying port must be resampled by the tick")
+    notify.finish()
     _ = controller
   }
 
