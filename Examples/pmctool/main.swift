@@ -61,7 +61,9 @@ enum Command: String, CaseIterable {
 }
 
 func usage() -> Never {
-  print("Usage: \(CommandLine.arguments[0]) [-s path] [-t transportSpecific] <command> [port]")
+  let tool = CommandLine.arguments[0]
+  print("Usage: \(tool) [-s path] [-t transportSpecific] <command> [port]")
+  print("       \(tool) [-s path] [-t transportSpecific] SUBSCRIBE_EVENTS_NP [event...]")
   print("  -s path               ptp4l UDS path (default \(PTPManagementClient.DefaultUDSPath),")
   print("                        or \(PTPManagementClient.DefaultUDSROPath) when not root)")
   print("  -t transportSpecific  hex, as ptp4l's UDS port has it (default 1, as in gPTP.cfg)")
@@ -69,10 +71,38 @@ func usage() -> Never {
   for command in Command.allCases {
     print("  \(command.rawValue)")
   }
+  print("Events (default \(defaultEvents.map(\.name).joined(separator: " "))):")
+  for event in SubscribeEventsNP.Event.allCases {
+    print("  \(event.name)")
+  }
   exit(1)
 }
 
-func run(_ command: Command, _ pmc: PTPManagementClient, _ portArg: UInt16?) async throws {
+extension SubscribeEventsNP.Event {
+  // the enum case name, e.g. timeSync
+  var name: String { String(describing: self) }
+}
+
+// the library's default; timeSync arrives for every Sync ptp4l receives
+let defaultEvents: [SubscribeEventsNP.Event] = [.portState, .cmlds]
+
+func parseEvents(_ names: some Collection<String>) -> Set<SubscribeEventsNP.Event> {
+  guard !names.isEmpty else { return Set(defaultEvents) }
+  return Set(names.map { name in
+    guard let event = SubscribeEventsNP.Event.allCases.first(where: { $0.name == name }) else {
+      print("unknown event \(name)")
+      usage()
+    }
+    return event
+  })
+}
+
+func run(
+  _ command: Command,
+  _ pmc: PTPManagementClient,
+  _ portArg: UInt16?,
+  events: Set<SubscribeEventsNP.Event>
+) async throws {
   // commands addressed to a port rather than to the clock require the port argument
   func port() -> UInt16 {
     guard let portArg else { usage() }
@@ -125,7 +155,7 @@ func run(_ command: Command, _ pmc: PTPManagementClient, _ portArg: UInt16?) asy
   case .DISABLE_PORT: try await pmc.disablePort(portNumber: port())
   case .SUBSCRIBE_EVENTS_NP:
     // prints ptp4l's push notifications until interrupted; needs the read-write socket
-    for try await event in pmc.events() {
+    for try await event in pmc.events(events) {
       print(event)
     }
   }
@@ -159,13 +189,16 @@ enum pmctool {
     }
 
     var port: UInt16?
-    if let argument = arguments.popFirst() {
+    var events = Set<SubscribeEventsNP.Event>()
+    if command == .SUBSCRIBE_EVENTS_NP {
+      events = parseEvents(arguments)
+    } else if let argument = arguments.popFirst() {
       port = UInt16(argument)
     }
 
     do {
       let pmc = try await PTPManagementClient(path: path, transportSpecific: transportSpecific)
-      try await run(command, pmc, port)
+      try await run(command, pmc, port, events: events)
     } catch {
       print("failed to \(command): \(type(of: error)) \(error)")
       exit(3)
