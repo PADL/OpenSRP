@@ -218,31 +218,54 @@ resolve_version() {
 }
 
 # write_systemd_scriptlets <stagedir> <unit...>
-# Generates maintainer scripts to enable/disable the given systemd units,
-# mirroring what dh_installsystemd would emit.
+# Generates maintainer scripts for the given systemd units from debhelper's
+# dh_installsystemd snippets (deb-systemd-helper / deb-systemd-invoke):
+#   postinst  enables each unit unless the admin disabled it; then starts
+#             DEB_START_UNITS and restarts DEB_RESTART_UNITS, each only if enabled
+#   prerm     stops the units on removal, but not when the package is removed
+#             in favour of one that replaces it (mrpd-minimal <-> mrpd)
+#   postrm    reloads systemd; forgets the units' enablement on purge
 write_systemd_scriptlets() {
   local stage="$1"; shift
   local units="$*"
+  local start="${DEB_START_UNITS:-}" restart="${DEB_RESTART_UNITS:-}"
   install -d "$stage/DEBIAN"
   cat > "$stage/DEBIAN/postinst" <<EOF
 #!/bin/sh
 set -e
-if [ "\$1" = configure ] && command -v systemctl >/dev/null 2>&1; then
-  systemctl daemon-reload || true
-  for u in $units; do systemctl enable "\$u" || true; done
-fi
+case "\$1" in
+configure|abort-upgrade|abort-deconfigure|abort-remove)
+  for u in $units; do
+    deb-systemd-helper unmask "\$u" >/dev/null || true
+    if deb-systemd-helper --quiet was-enabled "\$u"; then
+      deb-systemd-helper enable "\$u" >/dev/null || true
+    else
+      deb-systemd-helper update-state "\$u" >/dev/null || true
+    fi
+  done
+  if [ -z "\${DPKG_ROOT:-}" ] && [ -d /run/systemd/system ]; then
+    systemctl --system daemon-reload >/dev/null || true
+    for u in $start; do deb-systemd-invoke start "\$u" >/dev/null || true; done
+    for u in $restart; do deb-systemd-invoke restart "\$u" >/dev/null || true; done
+  fi
+  ;;
+esac
 EOF
   cat > "$stage/DEBIAN/prerm" <<EOF
 #!/bin/sh
 set -e
-if [ "\$1" = remove ] && command -v systemctl >/dev/null 2>&1; then
-  for u in $units; do systemctl disable --now "\$u" || true; done
+if [ -z "\${DPKG_ROOT:-}" ] && [ "\$1" = remove ] && [ "\${2:-}" != in-favour ] \\
+   && [ -d /run/systemd/system ]; then
+  deb-systemd-invoke stop $units >/dev/null || true
 fi
 EOF
   cat > "$stage/DEBIAN/postrm" <<EOF
 #!/bin/sh
 set -e
-if command -v systemctl >/dev/null 2>&1; then systemctl daemon-reload || true; fi
+if [ -d /run/systemd/system ]; then systemctl --system daemon-reload >/dev/null || true; fi
+if [ "\$1" = purge ] && [ -x /usr/bin/deb-systemd-helper ]; then
+  deb-systemd-helper purge $units >/dev/null || true
+fi
 EOF
   chmod 0755 "$stage/DEBIAN/postinst" "$stage/DEBIAN/prerm" "$stage/DEBIAN/postrm"
 }
@@ -254,6 +277,8 @@ EOF
 build_deb() {
   local pkg="$1" ver="$2" stage="$3" depends="$4" desc="$5"; shift 5
   install -d "$stage/DEBIAN"
+  # the unit scriptlets run deb-systemd-helper and deb-systemd-invoke
+  if [ "$#" -gt 0 ]; then depends="$depends, init-system-helpers"; fi
   # --apparent-size counts file sizes (st_size), not allocated blocks; the
   # latter read as ~0 right after writing under ext4 delayed allocation.
   local isize
