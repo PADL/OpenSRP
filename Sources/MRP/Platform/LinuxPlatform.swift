@@ -1786,9 +1786,9 @@ extension LinuxBridge: MSRPAwareBridge {
     guard _ptpEventsTask == nil else { return }
     // NOTIFY_CMLDS carries asCapable and meanLinkDelay; NOTIFY_PORT_STATE covers the
     // transitions (port disabled or faulty) that reset asCapable without a CMLDS push
-    // a short duration: the renewal (every duration / 3) is what notices a restarted ptp4l,
-    // whose ports start not asCapable while our cache still says otherwise
-    let events = _pmc.events([.portState, .cmlds], duration: 6)
+    // the renewal (every duration / 3, so 20 s) notices a restarted ptp4l, whose ports start
+    // not asCapable; phc2sys -a renews every 10 s (pmc_agent.c, duration 30)
+    let events = _pmc.events([.portState, .cmlds], duration: 60)
     _ptpEventsTask = Task { [weak self] in
       do {
         for try await event in events {
