@@ -948,8 +948,11 @@ public extension PTPManagementClient {
   //
   // The stream throws only if ptp4l refuses the subscription (a PTPManagementError, e.g. on
   // the read-only socket, which ptp4l does not let subscribe). Ending iteration unsubscribes.
+  //
+  // The default is .portState and .cmlds; .timeSync, which ptp4l pushes for every Sync it
+  // receives, and .parentDataSet have to be asked for.
   nonisolated func events(
-    _ events: Set<SubscribeEventsNP.Event> = Set(SubscribeEventsNP.Event.allCases),
+    _ events: Set<SubscribeEventsNP.Event> = [.portState, .cmlds],
     duration: UInt16 = PTPManagementClient.DefaultSubscriptionDuration,
     domainNumber: UInt8 = 0
   ) -> AsyncThrowingStream<PTPManagementEvent, Error> {
