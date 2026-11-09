@@ -37,7 +37,10 @@ VER="$(resolve_version "$SWIFTMRP_DIR" "${MRPD_BASE_VERSION:-0.2.3}")"
 # "mrpd-minimal" — the Ubuntu convention for a reduced variant (cf. vim-tiny and
 # the *-minimal packages) — that Provides/Conflicts/Replaces mrpd so only one of
 # the two installs at a time. Full and minimal coexist in out/ by package name.
+# Each Conflicts/Replaces the other, so dpkg removes the installed one "in favour
+# of" the new one (prerm remove in-favour), which leaves the stack running.
 PKG=mrpd
+export DEB_CONFLICTS=mrpd-minimal DEB_REPLACES=mrpd-minimal
 if [ -n "${CONSTRAINED:-}" ]; then
   PKG=mrpd-minimal
   export DEB_PROVIDES=mrpd DEB_CONFLICTS=mrpd DEB_REPLACES=mrpd
@@ -208,6 +211,11 @@ msg "mrpd shared-library dependencies (NEEDED) — verify these exist on target:
 # the minimal build, which ships neither the REST server nor mrp, omits them.
 deps="libc6, libstdc++6, libgcc-s1, liburing2, libsystemd0, libnl-3-200, libnl-route-3-200, libnl-nf-3-200, nftables, iproute2, python3, libjemalloc2"
 [ -n "${CONSTRAINED:-}" ] || deps="libcurl4t64, python3-requests, $deps"
+# On configure, run the new mrpd and bring back the stack a replaced package's
+# prerm stopped (avb.target, and ptp4l through its PartOf=); each only if enabled.
+# The ATU hash unit runs at boot only: changing the hash on a live switch would
+# misplace the ATU entries already learned.
+export DEB_START_UNITS="ptp4l.service avb.target" DEB_RESTART_UNITS=mrpd.service
 build_deb "$PKG" "$VER" "$stage" "$deps" \
   "OpenSRP MRP/MVRP/MSRP daemon (mrpd) with portmon and pmctool helpers" \
   mrpd.service avb.target mv88e6341-atu-hash.service

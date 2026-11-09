@@ -14,7 +14,9 @@ switch stack, cross-compiled on this x86_64 Ubuntu host:
 Apart from `mrpd` (built from this repository), every component is **cloned
 from git** (shallow) into `Packaging/.work/`; nothing is read from local
 working trees. The daemon packages install the systemd units from `../Configs/`
-and enable them on install. The kernel package is a native replacement for the
+and enable them on install, unless the admin disabled them. `mrpd` also
+starts `ptp4l` and `avb.target` and restarts itself on install, and replacing
+`mrpd-minimal` with `mrpd` (or the reverse) leaves the stack running. The kernel package is a native replacement for the
 stock Ubuntu kernel (installs to `/boot`, runs `depmod` / initramfs
 regeneration) and is configured with the Armada switch config kept in
 `Packaging/armada.config`.
