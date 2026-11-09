@@ -541,25 +541,17 @@ class MSRPCommands:
                 for stream_data in data:
                     stream_id = self.formatter.format_stream_id(stream_data.get("stream_id", "N/A"))
 
-                    # Advertised talkers
+                    # one talker per stream, advertise or failed
                     talker = stream_data.get("talker", {})
                     if talker:
                         port = self.formatter.format_port(
                             talker.get("port_name"),
                             talker.get("port_number")
                         )
+                        talker_type = talker.get("type", "")
+                        talker_type = self.formatter.format_type(talker_type) if talker_type else "N/A"
                         destination = stream_data.get("destination", "")
-                        rows.append([stream_id, port, "Adv", destination])
-
-                    # Failed talkers
-                    talker_failed = stream_data.get("talker_failed", {})
-                    if talker_failed:
-                        port = self.formatter.format_port(
-                            talker_failed.get("port_name"),
-                            talker_failed.get("port_number")
-                        )
-                        destination = talker_failed.get("destination", "")
-                        rows.append([stream_id, port, "Fail", destination])
+                        rows.append([stream_id, port, talker_type, destination])
 
                 if not rows:
                     print("No talkers found")
