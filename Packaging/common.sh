@@ -99,6 +99,26 @@ git_checkout() {
   printf '%s' "$dir"
 }
 
+# locate_sysroot : echo the Swift cross SDK sysroot. $SYSROOT pins it; a
+# --destination SDK has it in the JSON; an artifactbundle has a *.sdk dir.
+locate_sysroot() {
+  local root="${SYSROOT:-}" json bundle
+  if [ -n "$root" ]; then
+    :
+  elif [ "$DEB_ARCH" = armhf ] || [ -n "${SWIFT_DESTINATION_JSON:-}" ]; then
+    json="${SWIFT_DESTINATION_JSON:-/opt/swift-6.3.2-RELEASE-ubuntu-noble-armv7/ubuntu-noble-static.json}"
+    [ -f "$json" ] || die "destination JSON not found: $json (set SWIFT_DESTINATION_JSON)"
+    root="$(sed -n 's/.*"sdk"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$json" | head -1)"
+    [ -n "$root" ] || die "could not read \"sdk\" path from $json"
+  else
+    bundle="$HOME/.swiftpm/swift-sdks/${SWIFT_SDK}.artifactbundle"
+    root="$(find "$bundle" -maxdepth 4 -type d -name '*.sdk' 2>/dev/null | head -1)"
+    [ -n "$root" ] || die "could not locate sysroot under $bundle"
+  fi
+  [ -d "$root" ] || die "sysroot does not exist: $root"
+  printf '%s' "$root"
+}
+
 # ---- fetching genuine target .debs to augment the SDK sysroot -----------
 # Supplies $DEB_ARCH system libraries that the cross toolchains lack, without
 # touching the host (amd64) sysroot. The apt source MUST match the SDK's glibc

@@ -66,21 +66,7 @@ PKGS="${SYSROOT_PKGS:-$_pkgs_default}"
 UAPI_PKGS="${UAPI_PKGS:-}"; UAPI_POCKETS="${UAPI_POCKETS:-}"
 
 # ---- locate the sysroot -------------------------------------------------
-# armhf (or any --destination JSON SDK): read the "sdk" path out of the JSON.
-# arm64: find the *.sdk dir inside the artifactbundle named by SWIFT_SDK.
-if [ -n "${SYSROOT:-}" ]; then
-  : # caller pinned it (e.g. for testing)
-elif [ "$DEB_ARCH" = armhf ] || [ -n "${SWIFT_DESTINATION_JSON:-}" ]; then
-  json="${SWIFT_DESTINATION_JSON:-/opt/swift-6.3.2-RELEASE-ubuntu-noble-armv7/ubuntu-noble-static.json}"
-  [ -f "$json" ] || die "destination JSON not found: $json (set SWIFT_DESTINATION_JSON)"
-  SYSROOT="$(sed -n 's/.*"sdk"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$json" | head -1)"
-  [ -n "$SYSROOT" ] || die "could not read \"sdk\" path from $json"
-else
-  SDK_BUNDLE="$HOME/.swiftpm/swift-sdks/${SWIFT_SDK}.artifactbundle"
-  SYSROOT="$(find "$SDK_BUNDLE" -maxdepth 4 -type d -name '*.sdk' 2>/dev/null | head -1)"
-  [ -n "$SYSROOT" ] || die "could not locate sysroot under $SDK_BUNDLE"
-fi
-[ -d "$SYSROOT" ] || die "sysroot does not exist: $SYSROOT"
+SYSROOT="$(locate_sysroot)"
 msg "augmenting sysroot: $SYSROOT"
 
 # ---- download + extract the target packages into the sysroot ------------

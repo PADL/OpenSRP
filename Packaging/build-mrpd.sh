@@ -44,6 +44,12 @@ if [ -n "${CONSTRAINED:-}" ]; then
 fi
 msg "Building $PKG (Swift / $DEB_ARCH / $BUILD_CONFIG / static stdlib) version $VER"
 
+# Resolve NetLinkSwift's pkg-config modules from the SDK: the host .pc files add
+# -L/usr/lib/x86_64-linux-gnu, whose libc.so linker script breaks the cross link.
+sysroot="$(locate_sysroot)"
+export PKG_CONFIG_SYSROOT_DIR="$sysroot"
+export PKG_CONFIG_PATH="$sysroot/usr/lib/$CROSS_TRIPLE/pkgconfig:$sysroot/usr/share/pkgconfig"
+
 # Assemble the swift build flags. The DEFAULT build includes the REST control
 # API (FlyingFox + FlyingFoxMacros + AnyCodable, plus their Foundation surface;
 # matches avb.default's --rest-server-port). CONSTRAINED=1 targets small-RAM/
